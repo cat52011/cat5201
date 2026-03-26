@@ -1,0 +1,411 @@
+﻿<Window x:Class="test.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:test"
+        Title="cat5201"
+        WindowStartupLocation="CenterScreen"
+        WindowState="Maximized"
+        ResizeMode="CanResize">
+
+    <!-- ✅ 只給 FileList 右鍵選單使用：外觀與 NodeControl 一樣（白底、圓角、無陰影、縮小間距） -->
+    <Window.Resources>
+
+        <!-- 與 NodeControl 相同的色系 -->
+        <SolidColorBrush x:Key="FileMenuBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="FileMenuBorder" Color="#D6D6D6"/>
+        <SolidColorBrush x:Key="FileMenuText" Color="#222222"/>
+        <SolidColorBrush x:Key="FileMenuDisabled" Color="#A0A0A0"/>
+
+        <Style x:Key="FileContextMenuStyle" TargetType="{x:Type ContextMenu}">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Background" Value="{StaticResource FileMenuBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource FileMenuBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="4"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ContextMenu}">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <StackPanel IsItemsHost="True"
+                                        KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ✅ 與 NodeControl 相同：FontSize=13、Padding=8,6、Margin=1 -->
+        <Style x:Key="FileMenuItemStyle" TargetType="{x:Type MenuItem}">
+            <Setter Property="Foreground" Value="{StaticResource FileMenuText}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type MenuItem}">
+                        <Border Background="Transparent"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <!-- ✅ 關鍵：MenuItem 文字在 Header -->
+                            <ContentPresenter x:Name="HeaderPresenter"
+                                              ContentSource="Header"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Left"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"
+                                              TextElement.FontSize="{TemplateBinding FontSize}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="HeaderPresenter" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HeaderPresenter" Property="Opacity" Value="0.70"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource FileMenuDisabled}"/>
+                                <Setter TargetName="HeaderPresenter" Property="Opacity" Value="0.65"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FileSeparatorStyle" TargetType="{x:Type Separator}">
+            <Setter Property="Margin" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Separator}">
+                        <Border Height="1"
+                                Background="#EAEAEA"
+                                CornerRadius="0.5"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Grid>
+        <!-- ✅ 側邊欄：啟動後保持顯示 -->
+        <Grid x:Name="Sidebar"
+              Width="280"
+              Background="#F0F0F0"
+              HorizontalAlignment="Left"
+              VerticalAlignment="Stretch"
+              Panel.ZIndex="100">
+            <Border Padding="12" Background="#F0F0F0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- ✅ 縮小版「+」按鈕（右上角） -->
+                    <Button Grid.Row="0"
+                            Width="22" Height="22"
+                            Margin="0,2,0,0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            Cursor="Hand"
+                            ToolTip="新增"
+                            Click="NewFile_Click">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Grid>
+                                    <Viewbox x:Name="IconBox" Stretch="Uniform">
+                                        <Canvas Width="18" Height="18">
+                                            <Path Data="M9,3 L9,15"
+                                                  Stroke="Black"
+                                                  StrokeThickness="1.6"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"/>
+                                            <Path Data="M3,9 L15,9"
+                                                  Stroke="Black"
+                                                  StrokeThickness="1.6"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"/>
+                                        </Canvas>
+                                    </Viewbox>
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="IconBox" Property="Opacity" Value="0.8"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="IconBox" Property="Opacity" Value="0.6"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
+                    <!-- ✅ 檔案清單 -->
+                    <ListBox x:Name="FileList"
+                             Grid.Row="1"
+                             Margin="0,10,0,10"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             DisplayMemberPath="DisplayName"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             MouseDoubleClick="FileList_MouseDoubleClick"
+                             MouseRightButtonUp="FileList_MouseRightButtonUp">
+
+                        <ListBox.Resources>
+                            <Style TargetType="{x:Type ScrollViewer}">
+                                <Setter Property="Background" Value="Transparent"/>
+                            </Style>
+                        </ListBox.Resources>
+
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Padding" Value="14,12"/>
+                                <Setter Property="Margin" Value="0,2"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Cursor" Value="Hand"/>
+                                <Setter Property="Foreground" Value="#222"/>
+                                <Setter Property="FontSize" Value="16"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="Bd"
+                                                    Background="{TemplateBinding Background}"
+                                                    CornerRadius="10">
+                                                <ContentPresenter VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#E6E6E6"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#DCDCDC"/>
+                                                </Trigger>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                    </ListBox>
+
+                    <TextBlock x:Name="CurrentFileLabel"
+                               Grid.Row="2"
+                               Text="目前檔案：尚未建立"
+                               FontSize="12"
+                               Foreground="#555"
+                               Margin="0,6,0,0"
+                               TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ✅ 起始畫面 -->
+        <Grid x:Name="StartUI"
+              Margin="280,0,0,0"
+              Background="White"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock x:Name="StartMessage"
+                           Grid.Row="1"
+                           Text="讓我們有個新的開始！"
+                           FontSize="28"
+                           Foreground="#222"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,16"/>
+
+                <Button x:Name="StartButton"
+                        Grid.Row="2"
+                        Content="開始"
+                        Width="100"
+                        Height="36"
+                        Background="Black"
+                        Foreground="White"
+                        BorderBrush="Black"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        Click="StartButton_Click"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="16"
+                        Padding="6,0"
+                        Style="{x:Null}">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}"
+                                    CornerRadius="18"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  TextElement.FontSize="16"
+                                                  TextElement.Foreground="White"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+
+                    <Button.Effect>
+                        <DropShadowEffect BlurRadius="6"
+                                          ShadowDepth="2"
+                                          Opacity="0.25"/>
+                    </Button.Effect>
+                </Button>
+            </Grid>
+        </Grid>
+
+        <!-- ✅ 主畫面 -->
+        <Grid x:Name="MainUI"
+              Visibility="Collapsed">
+
+            <Border x:Name="Viewport"
+                    ClipToBounds="True"
+                    MouseDown="Viewport_MouseDown"
+                    MouseWheel="Viewport_MouseWheel">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="ViewportTranslate" X="140" Y="0"/>
+                </Border.RenderTransform>
+
+                <Border.Background>
+                    <DrawingBrush TileMode="Tile" Viewport="0,0,20,20" ViewportUnits="Absolute">
+                        <DrawingBrush.Drawing>
+                            <GeometryDrawing Brush="White">
+                                <GeometryDrawing.Pen>
+                                    <Pen Brush="#DDD" Thickness="1"/>
+                                </GeometryDrawing.Pen>
+                                <GeometryDrawing.Geometry>
+                                    <GeometryGroup>
+                                        <LineGeometry StartPoint="0,0" EndPoint="20,0"/>
+                                        <LineGeometry StartPoint="0,0" EndPoint="0,20"/>
+                                    </GeometryGroup>
+                                </GeometryDrawing.Geometry>
+                            </GeometryDrawing>
+                        </DrawingBrush.Drawing>
+                    </DrawingBrush>
+                </Border.Background>
+
+                <Canvas x:Name="MainCanvas" Background="Transparent"/>
+            </Border>
+
+            <!-- 側邊熱區 -->
+            <Grid x:Name="HotZoneContainer"
+                  Width="50" Height="200"
+                  VerticalAlignment="Center"
+                  HorizontalAlignment="Left"
+                  Background="Transparent"
+                  Visibility="Collapsed"
+                  Panel.ZIndex="101"
+                  MouseEnter="HotZoneContainer_MouseEnter">
+
+                <Border x:Name="HotZoneHitArea"
+                        Width="20" Height="200"
+                        Background="Transparent"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        MouseLeftButtonDown="ExpandSidebar">
+                    <Border.Triggers>
+                        <EventTrigger RoutedEvent="MouseEnter">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="HotZoneBackground"
+                                                     Storyboard.TargetProperty="Opacity"
+                                                     To="1.0"
+                                                     Duration="0:0:0.3"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                        <EventTrigger RoutedEvent="MouseLeave">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="HotZoneBackground"
+                                                     Storyboard.TargetProperty="Opacity"
+                                                     To="0.3"
+                                                     Duration="0:0:0.3"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </Border.Triggers>
+                </Border>
+
+                <Border x:Name="HotZoneBackground"
+                        Background="LightGray"
+                        Opacity="0.3"
+                        Width="5" Height="200"
+                        CornerRadius="2.5"
+                        Margin="15,0,0,0"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center">
+                    <Border.Effect>
+                        <DropShadowEffect Color="Black"
+                                          BlurRadius="8"
+                                          ShadowDepth="2"
+                                          Opacity="0.4"/>
+                    </Border.Effect>
+                </Border>
+            </Grid>
+
+            <!-- 🧭 右下角定位按鈕 -->
+            <Button x:Name="CenterOnInitialButton"
+                    Width="38" Height="38"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="18"
+                    Background="#F5F5F5"
+                    BorderBrush="#CCCCCC"
+                    BorderThickness="1"
+                    Cursor="Hand"
+                    Click="CenterOnInitialButton_Click">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Ellipse Fill="{TemplateBinding Background}"
+                                     Stroke="{TemplateBinding BorderBrush}"
+                                     StrokeThickness="1"/>
+                            <Path Data="M19,9 L19,29 M9,19 L29,19"
+                                  Stroke="#444"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Button.Template>
+
+                <Button.Effect>
+                    <DropShadowEffect BlurRadius="6"
+                                      ShadowDepth="2"
+                                      Opacity="0.22"/>
+                </Button.Effect>
+            </Button>
+        </Grid>
+    </Grid>
+</Window>
+
+

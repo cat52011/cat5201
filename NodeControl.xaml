@@ -1,0 +1,686 @@
+﻿<UserControl x:Class="test.NodeControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:test"
+             Width="300" Height="400">
+
+    <UserControl.Resources>
+        <local:BottomOffsetConverter x:Key="BottomOffsetConverter"/>
+        <local:RightOffsetConverter x:Key="RightOffsetConverter"/>
+        <local:HeaderLeftConverter x:Key="HeaderLeftConverter"/>
+        <local:HeaderWidthConverter x:Key="HeaderWidthConverter"/>
+        <local:AttachmentPanelMarginConverter x:Key="AttachmentPanelMarginConverter"/>
+
+        <SolidColorBrush x:Key="NodeMenuBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="NodeMenuBorder" Color="#D6D6D6"/>
+        <SolidColorBrush x:Key="NodeMenuText" Color="#222222"/>
+        <SolidColorBrush x:Key="NodeMenuDisabled" Color="#A0A0A0"/>
+
+        <Style x:Key="NodeContextMenuStyle" TargetType="{x:Type ContextMenu}">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Background" Value="{StaticResource NodeMenuBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource NodeMenuBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="4"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ContextMenu}">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <StackPanel IsItemsHost="True"
+                                        KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="NodeMenuItemStyle" TargetType="{x:Type MenuItem}">
+            <Setter Property="Foreground" Value="{StaticResource NodeMenuText}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type MenuItem}">
+                        <Border Background="Transparent"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter x:Name="HeaderPresenter"
+                                              ContentSource="Header"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Left"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="HeaderPresenter" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HeaderPresenter" Property="Opacity" Value="0.70"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource NodeMenuDisabled}"/>
+                                <Setter TargetName="HeaderPresenter" Property="Opacity" Value="0.65"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="NodeMenuSeparatorStyle" TargetType="{x:Type Separator}">
+            <Setter Property="Margin" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Separator}">
+                        <Border Height="1"
+                                Background="#EAEAEA"
+                                CornerRadius="0.5"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="NodeIconButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="Width" Value="25"/>
+            <Setter Property="Height" Value="25"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border Background="Transparent" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Opacity" Value="0.70"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AttachmentMiniButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="Width" Value="18"/>
+            <Setter Property="Height" Value="18"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Opacity" Value="0.65"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="NodeModelComboBoxItemStyle" TargetType="{x:Type ComboBoxItem}">
+            <Setter Property="Foreground" Value="#222222"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                        <Border x:Name="ItemBorder"
+                                Background="Transparent"
+                                CornerRadius="8"
+                                Margin="1"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#F4F4F4"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#EFEFEF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="NodeModelComboBoxStyle" TargetType="{x:Type ComboBox}">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#222222"/>
+            <Setter Property="Background" Value="#FAFAFA"/>
+            <Setter Property="BorderBrush" Value="#E6E6E6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,2,8,2"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource NodeModelComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBox}">
+                        <Grid>
+                            <Border x:Name="MainBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="10"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter x:Name="ContentSite"
+                                                  IsHitTestVisible="False"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"/>
+                            </Border>
+
+                            <ToggleButton x:Name="ToggleButton"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <Popup x:Name="Popup"
+                                   Placement="Bottom"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   PopupAnimation="Fade">
+                                <Grid MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border Margin="0,2,0,0"
+                                            Background="#FFFFFF"
+                                            BorderBrush="#E6E6E6"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Padding="4">
+                                        <ScrollViewer CanContentScroll="True"
+                                                      VerticalScrollBarVisibility="Auto">
+                                            <StackPanel IsItemsHost="True"
+                                                        KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#F7F7F7"/>
+                            </Trigger>
+
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="MainBorder" Property="BorderBrush" Value="#D8D8D8"/>
+                            </Trigger>
+
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="MainBorder" Property="Background" Value="#FFFFFF"/>
+                            </Trigger>
+
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="MainBorder" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="Popup" Property="MinHeight" Value="0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <UserControl.ContextMenu>
+        <ContextMenu Style="{StaticResource NodeContextMenuStyle}"
+                     Opened="ContextMenu_Opened">
+            <MenuItem x:Name="EditMenuItem"
+                      Header="編輯"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="EditMenuItem_Click"/>
+            <MenuItem x:Name="FontSizeMenuItem"
+                      Header="字體大小…"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="FontSizeMenuItem_Click"/>
+            <Separator Style="{StaticResource NodeMenuSeparatorStyle}"/>
+            <MenuItem x:Name="DeleteMenuItem"
+                      Header="刪除"
+                      Foreground="#D32F2F"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="DeleteMenuItem_Click"/>
+        </ContextMenu>
+    </UserControl.ContextMenu>
+
+    <Canvas>
+        <Border x:Name="NodeBorder"
+                Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                Height="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                CornerRadius="8"
+                Background="#FFFFFF"
+                BorderBrush="#000000"
+                BorderThickness="3" />
+
+        <Border x:Name="DragHeader"
+                Height="24"
+                Background="#01FFFFFF"
+                Canvas.Top="0"
+                Canvas.Left="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource HeaderLeftConverter}, ConverterParameter=20}"
+                Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource HeaderWidthConverter}, ConverterParameter=40}"
+                Cursor="SizeAll"
+                MouseLeftButtonDown="DragHeader_MouseLeftButtonDown"
+                MouseMove="DragHeader_MouseMove"
+                MouseLeftButtonUp="DragHeader_MouseLeftButtonUp">
+            <Border x:Name="DragIndicator"
+                    Width="80"
+                    Height="4"
+                    Background="LightGray"
+                    CornerRadius="2"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Opacity="0"/>
+        </Border>
+
+        <Grid x:Name="ContentGrid"
+              Canvas.Top="24"
+              Canvas.Left="0"
+              Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=UserControl}}"
+              Height="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BottomOffsetConverter}, ConverterParameter=24}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="3*"/>
+                <RowDefinition Height="7*"/>
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="#00FFFFFF">
+                <Grid>
+                    <TextBox x:Name="TopEditor"
+                             Margin="20,10,20,10"
+                             TextWrapping="Wrap"
+                             AcceptsReturn="True"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             FontSize="20"
+                             IsReadOnly="True"
+                             IsHitTestVisible="True"
+                             Focusable="True"
+                             TextChanged="TopEditor_TextChanged"
+                             PreviewMouseLeftButtonDown="TopEditor_PreviewMouseLeftButtonDown"
+                             LostKeyboardFocus="TopEditor_LostKeyboardFocus"
+                             KeyDown="TopEditor_KeyDown"/>
+
+                    <Button x:Name="PlusButton"
+                            Style="{StaticResource NodeIconButtonStyle}"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Bottom"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Margin="20,0,0,10"
+                            Padding="5"
+                            ToolTip="上傳檔案/照片（會隨存檔保存）"
+                            Click="PlusButton_Click"
+                            Visibility="Collapsed"
+                            IsEnabled="False">
+                        <Grid Width="14" Height="14">
+                            <Path Data="M7,1 L7,13"
+                                  Stroke="#444"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                            <Path Data="M1,7 L13,7"
+                                  Stroke="#444"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                        </Grid>
+                    </Button>
+
+                    <Button x:Name="SendButton"
+                            Style="{StaticResource NodeIconButtonStyle}"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Margin="0,0,20,10"
+                            Padding="5"
+                            ToolTip="送出給 AI 產生下半部"
+                            Click="SendButton_Click"
+                            Visibility="Collapsed"
+                            IsEnabled="False">
+                        <Grid Width="14" Height="14">
+                            <Path Data="M3,2 L11,7 L3,12"
+                                  Stroke="#444"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round"
+                                  Fill="Transparent"/>
+                        </Grid>
+                    </Button>
+
+                    <Border x:Name="AttachmentPanel"
+                            VerticalAlignment="Bottom"
+                            HorizontalAlignment="Stretch"
+                            Height="28"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Visibility="Visible">
+                        <Border.Margin>
+                            <MultiBinding Converter="{StaticResource AttachmentPanelMarginConverter}" ConverterParameter="54">
+                                <Binding ElementName="PlusButton" Path="Height"/>
+                                <Binding ElementName="PlusButton" Path="Margin"/>
+                                <Binding ElementName="AttachmentPanel" Path="Height"/>
+                            </MultiBinding>
+                        </Border.Margin>
+
+                        <Grid x:Name="AttachmentPanelGrid">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="AttachmentColumn" Width="68*"/>
+                                <ColumnDefinition x:Name="AttachmentSplitterColumn" Width="2"/>
+                                <ColumnDefinition x:Name="ModelColumn" Width="32*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border x:Name="AttachmentListHost"
+                                    Grid.Column="0"
+                                    Padding="4,2"
+                                    CornerRadius="10"
+                                    BorderBrush="#E6E6E6"
+                                    BorderThickness="1"
+                                    Background="#FAFAFA"
+                                    Visibility="Collapsed">
+                                <ScrollViewer x:Name="AttachmentScroll"
+                                              HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollBarVisibility="Disabled"
+                                              PanningMode="HorizontalOnly"
+                                              Cursor="Hand"
+                                              PreviewMouseLeftButtonDown="AttachmentScroll_PreviewMouseLeftButtonDown"
+                                              PreviewMouseMove="AttachmentScroll_PreviewMouseMove"
+                                              PreviewMouseLeftButtonUp="AttachmentScroll_PreviewMouseLeftButtonUp">
+                                    <ItemsControl x:Name="AttachmentItems">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="10"
+                                                        BorderBrush="#E6E6E6"
+                                                        BorderThickness="1"
+                                                        Background="#FFFFFF"
+                                                        Padding="8,4"
+                                                        Margin="0,0,6,0"
+                                                        Tag="{Binding}"
+                                                        MouseLeftButtonDown="AttachmentItem_MouseLeftButtonDown">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <TextBlock Text="{Binding KindGlyph}"
+                                                                   FontSize="10"
+                                                                   Foreground="#666"
+                                                                   Margin="0,0,6,0"
+                                                                   VerticalAlignment="Center"/>
+
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding FileName}"
+                                                                   FontSize="10"
+                                                                   Foreground="#333"
+                                                                   VerticalAlignment="Center"
+                                                                   MaxWidth="240"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   Margin="0,0,8,0"/>
+
+                                                        <Button Grid.Column="2"
+                                                                Style="{StaticResource AttachmentMiniButtonStyle}"
+                                                                ToolTip="刪除"
+                                                                Tag="{Binding}"
+                                                                Click="AttachmentDelete_Click"
+                                                                VerticalAlignment="Center"
+                                                                Margin="0,-1,0,0">
+                                                            <TextBlock Text="×"
+                                                                       FontSize="10"
+                                                                       Foreground="#D32F2F"
+                                                                       VerticalAlignment="Center"/>
+                                                        </Button>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+
+                            <Border Grid.Column="1"
+                                    Background="Transparent"/>
+
+                            <ComboBox x:Name="ModelSelector"
+          Grid.Column="0"
+          Grid.ColumnSpan="3"
+          Style="{StaticResource NodeModelComboBoxStyle}"
+          HorizontalAlignment="Stretch"
+          VerticalAlignment="Stretch"
+          Margin="0"
+          Visibility="Visible"
+          IsEnabled="False"
+          SelectionChanged="ModelSelector_SelectionChanged"
+          ToolTip="選擇此對話區塊使用的模型"
+          MaxDropDownHeight="240">
+
+                                <ComboBoxItem Tag="gpt-5.4">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="/Assets/OpenAI_logo.png"
+                   Width="14"
+                   Height="14"
+                   Stretch="Uniform"
+                   Margin="0,0,6,0"/>
+                                        <TextBlock Text="GPT-5.4"
+                       FontSize="12"
+                       Foreground="#222222"
+                       VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </ComboBoxItem>
+
+                                <ComboBoxItem Tag="claude-sonnet-4-6">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="/Assets/Claude_logo.png"
+                   Width="14"
+                   Height="14"
+                   Stretch="Uniform"
+                   Margin="0,0,6,0"/>
+                                        <TextBlock Text="Claude Sonnet 4.6"
+                       FontSize="12"
+                       Foreground="#222222"
+                       VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </ComboBoxItem>
+
+                                <ComboBoxItem Tag="claude-opus-4-6">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="/Assets/Claude_logo.png"
+                   Width="14"
+                   Height="14"
+                   Stretch="Uniform"
+                   Margin="0,0,6,0"/>
+                                        <TextBlock Text="Claude Opus 4.6"
+                       FontSize="12"
+                       Foreground="#222222"
+                       VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </ComboBoxItem>
+
+                                <ComboBoxItem Tag="pplx-sonar">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="/Assets/Perplexity_logo.png"
+                   Width="14"
+                   Height="14"
+                   Stretch="Uniform"
+                   Margin="0,0,6,0"/>
+                                        <TextBlock Text="Perplexity Sonar"
+                       FontSize="12"
+                       Foreground="#222222"
+                       VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </ComboBoxItem>
+
+                                <ComboBoxItem Tag="pplx-sonar-deep-research">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="/Assets/Perplexity_logo.png"
+                   Width="14"
+                   Height="14"
+                   Stretch="Uniform"
+                   Margin="0,0,6,0"/>
+                                        <TextBlock Text="Perplexity Deep Research"
+                       FontSize="12"
+                       Foreground="#222222"
+                       VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </ComboBoxItem>
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <Border VerticalAlignment="Bottom"
+                            Height="1"
+                            Background="#ADADAD"
+                            Margin="20,0,20,0"/>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Background="#00FFFFFF">
+                <TextBox x:Name="BottomDisplay"
+                         Margin="20,10,20,10"
+                         TextWrapping="Wrap"
+                         AcceptsReturn="True"
+                         FontSize="20"
+                         IsReadOnly="True"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         CaretBrush="Transparent"
+                         FocusVisualStyle="{x:Null}"
+                         IsReadOnlyCaretVisible="False"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Disabled"/>
+            </Border>
+        </Grid>
+
+        <Thumb x:Name="ThumbTL"
+               Width="20"
+               Height="20"
+               Canvas.Left="10"
+               Canvas.Top="10"
+               DragStarted="Corner_DragStarted"
+               DragDelta="Corner_DragDelta"
+               DragCompleted="Corner_DragCompleted">
+            <Thumb.Template>
+                <ControlTemplate TargetType="Thumb">
+                    <Ellipse Fill="#ADADAD" Stroke="White" StrokeThickness="1"/>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
+
+        <Thumb x:Name="ThumbTR"
+               Width="20"
+               Height="20"
+               Canvas.Top="10"
+               Canvas.Left="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource RightOffsetConverter}, ConverterParameter=30}"
+               DragStarted="Corner_DragStarted"
+               DragDelta="Corner_DragDelta"
+               DragCompleted="Corner_DragCompleted">
+            <Thumb.Template>
+                <ControlTemplate TargetType="Thumb">
+                    <Ellipse Fill="#ADADAD" Stroke="White" StrokeThickness="1"/>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
+
+        <Thumb x:Name="ThumbBL"
+               Width="10"
+               Height="10"
+               Cursor="SizeNWSE"
+               DragDelta="ResizeThumb_DragDelta"
+               Canvas.Left="5"
+               Canvas.Top="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BottomOffsetConverter}, ConverterParameter=15}">
+            <Thumb.Template>
+                <ControlTemplate TargetType="Thumb">
+                    <Ellipse Fill="Black" Stroke="Transparent"/>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
+
+        <Thumb x:Name="ThumbBR"
+               Width="10"
+               Height="10"
+               Cursor="SizeNWSE"
+               DragDelta="ResizeThumb_DragDelta"
+               Canvas.Left="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource RightOffsetConverter}, ConverterParameter=15}"
+               Canvas.Top="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BottomOffsetConverter}, ConverterParameter=15}">
+            <Thumb.Template>
+                <ControlTemplate TargetType="Thumb">
+                    <Ellipse Fill="Black" Stroke="Transparent"/>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
+    </Canvas>
+</UserControl>

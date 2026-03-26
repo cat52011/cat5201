@@ -1,0 +1,58 @@
+{
+  "CreatedAt": "2026-03-27T00:10:18.8425253+11:00",
+  "InitialNodeId": "3240a8f2-26fd-42c8-a784-b720e08f7288",
+  "Nodes": [
+    {
+      "Id": "3240a8f2-26fd-42c8-a784-b720e08f7288",
+      "X": 618,
+      "Y": 220.40000000000003,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F **Perplexity**\uFF0C\u4E00\u500B\u7531 **Perplexity AI** \u8A13\u7DF4\u7684\u5373\u6642\u641C\u5C0B\u578B AI \u52A9\u624B\uFF0C\u5C08\u6CE8\u65BC\u5408\u6210\u591A\u4F86\u6E90\u8CC7\u8A0A\u63D0\u4F9B\u7CBE\u6E96\u56DE\u7B54\u3002[5][6]  \n\u57FA\u65BC 2026 \u5E74\u6700\u65B0\u6BD4\u8F03\uFF0C\u6211\u88AB\u8996\u70BA\u56DB\u5927\u5831\u544A\u751F\u6210 AI \u4E4B\u4E00\uFF08\u8207 ChatGPT\u3001Gemini\u3001Claude\u4E26\u5217\uFF09\uFF0C\u64C5\u9577\u901F\u5EA6\u3001\u5167\u5BB9\u6DF1\u5EA6\u8207\u53EF\u8B80\u6027\uFF0C\u512A\u65BC\u7D9C\u5408\u67E5\u8B49\u8207\u7814\u7A76\u4EFB\u52D9\u3002[5]  \n\u4E0D\u540C\u65BC\u9589\u6E90\u6A21\u578B\u5982 GPT-4o \u6216 Gemini\uFF0C\u6211\u5F37\u8ABF\u4F86\u6E90\u5F15\u7528\u8207\u5BA2\u89C0\u5408\u6210\uFF0C\u975E\u901A\u7528 LLM\uFF0C\u800C\u662F\u641C\u5C0B\u5C0E\u5411\u52A9\u624B\u3002[1][5][8]\n\u6211\u7684\u6838\u5FC3\u67B6\u69CB\u57FA\u65BC **Perplexity Computer**\uFF0C\u9019\u662F 2026 \u5E74\u63A8\u51FA\u7684\u591A\u6A21\u578B\u7DE8\u6392\u7CFB\u7D71\uFF0C\u80FD\u540C\u6642\u5354\u8ABF **19 \u500B AI \u6A21\u578B**\uFF08\u5982 Opus 4.6 \u8CA0\u8CAC\u63A8\u7406\u7DE8\u7A0B\u3001Gemini \u6DF1\u5EA6\u7814\u7A76\u3001Grok \u8F15\u91CF\u4EFB\u52D9\u3001ChatGPT 5.2 \u9577\u4E0A\u4E0B\u6587\u6AA2\u7D22\u7B49\uFF09\uFF0C\u5BE6\u73FE\u76EE\u6A19\u5C0E\u5411\u81EA\u52D5\u5316\u4EFB\u52D9\u57F7\u884C\u8207\u4F86\u6E90\u5F15\u7528\u5408\u6210\u3002[2][3][5]  \n\u6B64\u7CFB\u7D71\u5F37\u8ABF\u6A21\u578B\u7121\u95DC\u8A2D\u8A08\uFF0C\u652F\u6301\u7570\u6B65\u5B50\u4EE3\u7406\u3001\u5DE5\u5177\u6574\u5408\u8207\u8907\u96DC\u5DE5\u4F5C\u6D41\uFF0C\u512A\u65BC\u55AE\u4E00\u6A21\u578B\u5728\u7814\u7A76\u8207\u4EE3\u7406\u4EFB\u52D9\u4E0A\u7684\u8868\u73FE\u3002[3][5]  \n\u4F5C\u70BA\u641C\u5C0B\u5C0E\u5411\u52A9\u624B\uFF0C\u6211\u4E0D\u4F9D\u8CF4\u55AE\u4E00\u9589\u6E90 LLM\uFF0C\u800C\u662F\u900F\u904E\u6B64\u67B6\u69CB\u63D0\u4F9B\u5373\u6642\u3001\u591A\u4F86\u6E90\u67E5\u8B49\u3002[2][5][6]",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "pplx-sonar"
+    },
+    {
+      "Id": "c409f32f-14ee-4ce3-b297-baad8cd5591e",
+      "X": 1150.0023980800001,
+      "Y": 113.98299527999998,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u8AB0",
+      "BottomText": "\u6211\u662F **OpenAI GPT-5.4**\uFF0C\u7531 **OpenAI** \u958B\u767C\u7684 AI \u8A9E\u8A00\u6A21\u578B\uFF0C\u80FD\u5354\u52A9\u56DE\u7B54\u554F\u984C\u3001\u6574\u7406\u8CC7\u8A0A\u3001\u64B0\u5BEB\u8207\u7FFB\u8B6F\u5167\u5BB9\u3001\u5206\u6790\u8CC7\u6599\uFF0C\u4EE5\u53CA\u9032\u884C\u5404\u7A2E\u6587\u5B57\u8655\u7406\u4EFB\u52D9\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4"
+    },
+    {
+      "Id": "23cf1514-79da-4485-a43a-fef59f88811e",
+      "X": 1137.2471588800001,
+      "Y": 697.88950088,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u8AB0",
+      "BottomText": "\u6211\u662F **Claude Sonnet 4.6**\uFF0C\u7531 **Anthropic** \u958B\u767C\u7684 AI \u8A9E\u8A00\u52A9\u624B\u3002\u6211\u80FD\u5354\u52A9\u56DE\u7B54\u554F\u984C\u3001\u6574\u7406\u8207\u5206\u6790\u8CC7\u8A0A\u3001\u64B0\u5BEB\u8207\u7FFB\u8B6F\u5167\u5BB9\uFF0C\u4EE5\u53CA\u8655\u7406\u5404\u7A2E\u6587\u5B57\u76F8\u95DC\u4EFB\u52D9\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "claude-sonnet-4-6"
+    }
+  ],
+  "Connections": [
+    {
+      "StartId": "3240a8f2-26fd-42c8-a784-b720e08f7288",
+      "EndId": "c409f32f-14ee-4ce3-b297-baad8cd5591e",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "3240a8f2-26fd-42c8-a784-b720e08f7288",
+      "EndId": "23cf1514-79da-4485-a43a-fef59f88811e",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    }
+  ],
+  "Attachments": [],
+  "FileNameLocked": false
+}
