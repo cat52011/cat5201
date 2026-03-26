@@ -36,6 +36,14 @@ namespace test
             public string EndThumb { get; set; } = "ThumbTR";
         }
 
+        private sealed class PerplexityContextBundle
+        {
+            public string UpstreamContext { get; set; } = "";
+            public string DownstreamContext { get; set; } = "";
+            public string OtherNodesContext { get; set; } = "";
+            public string AttachmentHint { get; set; } = "";
+        }
+
         public NodeService(AiServiceRouter router, MainWindow main)
         {
             _router = router;
@@ -67,13 +75,19 @@ $@"
 你目前實際執行的模型是：{runtimeLabel}。
 若使用者詢問你是什麼模型、你來自哪一家、或你是否為 OpenAI / Claude / Perplexity，
 你必須依照上面這個實際模型名稱誠實回答。
-不要把自己說成別的模型，不要把自己統稱為 OpenAI，也不要捏造未提供的型號。";
+不要把自己說成別的模型，不要把自己統稱為 OpenAI，也不要捏造未提供的型號。
+若使用者沒有詢問模型身分，就不要主動提起。";
+        }
+
+        private static string BuildContinuationEndMarkerInstruction()
+        {
+            return "\n\n完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
         private static string BuildGeneralNodeInstructions(string model)
         {
             return
-                "你是一個節點內容生成助手。" +
+                "你是一個專業的節點內容生成助手。" +
                 "請直接完成目前節點上半部要求的內容，不要先寫任務流程、操作步驟、整理原則、校對流程、備份說明或前言。" +
                 "除非使用者明確要求步驟說明，否則請直接輸出結果本身。" +
                 "若是翻譯需求，就直接翻譯；若是整理需求，就直接整理完成內容；若是問答需求，就直接回答。" +
@@ -81,16 +95,39 @@ $@"
                 "可以參考上下游節點，但不要被其它節點的語氣或格式帶偏。" +
                 "若有附件（圖片/檔案），請閱讀後直接根據附件內容作答。" +
                 BuildModelIdentityGuard(model) +
-                "\n\n完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
+                BuildContinuationEndMarkerInstruction();
         }
 
         private static string BuildPerplexityInstructions(string model, bool isDeepResearch)
         {
-            var baseText = isDeepResearch
-                ? "你是一個研究型節點內容生成助手。請直接輸出整理完成後的內容本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。"
-                : "你是一個即時搜尋型節點內容生成助手。請直接輸出完成結果本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。";
+            string baseText = isDeepResearch
+                ? "你是一個研究型節點內容助手。請直接輸出整理完成後的內容本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。"
+                : "你是一個搜尋型節點內容助手。請直接輸出完成結果本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。";
 
-            return baseText + BuildModelIdentityGuard(model);
+            return
+                baseText +
+                BuildModelIdentityGuard(model) +
+                BuildContinuationEndMarkerInstruction();
+        }
+
+        private static string BuildSegmentDiscoveryInstructions()
+        {
+            return
+                "你是一個文件段落規劃助手。" +
+                "請根據附件文件本身的實際內容，按原始順序拆分為適合逐段處理的邏輯段落。" +
+                "不要虛構文件不存在的章節，不要加入品牌或模型自我介紹。" +
+                "請只輸出合法 JSON，不要輸出 markdown，不要加任何前後說明。";
+        }
+
+        private static string BuildSegmentTranslationInstructions()
+        {
+            return
+                "你是一個文件分段翻譯助手。" +
+                "請直接輸出這一段翻譯完成後的內容本身。" +
+                "不要加入前言、摘要、操作說明或步驟。" +
+                "若遇到菜單、PDF 或附件，請只翻譯指定段落。" +
+                "若模型不確定分段邊界，也不得重複輸出前面已翻過的大段內容。" +
+                "不要主動宣稱自己屬於任何特定品牌、公司或模型。";
         }
 
         public async Task<string> GenerateAsync(NodeControl node, string topText, CancellationToken ct)
@@ -127,10 +164,10 @@ $@"
         }
 
         public async Task<string> GenerateStreamAsync(
-    NodeControl node,
-    string topText,
-    Action<string> onDelta,
-    CancellationToken ct)
+            NodeControl node,
+            string topText,
+            Action<string> onDelta,
+            CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
@@ -173,8 +210,8 @@ $@"
             {
                 return await GeneratePerplexitySonarWithContinuationAsync(currentNode, topText, model, ct);
             }
-            string instructions = BuildGeneralNodeInstructions(model);
 
+            string instructions = BuildGeneralNodeInstructions(model);
             var prompt = BuildPromptForNode(currentNode, topText);
 
             return await GenerateWithContinuationAsync(
@@ -205,7 +242,6 @@ $@"
             }
 
             string instructions = BuildGeneralNodeInstructions(model);
-
             var prompt = BuildPromptForNode(currentNode, topText);
 
             return await GenerateWithContinuationStreamingAsync(
@@ -469,9 +505,7 @@ $@"
             string sonarModel = _router.MapPerplexitySonarModel(model);
             var svc = _router.GetPerplexitySonarService(sonarModel);
 
-            string instructions = isDeepResearch
-                ? "你是一個研究型節點內容生成助手。請直接輸出整理完成後的內容本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。"
-                : "你是一個即時搜尋型節點內容生成助手。請直接輸出完成結果本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。";
+            string instructions = BuildPerplexityInstructions(model, isDeepResearch);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
             {
@@ -542,9 +576,7 @@ $@"
             string sonarModel = _router.MapPerplexitySonarModel(model);
             var svc = _router.GetPerplexitySonarService(sonarModel);
 
-            string instructions = isDeepResearch
-                ? "你是一個研究型節點內容生成助手。請直接輸出整理完成後的內容本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。"
-                : "你是一個即時搜尋型節點內容生成助手。請直接輸出完成結果本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。";
+            string instructions = BuildPerplexityInstructions(model, isDeepResearch);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
             {
@@ -643,8 +675,7 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
 使用者需求：
 {topText}";
 
-            string instructions =
-                "你是一個文件切段助手。請只輸出合法 JSON，不要輸出 markdown，不要加任何前後說明。";
+            string instructions = BuildSegmentDiscoveryInstructions();
 
             string raw;
 
@@ -754,12 +785,7 @@ $@"使用者要求：
 5. 若你發現這段內容和前面段落高度重複，請只輸出這一段真正新增的內容，不要重複整份文件。
 6. 這一段完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string instructions =
-                    "你是一個文件分段翻譯助手。" +
-                    "請直接輸出這一段翻譯完成後的內容本身。" +
-                    "不要加入前言、摘要、操作說明或步驟。" +
-                    "若遇到菜單、PDF 或附件，請只翻譯指定段落。" +
-                    "若模型不確定分段邊界，也不得重複輸出前面已翻過的大段內容。";
+                string instructions = BuildSegmentTranslationInstructions();
 
                 string translated = await GenerateWithContinuationAsync(
                     model,
@@ -836,12 +862,7 @@ $@"使用者要求：
 5. 若你發現這段內容和前面段落高度重複，請只輸出這一段真正新增的內容，不要重複整份文件。
 6. 這一段完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string instructions =
-                    "你是一個文件分段翻譯助手。" +
-                    "請直接輸出這一段翻譯完成後的內容本身。" +
-                    "不要加入前言、摘要、操作說明或步驟。" +
-                    "若遇到菜單、PDF 或附件，請只翻譯指定段落。" +
-                    "若模型不確定分段邊界，也不得重複輸出前面已翻過的大段內容。";
+                string instructions = BuildSegmentTranslationInstructions();
 
                 bool segmentStarted = false;
 
@@ -891,15 +912,6 @@ $@"使用者要求：
                 return await GenerateSinglePassOrContinuedStreamAsync(currentNode, topText, model, onDelta, ct);
 
             return final;
-        }
-
-
-        private sealed class PerplexityContextBundle
-        {
-            public string UpstreamContext { get; set; } = "";
-            public string DownstreamContext { get; set; } = "";
-            public string OtherNodesContext { get; set; } = "";
-            public string AttachmentHint { get; set; } = "";
         }
 
         private string BuildPromptForNode(NodeControl current, string topText)
