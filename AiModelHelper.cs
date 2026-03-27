@@ -4,109 +4,60 @@ namespace test
 {
     public static class AiModelHelper
     {
+        public static string NormalizeNodeModel(string? model)
+        {
+            var def = AiModelRegistry.Find(model);
+            return def?.Id ?? AiModelRegistry.Default.Id;
+        }
+
+        public static AiModelDefinition GetDefinition(string? model)
+        {
+            return AiModelRegistry.Find(model) ?? AiModelRegistry.Default;
+        }
+
         public static bool IsOpenAiModel(string model)
-            => !string.IsNullOrWhiteSpace(model) &&
-               string.Equals(model.Trim(), AiModels.OpenAi_Gpt54, StringComparison.OrdinalIgnoreCase);
+            => GetDefinition(model).Provider == AiProviderType.OpenAI;
 
         public static bool IsClaudeModel(string model)
-            => !string.IsNullOrWhiteSpace(model) &&
-               (string.Equals(model.Trim(), AiModels.Claude_Sonnet46, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(model.Trim(), AiModels.Claude_Opus46, StringComparison.OrdinalIgnoreCase));
+            => GetDefinition(model).Provider == AiProviderType.Claude;
 
         public static bool IsPerplexitySonarModel(string model)
-            => !string.IsNullOrWhiteSpace(model) &&
-               (string.Equals(model.Trim(), AiModels.Perplexity_Sonar, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(model.Trim(), AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase));
+            => GetDefinition(model).Provider == AiProviderType.Perplexity;
 
         public static bool IsPerplexityDeepResearchModel(string model)
-            => !string.IsNullOrWhiteSpace(model) &&
-               string.Equals(model.Trim(), AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase);
+            => GetDefinition(model).IsDeepResearch;
 
         public static string MapPerplexitySonarModel(string model)
         {
-            model = NormalizeNodeModel(model);
-
-            return model switch
-            {
-                AiModels.Perplexity_Sonar => "sonar",
-                AiModels.Perplexity_SonarDeepResearch => "sonar-deep-research",
-                _ => AiModels.DefaultPerplexitySonarApiModel
-            };
-        }
-
-        public static string NormalizeNodeModel(string? model)
-        {
-            if (string.IsNullOrWhiteSpace(model))
-                return AiModels.DefaultNodeModel;
-
-            var m = model.Trim();
-
-            if (string.Equals(m, AiModels.OpenAi_Gpt54, StringComparison.OrdinalIgnoreCase))
-                return AiModels.OpenAi_Gpt54;
-
-            if (string.Equals(m, AiModels.Claude_Sonnet46, StringComparison.OrdinalIgnoreCase))
-                return AiModels.Claude_Sonnet46;
-
-            if (string.Equals(m, AiModels.Claude_Opus46, StringComparison.OrdinalIgnoreCase))
-                return AiModels.Claude_Opus46;
-
-            if (string.Equals(m, AiModels.Perplexity_Sonar, StringComparison.OrdinalIgnoreCase))
-                return AiModels.Perplexity_Sonar;
-
-            if (string.Equals(m, AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase))
-                return AiModels.Perplexity_SonarDeepResearch;
-
-            return AiModels.DefaultNodeModel;
+            var def = GetDefinition(model);
+            return string.IsNullOrWhiteSpace(def.ServiceModel)
+                ? AiModels.DefaultPerplexitySonarApiModel
+                : def.ServiceModel;
         }
 
         public static AiProviderKind GetProviderKind(string? model)
         {
-            var normalized = NormalizeNodeModel(model);
+            var def = GetDefinition(model);
 
-            if (IsClaudeModel(normalized))
-                return AiProviderKind.Claude;
-
-            if (IsPerplexitySonarModel(normalized))
-                return AiProviderKind.PerplexitySonar;
-
-            if (IsOpenAiModel(normalized))
-                return AiProviderKind.OpenAI;
-
-            return AiProviderKind.Unknown;
+            return def.Provider switch
+            {
+                AiProviderType.OpenAI => AiProviderKind.OpenAI,
+                AiProviderType.Claude => AiProviderKind.Claude,
+                AiProviderType.Perplexity => AiProviderKind.PerplexitySonar,
+                _ => AiProviderKind.Unknown
+            };
         }
 
         public static AiRouteInfo BuildRouteInfo(string? model)
         {
-            var normalized = NormalizeNodeModel(model);
-
-            if (IsClaudeModel(normalized))
-            {
-                return new AiRouteInfo
-                {
-                    NodeModel = normalized,
-                    Provider = AiProviderKind.Claude,
-                    ServiceModel = normalized,
-                    IsDeepResearch = false
-                };
-            }
-
-            if (IsPerplexitySonarModel(normalized))
-            {
-                return new AiRouteInfo
-                {
-                    NodeModel = normalized,
-                    Provider = AiProviderKind.PerplexitySonar,
-                    ServiceModel = MapPerplexitySonarModel(normalized),
-                    IsDeepResearch = IsPerplexityDeepResearchModel(normalized)
-                };
-            }
+            var def = GetDefinition(model);
 
             return new AiRouteInfo
             {
-                NodeModel = AiModels.OpenAi_Gpt54,
-                Provider = AiProviderKind.OpenAI,
-                ServiceModel = AiModels.OpenAi_Gpt54,
-                IsDeepResearch = false
+                NodeModel = def.Id,
+                Provider = GetProviderKind(def.Id),
+                ServiceModel = string.IsNullOrWhiteSpace(def.ServiceModel) ? def.Id : def.ServiceModel,
+                IsDeepResearch = def.IsDeepResearch
             };
         }
     }

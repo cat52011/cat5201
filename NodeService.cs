@@ -22,6 +22,13 @@ namespace test
         private const int SegmentTranslationMaxTokens = 8000;
         private const int OtherNodeContextLimit = 3;
 
+        private enum NodeContextStrategy
+        {
+            Full = 0,
+            CompactSearch = 1,
+            Research = 2
+        }
+
         private sealed class SegmentPlanItem
         {
             public string Title { get; set; } = "";
@@ -36,7 +43,7 @@ namespace test
             public string EndThumb { get; set; } = "ThumbTR";
         }
 
-        private sealed class PerplexityContextBundle
+        private sealed class NodeContextBundle
         {
             public string UpstreamContext { get; set; } = "";
             public string DownstreamContext { get; set; } = "";
@@ -52,16 +59,15 @@ namespace test
 
         private static string GetRuntimeModelLabel(string model)
         {
-            model = AiModelHelper.NormalizeNodeModel(model);
+            var def = AiModelHelper.GetDefinition(model);
 
-            return model switch
-            {
-                "claude-sonnet-4-6" => "Claude Sonnet 4.6",
-                "claude-opus-4-6" => "Claude Opus 4.6",
-                "pplx-sonar" => "Perplexity Sonar",
-                "pplx-sonar-deep-research" => "Perplexity Sonar Deep Research",
-                _ => "OpenAI GPT-5.4"
-            };
+            if (!string.IsNullOrWhiteSpace(def.DisplayName))
+                return def.DisplayName;
+
+            if (!string.IsNullOrWhiteSpace(def.Id))
+                return def.Id;
+
+            return AiModelRegistry.Default.DisplayName;
         }
 
         private static string BuildModelIdentityGuard(string model)
@@ -212,7 +218,7 @@ $@"
             }
 
             string instructions = BuildGeneralNodeInstructions(model);
-            var prompt = BuildPromptForNode(currentNode, topText);
+            string prompt = BuildPromptForNode(currentNode, topText, NodeContextStrategy.Full);
 
             return await GenerateWithContinuationAsync(
                 model,
@@ -242,7 +248,7 @@ $@"
             }
 
             string instructions = BuildGeneralNodeInstructions(model);
-            var prompt = BuildPromptForNode(currentNode, topText);
+            string prompt = BuildPromptForNode(currentNode, topText, NodeContextStrategy.Full);
 
             return await GenerateWithContinuationStreamingAsync(
                 model,
@@ -506,6 +512,7 @@ $@"
             var svc = _router.GetPerplexitySonarService(sonarModel);
 
             string instructions = BuildPerplexityInstructions(model, isDeepResearch);
+            var strategy = GetContextStrategy(model);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
             {
@@ -522,7 +529,7 @@ $@"
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string prompt = BuildPromptForPerplexitySonar(currentNode, topText, isDeepResearch) + followUp;
+                string prompt = BuildPromptForNode(currentNode, topText, strategy) + followUp;
 
                 string reply = await svc.GenerateAsync(
                     instructions,
@@ -577,6 +584,7 @@ $@"
             var svc = _router.GetPerplexitySonarService(sonarModel);
 
             string instructions = BuildPerplexityInstructions(model, isDeepResearch);
+            var strategy = GetContextStrategy(model);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
             {
@@ -593,7 +601,7 @@ $@"
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string prompt = BuildPromptForPerplexitySonar(currentNode, topText, isDeepResearch) + followUp;
+                string prompt = BuildPromptForNode(currentNode, topText, strategy) + followUp;
 
                 string reply;
 
@@ -914,10 +922,169 @@ $@"使用者要求：
             return final;
         }
 
-        private string BuildPromptForNode(NodeControl current, string topText)
+        private NodeContextStrategy GetContextStrategy(string model)
         {
-            var ctx = BuildPerplexityContextBundle(current, includeOtherNodes: true);
+            if (_router.IsPerplexityDeepResearchModel(model))
+                return NodeContextStrategy.Research;
 
+            if (_router.IsPerplexitySonarModel(model))
+                return NodeContextStrategy.CompactSearch;
+
+            return NodeContextStrategy.Full;
+        }
+
+        private string BuildPromptForNode(NodeControl current, string topText, NodeContextStrategy strategy)
+        {
+            var ctx = BuildContextBundle(current, strategy);
+
+            return strategy switch
+            {
+                NodeContextStrategy.CompactSearch => BuildCompactSearchPrompt(ctx, topText),
+                NodeContextStrategy.Research => BuildResearchPrompt(ctx, topText),
+                _ => BuildFullContextPrompt(ctx, topText)
+            };
+        }
+
+        private NodeContextBundle BuildContextBundle(NodeControl current, NodeContextStrategy strategy)
+        {
+            return strategy switch
+            {
+                NodeContextStrategy.CompactSearch => BuildCompactSearchContextBundle(current),
+                NodeContextStrategy.Research => BuildResearchContextBundle(current),
+                _ => BuildFullContextBundle(current)
+            };
+        }
+
+        private NodeContextBundle BuildFullContextBundle(NodeControl current)
+        {
+            var bundle = CreateBaseContextBundle(current);
+
+            var upstream = CollectUpstream(current, 10);
+            var downstream = CollectDownstream(current, 2);
+
+            bundle.UpstreamContext = BuildContextSection(
+                upstream,
+                topLimit: 220,
+                bottomLimit: 180,
+                maxCount: 6);
+
+            bundle.DownstreamContext = BuildContextSection(
+                downstream,
+                topLimit: 140,
+                bottomLimit: 120,
+                maxCount: 2);
+
+            bundle.OtherNodesContext = BuildOtherNodesContext(
+                current,
+                upstream,
+                downstream,
+                topLimit: 120,
+                bottomLimit: 120,
+                maxCount: OtherNodeContextLimit);
+
+            return bundle;
+        }
+
+        private NodeContextBundle BuildCompactSearchContextBundle(NodeControl current)
+        {
+            var bundle = CreateBaseContextBundle(current);
+
+            var upstream = CollectUpstream(current, 10);
+
+            bundle.UpstreamContext = BuildContextSection(
+                upstream,
+                topLimit: 180,
+                bottomLimit: 120,
+                maxCount: 4);
+
+            bundle.DownstreamContext = "";
+            bundle.OtherNodesContext = "";
+
+            return bundle;
+        }
+
+        private NodeContextBundle BuildResearchContextBundle(NodeControl current)
+        {
+            var bundle = CreateBaseContextBundle(current);
+
+            var upstream = CollectUpstream(current, 10);
+            var downstream = CollectDownstream(current, 2);
+
+            bundle.UpstreamContext = BuildContextSection(
+                upstream,
+                topLimit: 220,
+                bottomLimit: 180,
+                maxCount: 6);
+
+            bundle.DownstreamContext = BuildContextSection(
+                downstream,
+                topLimit: 140,
+                bottomLimit: 120,
+                maxCount: 2);
+
+            bundle.OtherNodesContext = BuildOtherNodesContext(
+                current,
+                upstream,
+                downstream,
+                topLimit: 120,
+                bottomLimit: 120,
+                maxCount: OtherNodeContextLimit);
+
+            return bundle;
+        }
+
+        private NodeContextBundle CreateBaseContextBundle(NodeControl current)
+        {
+            var bundle = new NodeContextBundle();
+
+            var atts = _main.GetAttachmentsForNode(current);
+            if (atts.Count > 0)
+            {
+                bundle.AttachmentHint =
+                    "\n\n【本節點附件】\n" +
+                    string.Join("\n", atts.Select(a => $"- ({a.Kind}) {a.FileName}"));
+            }
+
+            return bundle;
+        }
+
+        private string BuildOtherNodesContext(
+            NodeControl current,
+            IEnumerable<NodeControl> upstream,
+            IEnumerable<NodeControl> downstream,
+            int topLimit,
+            int bottomLimit,
+            int maxCount)
+        {
+            var mainSet = new HashSet<Guid> { current.Id };
+            foreach (var n in upstream) mainSet.Add(n.Id);
+            foreach (var n in downstream) mainSet.Add(n.Id);
+
+            var others = _main.GetAllNodesInCanvas()
+                .Where(n => !mainSet.Contains(n.Id))
+                .Take(maxCount)
+                .ToList();
+
+            if (others.Count == 0)
+                return "";
+
+            var lines = new List<string>
+            {
+                $"（以下為同檔案其它節點的低權重參考，最多顯示 {maxCount} 個）"
+            };
+
+            foreach (var n in others)
+            {
+                var top = Truncate((n.GetTopText() ?? "").Trim(), topLimit);
+                var bottom = Truncate((n.GetBottomText() ?? "").Trim(), bottomLimit);
+                lines.Add($"- Node {n.Id}\nTop: {top}\nBottom: {bottom}".Trim());
+            }
+
+            return string.Join("\n\n", lines);
+        }
+
+        private string BuildFullContextPrompt(NodeContextBundle ctx, string topText)
+        {
             string primaryContext;
             if (string.IsNullOrWhiteSpace(ctx.UpstreamContext) && string.IsNullOrWhiteSpace(ctx.DownstreamContext))
             {
@@ -972,52 +1139,8 @@ $@"你正在一個節點式筆記檔案中工作。
 6. 完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
-        private string BuildPromptForPerplexitySonar(NodeControl current, string topText, bool isDeepResearch)
+        private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText)
         {
-            var ctx = BuildPerplexityContextBundle(current, includeOtherNodes: isDeepResearch);
-
-            if (isDeepResearch)
-            {
-                string upstreamPart = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
-                    ? "（無上游背景）"
-                    : ctx.UpstreamContext;
-
-                string downstreamPart = string.IsNullOrWhiteSpace(ctx.DownstreamContext)
-                    ? "（目前沒有明確下游）"
-                    : ctx.DownstreamContext;
-
-                string otherNodesPart = string.IsNullOrWhiteSpace(ctx.OtherNodesContext)
-                    ? "（無其它節點參考）"
-                    : ctx.OtherNodesContext;
-
-                return
-$@"你正在處理一個節點式研究任務。
-請先理解目前問題，再結合中度上下文鏈做較完整的研究、查證、補充與整理。
-直接輸出結果本身，使用繁體中文。
-不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
-
-【上游背景（中度重要）】
-{upstreamPart}
-
-【目前節點內容】
-{topText}
-{ctx.AttachmentHint}
-
-【可參考的下游方向】
-{downstreamPart}
-
-【同檔案其它節點（低權重參考）】
-{otherNodesPart}
-
-要求：
-1. 優先回答目前節點問題，不要被其它節點帶偏。
-2. 若上游是前情提要、先前整理或研究方向，請承接它再深化。
-3. 可進行查證、補充、比較、延伸分析，但仍要圍繞目前節點。
-4. 若附件是主要來源，請把附件視為高權重背景。
-5. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
-6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
-            }
-
             string compactUpstream = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
                 ? "（無上游背景）"
                 : ctx.UpstreamContext;
@@ -1044,63 +1167,46 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
-        private PerplexityContextBundle BuildPerplexityContextBundle(NodeControl current, bool includeOtherNodes)
+        private string BuildResearchPrompt(NodeContextBundle ctx, string topText)
         {
-            var bundle = new PerplexityContextBundle();
+            string upstreamPart = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
+                ? "（無上游背景）"
+                : ctx.UpstreamContext;
 
-            var atts = _main.GetAttachmentsForNode(current);
-            if (atts.Count > 0)
-            {
-                bundle.AttachmentHint =
-                    "\n\n【本節點附件】\n" +
-                    string.Join("\n", atts.Select(a => $"- ({a.Kind}) {a.FileName}"));
-            }
+            string downstreamPart = string.IsNullOrWhiteSpace(ctx.DownstreamContext)
+                ? "（目前沒有明確下游）"
+                : ctx.DownstreamContext;
 
-            var upstream = CollectUpstream(current, 10);
-            var downstream = CollectDownstream(current, 2);
+            string otherNodesPart = string.IsNullOrWhiteSpace(ctx.OtherNodesContext)
+                ? "（無其它節點參考）"
+                : ctx.OtherNodesContext;
 
-            bundle.UpstreamContext = BuildContextSection(
-                upstream,
-                topLimit: 220,
-                bottomLimit: 180,
-                maxCount: includeOtherNodes ? 6 : 4);
+            return
+$@"你正在處理一個節點式研究任務。
+請先理解目前問題，再結合中度上下文鏈做較完整的研究、查證、補充與整理。
+直接輸出結果本身，使用繁體中文。
+不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
 
-            bundle.DownstreamContext = BuildContextSection(
-                downstream,
-                topLimit: 140,
-                bottomLimit: 120,
-                maxCount: includeOtherNodes ? 2 : 1);
+【上游背景（中度重要）】
+{upstreamPart}
 
-            if (includeOtherNodes)
-            {
-                var mainSet = new HashSet<Guid> { current.Id };
-                foreach (var n in upstream) mainSet.Add(n.Id);
-                foreach (var n in downstream) mainSet.Add(n.Id);
+【目前節點內容】
+{topText}
+{ctx.AttachmentHint}
 
-                var others = _main.GetAllNodesInCanvas()
-                    .Where(n => !mainSet.Contains(n.Id))
-                    .Take(OtherNodeContextLimit)
-                    .ToList();
+【可參考的下游方向】
+{downstreamPart}
 
-                if (others.Count > 0)
-                {
-                    var lines = new List<string>
-                    {
-                        $"（以下為同檔案其它節點的低權重參考，最多顯示 {OtherNodeContextLimit} 個）"
-                    };
+【同檔案其它節點（低權重參考）】
+{otherNodesPart}
 
-                    foreach (var n in others)
-                    {
-                        var top = Truncate((n.GetTopText() ?? "").Trim(), 120);
-                        var bottom = Truncate((n.GetBottomText() ?? "").Trim(), 120);
-                        lines.Add($"- Node {n.Id}\nTop: {top}\nBottom: {bottom}".Trim());
-                    }
-
-                    bundle.OtherNodesContext = string.Join("\n\n", lines);
-                }
-            }
-
-            return bundle;
+要求：
+1. 優先回答目前節點問題，不要被其它節點帶偏。
+2. 若上游是前情提要、先前整理或研究方向，請承接它再深化。
+3. 可進行查證、補充、比較、延伸分析，但仍要圍繞目前節點。
+4. 若附件是主要來源，請把附件視為高權重背景。
+5. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
+6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
         private static string BuildContextSection(

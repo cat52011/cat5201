@@ -177,15 +177,27 @@ namespace test
         public PerplexityService GetPerplexityToolService()
             => _aiRouter.GetPerplexityToolService();
 
+        private string GetDefaultNodeModelId()
+        {
+            return AiModelRegistry.Default.Id;
+        }
+
+        private string NormalizeOrDefaultNodeModel(string? model)
+        {
+            return _aiRouter.NormalizeNodeModel(string.IsNullOrWhiteSpace(model)
+                ? GetDefaultNodeModelId()
+                : model);
+        }
+
         public string GetNodeSelectedModel(NodeControl node)
         {
             if (node == null)
-                return AiModels.DefaultNodeModel;
+                return GetDefaultNodeModelId();
 
             if (_nodeModelsById.TryGetValue(node.Id, out var model))
-                return _aiRouter.NormalizeNodeModel(model);
+                return NormalizeOrDefaultNodeModel(model);
 
-            var fallback = AiModels.DefaultNodeModel;
+            var fallback = GetDefaultNodeModelId();
             _nodeModelsById[node.Id] = fallback;
             return fallback;
         }
@@ -194,7 +206,7 @@ namespace test
         {
             if (node == null) return;
 
-            _nodeModelsById[node.Id] = _aiRouter.NormalizeNodeModel(model);
+            _nodeModelsById[node.Id] = NormalizeOrDefaultNodeModel(model);
             SaveState();
         }
 
@@ -300,7 +312,7 @@ namespace test
                 MainCanvas.Children.Add(node);
                 HookNode(node);
 
-                _nodeModelsById[node.Id] = "gpt-5.4";
+                _nodeModelsById[node.Id] = GetDefaultNodeModelId();
                 _initialNode = node;
 
                 _scale = 1.0;
@@ -617,7 +629,7 @@ namespace test
         public void HookNode(NodeControl node)
         {
             if (!_nodeModelsById.ContainsKey(node.Id))
-                _nodeModelsById[node.Id] = "gpt-5.4";
+                _nodeModelsById[node.Id] = GetDefaultNodeModelId();
 
             node.Moved -= Node_Moved;
             node.Moved += Node_Moved;
@@ -654,7 +666,7 @@ namespace test
             MainCanvas.Children.Add(node);
             HookNode(node);
 
-            _nodeModelsById[node.Id] = AiModels.DefaultNodeModel;
+            _nodeModelsById[node.Id] = GetDefaultNodeModelId();
 
             RequestBeginEdit(node, EditReason.NewNode);
 
@@ -1239,11 +1251,12 @@ namespace test
                 return "";
 
             string model = GetNodeSelectedModel(node);
+            var route = _aiRouter.GetRouteInfo(model);
 
             string instructions = "你是一個善於替筆記自動命名的助手。";
 
             string user =
-$@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短標題/關鍵字」：
+        $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短標題/關鍵字」：
 - 使用繁體中文
 - 盡量 6~16 字
 - 只輸出標題本身，不要加引號、不要加編號、不要加任何解釋
@@ -1252,26 +1265,42 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 內容：
 {Truncate(topText.Trim(), 800)}";
 
-            if (_aiRouter.IsPerplexitySonarModel(model))
+            switch (route.Provider)
             {
-                var svc = _aiRouter.GetPerplexitySonarService(_aiRouter.MapPerplexitySonarModel(model));
-                var text = await svc.GenerateAsync(
-                    instructions,
-                    user,
-                    maxOutputTokens: 200,
-                    ct: ct);
+                case AiProviderKind.PerplexitySonar:
+                    {
+                        var svc = _aiRouter.GetPerplexitySonarService(route.ServiceModel);
+                        var text = await svc.GenerateAsync(
+                            instructions,
+                            user,
+                            maxOutputTokens: 200,
+                            ct: ct);
 
-                return (text ?? "").Trim();
-            }
-            else if (_aiRouter.IsClaudeModel(model))
-            {
-                var text = await _aiRouter.GetClaudeService(model).GenerateAsync(instructions, user, maxOutputTokens: 200, ct: ct);
-                return (text ?? "").Trim();
-            }
-            else
-            {
-                var text = await _aiRouter.GetOpenAiService(model).GenerateAsync(instructions, user, maxOutputTokens: 200, ct: ct);
-                return (text ?? "").Trim();
+                        return (text ?? "").Trim();
+                    }
+
+                case AiProviderKind.Claude:
+                    {
+                        var text = await _aiRouter.GetClaudeService(route.NodeModel).GenerateAsync(
+                            instructions,
+                            user,
+                            maxOutputTokens: 200,
+                            ct: ct);
+
+                        return (text ?? "").Trim();
+                    }
+
+                case AiProviderKind.OpenAI:
+                default:
+                    {
+                        var text = await _aiRouter.GetOpenAiService(route.NodeModel).GenerateAsync(
+                            instructions,
+                            user,
+                            maxOutputTokens: 200,
+                            ct: ct);
+
+                        return (text ?? "").Trim();
+                    }
             }
         }
 

@@ -16,6 +16,9 @@ namespace test
         public string NormalizeNodeModel(string? model)
             => AiModelHelper.NormalizeNodeModel(model);
 
+        public AiModelDefinition GetDefinition(string? model)
+            => AiModelHelper.GetDefinition(model);
+
         public bool IsOpenAiModel(string model)
             => AiModelHelper.IsOpenAiModel(model);
 
@@ -61,12 +64,13 @@ namespace test
 
         public OpenAIChatService GetOpenAiService(string model)
         {
-            model = NormalizeNodeModel(model);
+            var def = GetDefinition(model);
+            var serviceModel = string.IsNullOrWhiteSpace(def.ServiceModel) ? def.Id : def.ServiceModel;
 
-            if (_openAi == null || !string.Equals(_openAiModel, model, StringComparison.OrdinalIgnoreCase))
+            if (_openAi == null || !string.Equals(_openAiModel, serviceModel, StringComparison.OrdinalIgnoreCase))
             {
-                _openAi = new OpenAIChatService(model: model);
-                _openAiModel = model;
+                _openAi = new OpenAIChatService(model: serviceModel);
+                _openAiModel = serviceModel;
             }
 
             return _openAi;
@@ -74,12 +78,13 @@ namespace test
 
         public ClaudeChatService GetClaudeService(string model)
         {
-            model = NormalizeNodeModel(model);
+            var def = GetDefinition(model);
+            var serviceModel = string.IsNullOrWhiteSpace(def.ServiceModel) ? def.Id : def.ServiceModel;
 
-            if (_claude == null || !string.Equals(_claudeModel, model, StringComparison.OrdinalIgnoreCase))
+            if (_claude == null || !string.Equals(_claudeModel, serviceModel, StringComparison.OrdinalIgnoreCase))
             {
-                _claude = new ClaudeChatService(model: model);
-                _claudeModel = model;
+                _claude = new ClaudeChatService(model: serviceModel);
+                _claudeModel = serviceModel;
             }
 
             return _claude;
@@ -87,14 +92,18 @@ namespace test
 
         public PerplexitySonarService GetPerplexitySonarService(string model)
         {
-            model = string.IsNullOrWhiteSpace(model)
-                ? AiModels.DefaultPerplexitySonarApiModel
-                : model.Trim();
+            string serviceModel;
 
-            if (_perplexitySonar == null || !string.Equals(_perplexitySonarModel, model, StringComparison.OrdinalIgnoreCase))
+            var def = AiModelRegistry.Find(model);
+            if (def != null && def.Provider == AiProviderType.Perplexity)
+                serviceModel = string.IsNullOrWhiteSpace(def.ServiceModel) ? AiModels.DefaultPerplexitySonarApiModel : def.ServiceModel;
+            else
+                serviceModel = string.IsNullOrWhiteSpace(model) ? AiModels.DefaultPerplexitySonarApiModel : model.Trim();
+
+            if (_perplexitySonar == null || !string.Equals(_perplexitySonarModel, serviceModel, StringComparison.OrdinalIgnoreCase))
             {
-                _perplexitySonar = new PerplexitySonarService(model);
-                _perplexitySonarModel = model;
+                _perplexitySonar = new PerplexitySonarService(serviceModel);
+                _perplexitySonarModel = serviceModel;
             }
 
             return _perplexitySonar;

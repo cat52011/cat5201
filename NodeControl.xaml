@@ -526,77 +526,23 @@
           IsEnabled="False"
           SelectionChanged="ModelSelector_SelectionChanged"
           ToolTip="選擇此對話區塊使用的模型"
-          MaxDropDownHeight="240">
+          MaxDropDownHeight="240"
+          DisplayMemberPath="{x:Null}"
+          SelectedValuePath="Id">
 
-                                <ComboBoxItem Tag="gpt-5.4">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="/Assets/OpenAI_logo.png"
-                   Width="14"
-                   Height="14"
-                   Stretch="Uniform"
-                   Margin="0,0,6,0"/>
-                                        <TextBlock Text="GPT-5.4"
-                       FontSize="12"
-                       Foreground="#222222"
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Image Source="{Binding IconPath}"
+                       Width="14"
+                       Height="14"
+                       Margin="0,0,6,0"
                        VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </ComboBoxItem>
-
-                                <ComboBoxItem Tag="claude-sonnet-4-6">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="/Assets/Claude_logo.png"
-                   Width="14"
-                   Height="14"
-                   Stretch="Uniform"
-                   Margin="0,0,6,0"/>
-                                        <TextBlock Text="Claude Sonnet 4.6"
-                       FontSize="12"
-                       Foreground="#222222"
-                       VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </ComboBoxItem>
-
-                                <ComboBoxItem Tag="claude-opus-4-6">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="/Assets/Claude_logo.png"
-                   Width="14"
-                   Height="14"
-                   Stretch="Uniform"
-                   Margin="0,0,6,0"/>
-                                        <TextBlock Text="Claude Opus 4.6"
-                       FontSize="12"
-                       Foreground="#222222"
-                       VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </ComboBoxItem>
-
-                                <ComboBoxItem Tag="pplx-sonar">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="/Assets/Perplexity_logo.png"
-                   Width="14"
-                   Height="14"
-                   Stretch="Uniform"
-                   Margin="0,0,6,0"/>
-                                        <TextBlock Text="Perplexity Sonar"
-                       FontSize="12"
-                       Foreground="#222222"
-                       VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </ComboBoxItem>
-
-                                <ComboBoxItem Tag="pplx-sonar-deep-research">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="/Assets/Perplexity_logo.png"
-                   Width="14"
-                   Height="14"
-                   Stretch="Uniform"
-                   Margin="0,0,6,0"/>
-                                        <TextBlock Text="Perplexity Deep Research"
-                       FontSize="12"
-                       Foreground="#222222"
-                       VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </ComboBoxItem>
+                                            <TextBlock Text="{Binding DisplayName}"
+                           VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
                             </ComboBox>
                         </Grid>
                     </Border>

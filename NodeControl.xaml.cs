@@ -11,7 +11,6 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
-using System.Windows.Threading;
 
 namespace test
 {
@@ -31,6 +30,7 @@ namespace test
         private double _fontSize = 20;
 
         private bool _isSyncingModelSelector = false;
+        private bool _modelsLoaded = false;
 
         public event EventHandler? Moved;
         public event EventHandler? ContentChanged;
@@ -64,6 +64,7 @@ namespace test
             Loaded += (s, e) =>
             {
                 _parent = Window.GetWindow(this) as MainWindow;
+                EnsureModelSelectorLoaded();
                 ApplyFontSize(_fontSize);
                 RefreshAttachmentsUI();
                 SyncModelSelectorFromParent();
@@ -91,6 +92,7 @@ namespace test
             TopEditor.Focus();
             TopEditor.CaretIndex = TopEditor.Text?.Length ?? 0;
 
+            EnsureModelSelectorLoaded();
             SyncModelSelectorFromParent();
             UpdateEditButtons();
         }
@@ -106,6 +108,75 @@ namespace test
             TopEditor.IsReadOnly = true;
             UpdateEditButtons();
             _parent?.NotifyEditEnded(this);
+        }
+
+        private void EnsureModelSelectorLoaded()
+        {
+            if (_modelsLoaded || ModelSelector == null)
+                return;
+
+            LoadModelsFromRegistry();
+            _modelsLoaded = true;
+        }
+
+        private void LoadModelsFromRegistry()
+        {
+            if (ModelSelector == null)
+                return;
+
+            string currentSelectedId = GetSelectedModelIdFromComboBox();
+
+            _isSyncingModelSelector = true;
+            try
+            {
+                ModelSelector.ItemsSource = null;
+                ModelSelector.ItemsSource = AiModelRegistry.All;
+            }
+            finally
+            {
+                _isSyncingModelSelector = false;
+            }
+
+            SelectModelInComboBox(currentSelectedId);
+        }
+
+        private string GetSelectedModelIdFromComboBox()
+        {
+            if (ModelSelector?.SelectedItem is AiModelDefinition model &&
+                !string.IsNullOrWhiteSpace(model.Id))
+            {
+                return model.Id.Trim();
+            }
+
+            return AiModels.DefaultNodeModel;
+        }
+
+        private void SelectModelInComboBox(string modelId)
+        {
+            if (ModelSelector == null)
+                return;
+
+            modelId = AiModelHelper.NormalizeNodeModel(modelId);
+
+            _isSyncingModelSelector = true;
+            try
+            {
+                var match = AiModelRegistry.All.FirstOrDefault(x =>
+                    string.Equals(x.Id, modelId, StringComparison.OrdinalIgnoreCase));
+
+                if (match != null)
+                {
+                    ModelSelector.SelectedItem = match;
+                    return;
+                }
+
+                if (AiModelRegistry.All.Count > 0)
+                    ModelSelector.SelectedItem = AiModelRegistry.All[0];
+            }
+            finally
+            {
+                _isSyncingModelSelector = false;
+            }
         }
 
         private void UpdateEditButtons()
@@ -135,46 +206,23 @@ namespace test
 
         private void SyncModelSelectorFromParent()
         {
+            EnsureModelSelectorLoaded();
+
             if (_parent == null || ModelSelector == null)
                 return;
 
             var model = _parent.GetNodeSelectedModel(this);
-
-            _isSyncingModelSelector = true;
-            try
-            {
-                ComboBoxItem? target = null;
-
-                foreach (var item in ModelSelector.Items)
-                {
-                    if (item is ComboBoxItem cbi &&
-                        cbi.Tag is string tag &&
-                        string.Equals(tag, model, StringComparison.OrdinalIgnoreCase))
-                    {
-                        target = cbi;
-                        break;
-                    }
-                }
-
-                if (target != null)
-                    ModelSelector.SelectedItem = target;
-                else
-                    ModelSelector.SelectedIndex = 0;
-            }
-            finally
-            {
-                _isSyncingModelSelector = false;
-            }
+            SelectModelInComboBox(model);
         }
 
         private void ModelSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isSyncingModelSelector) return;
             if (_parent == null) return;
-            if (ModelSelector.SelectedItem is not ComboBoxItem item) return;
-            if (item.Tag is not string model || string.IsNullOrWhiteSpace(model)) return;
+            if (ModelSelector.SelectedItem is not AiModelDefinition model) return;
+            if (string.IsNullOrWhiteSpace(model.Id)) return;
 
-            _parent.SetNodeSelectedModel(this, model);
+            _parent.SetNodeSelectedModel(this, model.Id);
         }
 
         public bool GetTopLocked() => _isTopLocked;
@@ -532,158 +580,10 @@ namespace test
             }
         }
 
-        private void DragHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (_parent == null) return;
-            _isDraggingNode = true;
-            DragHeader.CaptureMouse();
-            _dragStartOnCanvas = e.GetPosition(_parent.MainCanvas);
-            _nodeStartPos = new Point(Canvas.GetLeft(this), Canvas.GetTop(this));
-        }
-
-        private void DragHeader_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (!_isDraggingNode || _parent == null) return;
-            var cur = e.GetPosition(_parent.MainCanvas);
-            var delta = cur - _dragStartOnCanvas;
-            Canvas.SetLeft(this, _nodeStartPos.X + delta.X);
-            Canvas.SetTop(this, _nodeStartPos.Y + delta.Y);
-            Moved?.Invoke(this, EventArgs.Empty);
-        }
-
-        private void DragHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            if (!_isDraggingNode) return;
-            _isDraggingNode = false;
-            DragHeader.ReleaseMouseCapture();
-            Moved?.Invoke(this, EventArgs.Empty);
-        }
-
-        private void Corner_DragStarted(object sender, DragStartedEventArgs e)
-        {
-            var thumb = (Thumb)sender;
-            _startPoint = thumb.TranslatePoint(new Point(thumb.Width / 2, thumb.Height / 2), _parent!.MainCanvas);
-
-            _tempPath = new Path
-            {
-                Stroke = Brushes.Gray,
-                StrokeThickness = 1,
-                StrokeDashArray = new DoubleCollection { 4 },
-                StrokeLineJoin = PenLineJoin.Round
-            };
-            _parent.MainCanvas.Children.Add(_tempPath);
-            Canvas.SetZIndex(_tempPath, int.MaxValue);
-        }
-
-        private void Corner_DragDelta(object sender, DragDeltaEventArgs e)
-        {
-            if (_tempPath == null) return;
-            var current = Mouse.GetPosition(_parent!.MainCanvas);
-            var geom = new PathGeometry();
-            var figure = new PathFigure { StartPoint = _startPoint };
-            var ctrl1 = new Point((_startPoint.X + current.X) / 2, _startPoint.Y);
-            var ctrl2 = new Point((_startPoint.X + current.X) / 2, current.Y);
-            figure.Segments.Add(new BezierSegment(ctrl1, ctrl2, current, true));
-            geom.Figures.Add(figure);
-            _tempPath.Data = geom;
-        }
-
-        private void Corner_DragCompleted(object sender, DragCompletedEventArgs e)
-        {
-            if (_tempPath != null)
-            {
-                _parent!.MainCanvas.Children.Remove(_tempPath);
-                _tempPath = null;
-            }
-
-            var thumb = (Thumb)sender;
-            var end = Mouse.GetPosition(_parent!.MainCanvas);
-
-            var newNode = new NodeControl();
-            _parent!.MainCanvas.Children.Add(newNode);
-
-            newNode.SetFontSize(this._fontSize);
-
-            string inheritedModel = _parent.GetNodeSelectedModel(this);
-            _parent.SetNodeSelectedModel(newNode, inheritedModel);
-
-            string targetThumbName = thumb.Name == "ThumbTL" ? "ThumbTR" : "ThumbTL";
-            Point offset = GetThumbCenterOffset(newNode, targetThumbName);
-
-            Canvas.SetLeft(newNode, end.X - offset.X);
-            Canvas.SetTop(newNode, end.Y - offset.Y);
-            Canvas.SetZIndex(newNode, _parent.GetNextZIndex());
-            _parent.HookNode(newNode);
-
-            _parent.Dispatcher.InvokeAsync(() =>
-            {
-                _parent.CreateCurve(this, thumb.Name, newNode, targetThumbName);
-                newNode.Moved?.Invoke(newNode, EventArgs.Empty);
-                this.Moved?.Invoke(this, EventArgs.Empty);
-                _parent.RequestBeginEdit(newNode, MainWindow.EditReason.NewNode);
-            }, DispatcherPriority.Loaded);
-        }
-
-        private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
-        {
-            var thumb = (Thumb)sender;
-
-            double newWidth = this.Width;
-            double newHeight = this.Height;
-            double left = Canvas.GetLeft(this);
-
-            if (thumb == ThumbBR)
-            {
-                newWidth += e.HorizontalChange;
-                newHeight += e.VerticalChange;
-            }
-            else if (thumb == ThumbBL)
-            {
-                newWidth -= e.HorizontalChange;
-                newHeight += e.VerticalChange;
-
-                if (newWidth > 150)
-                    left += e.HorizontalChange;
-            }
-
-            if (newWidth < 150) newWidth = 150;
-            if (newHeight < 200) newHeight = 200;
-
-            if (thumb == ThumbBL && this.Width != newWidth)
-                Canvas.SetLeft(this, left);
-
-            this.Width = newWidth;
-            this.Height = newHeight;
-
-            Moved?.Invoke(this, EventArgs.Empty);
-        }
-
-        private Point GetThumbCenterOffset(NodeControl node, string thumbName)
-        {
-            if (thumbName == "ThumbTL")
-                return new Point(10 + ThumbTL.Width / 2, 10 + ThumbTL.Height / 2);
-
-            if (thumbName == "ThumbTR")
-                return new Point(270 + ThumbTR.Width / 2, 10 + ThumbTR.Height / 2);
-
-            return new Point(0, 0);
-        }
-
         public string GetTopText() => TopEditor.Text ?? "";
-
-        public void SetTopText(string text)
-        {
-            TopEditor.Text = text ?? "";
-            ContentChanged?.Invoke(this, EventArgs.Empty);
-        }
-
+        public void SetTopText(string text) => TopEditor.Text = text ?? "";
         public string GetBottomText() => BottomDisplay.Text ?? "";
-
-        public void SetBottomText(string text)
-        {
-            BottomDisplay.Text = text ?? "";
-            ContentChanged?.Invoke(this, EventArgs.Empty);
-        }
+        public void SetBottomText(string text) => BottomDisplay.Text = text ?? "";
 
         private sealed class FontSizeSliderDialog : Window
         {
@@ -773,21 +673,16 @@ namespace test
                     Maximum = max,
                     Value = Math.Max(min, Math.Min(max, initialValue)),
                     TickFrequency = 1,
-                    IsSnapToTickEnabled = true,
-                    SmallChange = 1,
-                    LargeChange = 1,
-                    Width = 420,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
+                    IsSnapToTickEnabled = false,
+                    AutoToolTipPlacement = AutoToolTipPlacement.None,
+                    Margin = new Thickness(0, 0, 0, 6)
                 };
-
                 _slider.ValueChanged += (_, __) =>
                 {
-                    var v = (int)Math.Round(_slider.Value);
-                    _valueText.Text = v.ToString(CultureInfo.InvariantCulture);
-                    onPreviewValueChanged(v);
+                    var value = _slider.Value;
+                    _valueText.Text = ((int)Math.Round(value)).ToString(CultureInfo.InvariantCulture);
+                    onPreviewValueChanged?.Invoke(value);
                 };
-
                 Grid.SetRow(_slider, 1);
                 centerPanel.Children.Add(_slider);
 
@@ -798,35 +693,33 @@ namespace test
                 {
                     Orientation = Orientation.Horizontal,
                     HorizontalAlignment = HorizontalAlignment.Right,
-                    Margin = new Thickness(0, 14, 0, 0)
+                    Margin = new Thickness(0, 12, 0, 0)
                 };
 
-                var btnOk = CreateMenuButton("確定", text);
-                btnOk.IsDefault = true;
-                btnOk.Margin = new Thickness(0, 0, 10, 0);
-                btnOk.Click += (_, __) => { DialogResult = true; Close(); };
+                var cancel = CreateDialogButton("取消", text);
+                cancel.IsCancel = true;
+                cancel.Margin = new Thickness(0, 0, 8, 0);
+                cancel.Click += (_, __) =>
+                {
+                    DialogResult = false;
+                    Close();
+                };
 
-                var btnCancel = CreateMenuButton("取消", text);
-                btnCancel.IsCancel = true;
-                btnCancel.Click += (_, __) => { DialogResult = false; Close(); };
+                var ok = CreateDialogButton("確定", text);
+                ok.IsDefault = true;
+                ok.Click += (_, __) =>
+                {
+                    DialogResult = true;
+                    Close();
+                };
 
-                btnPanel.Children.Add(btnOk);
-                btnPanel.Children.Add(btnCancel);
+                btnPanel.Children.Add(cancel);
+                btnPanel.Children.Add(ok);
 
                 Grid.SetRow(btnPanel, 2);
                 root.Children.Add(btnPanel);
 
                 outer.Child = root;
-
-                PreviewMouseWheel += (_, e) =>
-                {
-                    int delta = e.Delta > 0 ? -1 : +1;
-                    double nv = _slider.Value + delta;
-                    if (nv < _slider.Minimum) nv = _slider.Minimum;
-                    if (nv > _slider.Maximum) nv = _slider.Maximum;
-                    _slider.Value = nv;
-                    e.Handled = true;
-                };
 
                 PreviewKeyDown += (_, e) =>
                 {
@@ -843,9 +736,11 @@ namespace test
                         e.Handled = true;
                     }
                 };
+
+                Loaded += (_, __) => _slider.Focus();
             }
 
-            private static Button CreateMenuButton(string caption, Brush fg)
+            private static Button CreateDialogButton(string caption, Brush fg)
             {
                 var btn = new Button
                 {
@@ -854,7 +749,7 @@ namespace test
                     Foreground = fg,
                     Background = Brushes.Transparent,
                     BorderThickness = new Thickness(0),
-                    Padding = new Thickness(10, 6, 10, 6),
+                    Padding = new Thickness(8, 6, 8, 6),
                     Cursor = Cursors.Hand
                 };
 
@@ -870,11 +765,180 @@ namespace test
             {
                 try
                 {
-                    if (Application.Current?.TryFindResource(key) is Brush b) return b;
+                    if (Application.Current?.TryFindResource(key) is Brush b)
+                        return b;
                 }
                 catch { }
+
                 return new SolidColorBrush(fallback);
             }
+        }
+
+        private void DragHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_parent == null) return;
+
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null)
+                return;
+
+            _isDraggingNode = true;
+            _dragStartOnCanvas = e.GetPosition(mw.MainCanvas);
+            _nodeStartPos = new Point(Canvas.GetLeft(this), Canvas.GetTop(this));
+            CaptureMouse();
+
+            Panel.SetZIndex(this, _parent.GetNextZIndex());
+            e.Handled = true;
+        }
+
+        private void DragHeader_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_isDraggingNode || _parent == null) return;
+
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null)
+                return;
+
+            var current = e.GetPosition(mw.MainCanvas);
+            var offset = current - _dragStartOnCanvas;
+
+            Canvas.SetLeft(this, _nodeStartPos.X + offset.X);
+            Canvas.SetTop(this, _nodeStartPos.Y + offset.Y);
+
+            Moved?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void DragHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isDraggingNode) return;
+            _isDraggingNode = false;
+            ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        private void Corner_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (_parent == null) return;
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
+            if (sender is not Thumb thumb) return;
+
+            var center = GetThumbCenterOnCanvas(thumb, mw.MainCanvas);
+            _startPoint = center;
+
+            _tempPath = new Path
+            {
+                Stroke = Brushes.DimGray,
+                StrokeThickness = 3,
+                StrokeDashArray = new DoubleCollection { 4, 4 },
+                IsHitTestVisible = false
+            };
+
+            var geo = new PathGeometry();
+            var fig = new PathFigure { StartPoint = center };
+            fig.Segments.Add(new BezierSegment(center, center, center, true));
+            geo.Figures.Add(fig);
+            _tempPath.Data = geo;
+
+            Canvas.SetZIndex(_tempPath, _parent.GetNextZIndex());
+            mw.MainCanvas.Children.Add(_tempPath);
+        }
+
+        private void Corner_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (_tempPath?.Data is not PathGeometry geo) return;
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
+
+            Point current = Mouse.GetPosition(mw.MainCanvas);
+
+            if (geo.Figures.Count == 0) return;
+            if (geo.Figures[0].Segments.Count == 0) return;
+            if (geo.Figures[0].Segments[0] is not BezierSegment seg) return;
+
+            seg.Point1 = new Point((_startPoint.X + current.X) / 2, _startPoint.Y);
+            seg.Point2 = new Point((_startPoint.X + current.X) / 2, current.Y);
+            seg.Point3 = current;
+        }
+
+        private void Corner_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            if (_parent == null) return;
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
+            if (sender is not Thumb thumb) return;
+
+            if (_tempPath != null)
+            {
+                mw.MainCanvas.Children.Remove(_tempPath);
+                _tempPath = null;
+            }
+
+            Point current = Mouse.GetPosition(mw.MainCanvas);
+
+            var newNode = new NodeControl();
+            Canvas.SetLeft(newNode, current.X - newNode.Width / 2);
+            Canvas.SetTop(newNode, current.Y - newNode.Height / 2);
+            Canvas.SetZIndex(newNode, _parent.GetNextZIndex());
+            mw.MainCanvas.Children.Add(newNode);
+            _parent.HookNode(newNode);
+
+            string targetThumb = thumb.Name == "ThumbTL" ? "ThumbTR" : "ThumbTL";
+            _parent.CreateCurve(this, thumb.Name, newNode, targetThumb);
+
+            _parent.RequestBeginEdit(newNode, MainWindow.EditReason.NewNode);
+        }
+
+        private static Point GetThumbCenterOnCanvas(FrameworkElement thumb, Canvas canvas)
+        {
+            return thumb.TranslatePoint(
+                new Point(thumb.ActualWidth / 2, thumb.ActualHeight / 2),
+                canvas);
+        }
+
+        private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (sender is not Thumb thumb)
+                return;
+
+            if (thumb.Name == "ThumbBL")
+            {
+                ThumbBL_DragDelta(sender, e);
+                return;
+            }
+
+            if (thumb.Name == "ThumbBR")
+            {
+                ThumbBR_DragDelta(sender, e);
+                return;
+            }
+        }
+
+        private void ThumbBL_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            double newWidth = Width - e.HorizontalChange;
+            double newHeight = Height + e.VerticalChange;
+
+            if (newWidth >= 150)
+            {
+                double left = Canvas.GetLeft(this);
+                Canvas.SetLeft(this, left + e.HorizontalChange);
+                Width = newWidth;
+            }
+
+            if (newHeight >= 200)
+                Height = newHeight;
+
+            Moved?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void ThumbBR_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            double newWidth = Width + e.HorizontalChange;
+            double newHeight = Height + e.VerticalChange;
+
+            if (newWidth >= 150)
+                Width = newWidth;
+
+            if (newHeight >= 200)
+                Height = newHeight;
+
+            Moved?.Invoke(this, EventArgs.Empty);
         }
     }
 
