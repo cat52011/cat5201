@@ -1,0 +1,42 @@
+{
+  "CreatedAt": "2026-03-28T12:54:21.8802217+11:00",
+  "InitialNodeId": "7ee22fb8-6822-4fb2-bfc5-a4461a965af0",
+  "Nodes": [
+    {
+      "Id": "7ee22fb8-6822-4fb2-bfc5-a4461a965af0",
+      "X": 660.4,
+      "Y": 434,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u7528\u4E00\u53E5\u8A71\u544A\u8A34\u6211\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F GPT-5.4 \u6A21\u578B\u3002",
+      "TopLocked": false,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "e58cbb3d-cc61-492e-ab3e-0365131ea597",
+      "X": 1089.0063200000004,
+      "Y": 131.60119999999998,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u7528\u4E00\u53E5\u8A71\u544A\u8A34\u6211\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F **Perplexity Sonar** \u6A21\u578B\u3002[\u6A21\u578B\u8EAB\u5206\u898F\u5247]",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "pplx-sonar",
+      "TaskMode": "Chat"
+    }
+  ],
+  "Connections": [
+    {
+      "StartId": "7ee22fb8-6822-4fb2-bfc5-a4461a965af0",
+      "EndId": "e58cbb3d-cc61-492e-ab3e-0365131ea597",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    }
+  ],
+  "Attachments": [],
+  "FileNameLocked": true
+}

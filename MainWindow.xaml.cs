@@ -193,24 +193,22 @@ namespace test
 
         private static NodeTaskMode GetDefaultNodeTaskMode()
         {
-            return NodeTaskMode.Chat;
+            return NodeTaskModeHelper.Default;
         }
 
         private static NodeTaskMode NormalizeOrDefaultTaskMode(NodeTaskMode mode)
         {
-            return Enum.IsDefined(typeof(NodeTaskMode), mode)
-                ? mode
-                : GetDefaultNodeTaskMode();
+            return NodeTaskModeHelper.Normalize(mode);
         }
 
         private static NodeTaskMode ParseNodeTaskMode(string? raw)
         {
-            if (string.IsNullOrWhiteSpace(raw))
-                return GetDefaultNodeTaskMode();
+            return NodeTaskModeHelper.ParseOrDefault(raw);
+        }
 
-            return Enum.TryParse<NodeTaskMode>(raw.Trim(), true, out var parsed)
-                ? NormalizeOrDefaultTaskMode(parsed)
-                : GetDefaultNodeTaskMode();
+        public IReadOnlyList<NodeTaskModeOption> GetAllNodeTaskModes()
+        {
+            return NodeTaskModeHelper.All;
         }
 
         public NodeTaskMode GetNodeTaskMode(NodeControl node)
@@ -236,21 +234,12 @@ namespace test
 
         public string GetNodeTaskModeStorageValue(NodeControl node)
         {
-            return GetNodeTaskMode(node).ToString();
+            return NodeTaskModeHelper.ToStorageValue(GetNodeTaskMode(node));
         }
 
         public string GetNodeTaskModeDisplayName(NodeControl node)
         {
-            return GetNodeTaskMode(node) switch
-            {
-                NodeTaskMode.Research => "Research",
-                NodeTaskMode.Translate => "Translate",
-                NodeTaskMode.Summarize => "Summarize",
-                NodeTaskMode.Rewrite => "Rewrite",
-                NodeTaskMode.Extract => "Extract",
-                NodeTaskMode.Code => "Code",
-                _ => "Chat"
-            };
+            return NodeTaskModeHelper.ToDisplayName(GetNodeTaskMode(node));
         }
 
         public string GetNodeSelectedModel(NodeControl node)
@@ -378,6 +367,7 @@ namespace test
                 HookNode(node);
 
                 _nodeModelsById[node.Id] = GetDefaultNodeModelId();
+                _nodeTaskModesById[node.Id] = GetDefaultNodeTaskMode();
                 _initialNode = node;
 
                 _scale = 1.0;
@@ -498,7 +488,7 @@ namespace test
                 }
 
                 if (!string.IsNullOrEmpty(_currentFilePath) &&
-                    string.Equals(_currentFilePath, path, StringComparison.OrdinalIgnoreCase))
+    string.Equals(_currentFilePath, path, StringComparison.OrdinalIgnoreCase))
                 {
                     _currentFilePath = null;
                     _hasStarted = false;
@@ -508,6 +498,7 @@ namespace test
                     _lastInitialTopSnapshot = "";
                     _attachmentsByNode.Clear();
                     _nodeModelsById.Clear();
+                    _nodeTaskModesById.Clear();
                 }
 
                 RefreshFileList();
@@ -1206,6 +1197,7 @@ namespace test
             _zIndexCounter = 0;
             _initialNode = null;
             _nodeModelsById.Clear();
+            _nodeTaskModesById.Clear();
 
             _editingNode = null;
             _editingReason = EditReason.None;
