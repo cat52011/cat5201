@@ -2,6 +2,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -73,6 +74,7 @@ namespace test
                 ApplyFontSize(_fontSize);
                 RefreshAttachmentsUI();
                 SyncModelSelectorFromParent();
+                UpdateAutoTaskPreview();
                 UpdateEditButtons();
             };
 
@@ -99,18 +101,21 @@ namespace test
 
             EnsureModelSelectorLoaded();
             SyncModelSelectorFromParent();
+            UpdateAutoTaskPreview();
             UpdateEditButtons();
         }
 
         internal void ForceExitEditMode()
         {
             TopEditor.IsReadOnly = true;
+            UpdateAutoTaskPreview();
             UpdateEditButtons();
         }
 
         internal void EndEditBecauseSent()
         {
             TopEditor.IsReadOnly = true;
+            UpdateAutoTaskPreview();
             UpdateEditButtons();
             _parent?.NotifyEditEnded(this);
         }
@@ -236,6 +241,7 @@ namespace test
         {
             _isTopLocked = locked;
             TopEditor.IsReadOnly = true;
+            UpdateAutoTaskPreview();
             UpdateEditButtons();
         }
 
@@ -255,6 +261,112 @@ namespace test
         {
             if (TopEditor != null) TopEditor.FontSize = size;
             if (BottomDisplay != null) BottomDisplay.FontSize = size;
+        }
+
+        private void UpdateAutoTaskPreview()
+        {
+            if (AutoTaskText == null)
+                return;
+
+            NodeTaskMode mode;
+
+            var raw = TopEditor?.Text ?? "";
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                mode = _parent?.GetNodeTaskMode(this) ?? NodeTaskMode.Chat;
+            }
+            else
+            {
+                mode = ResolvePreviewTaskMode(raw);
+            }
+
+            AutoTaskText.Text = GetTaskModeDisplayName(mode);
+        }
+
+        private static NodeTaskMode ResolvePreviewTaskMode(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return NodeTaskMode.Chat;
+
+            string raw = text.Trim();
+            string normalized = raw.ToLowerInvariant();
+
+            if (ContainsAny(raw, normalized,
+                "翻譯", "譯成", "翻成", "中文", "英文", "日文", "韓文", "對照", "中英對照",
+                "完整中文菜單", "translate", "translation", "menu translation", "traditional chinese", "繁體中文"))
+            {
+                return NodeTaskMode.Translate;
+            }
+
+            if (ContainsAny(raw, normalized,
+                "程式", "程式碼", "code", "bug", "錯誤", "修正", "debug", "exception", "class", "method",
+                "c#", "xaml", ".net", "wpf", "visual studio", "compile", "build", "namespace",
+                "完整程式", "完整程式碼", "可直接貼上", "貼上即用"))
+            {
+                return NodeTaskMode.Code;
+            }
+
+            if (ContainsAny(raw, normalized,
+                "查詢", "搜尋", "查證", "最新", "最近", "新聞", "資料來源", "來源", "比較", "分析",
+                "research", "search", "latest", "news", "current", "today", "compare", "source", "citation"))
+            {
+                return NodeTaskMode.Research;
+            }
+
+            if (ContainsAny(raw, normalized,
+                "摘要", "總結", "整理重點", "重點整理", "濃縮", "簡述", "懶人包",
+                "summarize", "summary", "key points", "tldr"))
+            {
+                return NodeTaskMode.Summarize;
+            }
+
+            if (ContainsAny(raw, normalized,
+                "改寫", "重寫", "潤稿", "修飾", "順一下", "口語化", "正式一點", "換個說法",
+                "rewrite", "rephrase", "polish", "refine"))
+            {
+                return NodeTaskMode.Rewrite;
+            }
+
+            if (ContainsAny(raw, normalized,
+                "擷取", "抽取", "提取", "整理成表格", "欄位", "抓出", "抽出", "列出所有",
+                "extract", "parse", "fields", "structured data"))
+            {
+                return NodeTaskMode.Extract;
+            }
+
+            return NodeTaskMode.Chat;
+        }
+
+        private static bool ContainsAny(string raw, string normalized, params string[] keywords)
+        {
+            foreach (var keyword in keywords)
+            {
+                if (string.IsNullOrWhiteSpace(keyword))
+                    continue;
+
+                var k = keyword.Trim();
+                if (raw.Contains(k, StringComparison.OrdinalIgnoreCase) ||
+                    normalized.Contains(k.ToLowerInvariant(), StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string GetTaskModeDisplayName(NodeTaskMode mode)
+        {
+            return mode switch
+            {
+                NodeTaskMode.Research => "Research",
+                NodeTaskMode.Translate => "Translate",
+                NodeTaskMode.Summarize => "Summarize",
+                NodeTaskMode.Rewrite => "Rewrite",
+                NodeTaskMode.Extract => "Extract",
+                NodeTaskMode.Code => "Code",
+                _ => "Chat"
+            };
         }
 
         internal void RefreshAttachmentsUI()
@@ -465,6 +577,7 @@ namespace test
             if (string.IsNullOrWhiteSpace(TopEditor.Text))
                 _isTopLocked = false;
 
+            UpdateAutoTaskPreview();
             ContentChanged?.Invoke(this, EventArgs.Empty);
         }
 
@@ -572,6 +685,7 @@ namespace test
                     }
                 }
 
+                UpdateAutoTaskPreview();
                 ContentChanged?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
@@ -586,7 +700,13 @@ namespace test
         }
 
         public string GetTopText() => TopEditor.Text ?? "";
-        public void SetTopText(string text) => TopEditor.Text = text ?? "";
+
+        public void SetTopText(string text)
+        {
+            TopEditor.Text = text ?? "";
+            UpdateAutoTaskPreview();
+        }
+
         public string GetBottomText() => BottomDisplay.Text ?? "";
         public void SetBottomText(string text) => BottomDisplay.Text = text ?? "";
 
@@ -886,16 +1006,14 @@ namespace test
             string targetThumb = thumb.Name == "ThumbTL" ? "ThumbTR" : "ThumbTL";
 
             double left;
-            double top = current.Y - 20.0; // 目標圓點中心 Y 固定在節點頂部下方 20
+            double top = current.Y - 20.0;
 
             if (targetThumb == "ThumbTL")
             {
-                // 讓新節點左上角圓點中心落在曲線末端
                 left = current.X - 20.0;
             }
             else
             {
-                // 讓新節點右上角圓點中心落在曲線末端
                 left = current.X - (newWidth - 20.0);
             }
 

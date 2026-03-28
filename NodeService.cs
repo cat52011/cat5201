@@ -90,7 +90,7 @@ $@"
             return "\n\n完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
-        private static string BuildGeneralNodeInstructions(string model)
+        private static string BuildGeneralNodeInstructions(string model, NodeTaskMode taskMode)
         {
             return
                 "你是一個專業的節點內容生成助手。" +
@@ -100,11 +100,12 @@ $@"
                 "回應請使用繁體中文。" +
                 "可以參考上下游節點，但不要被其它節點的語氣或格式帶偏。" +
                 "若有附件（圖片/檔案），請閱讀後直接根據附件內容作答。" +
+                BuildTaskModeInstruction(taskMode) +
                 BuildModelIdentityGuard(model) +
                 BuildContinuationEndMarkerInstruction();
         }
 
-        private static string BuildPerplexityInstructions(string model, bool isDeepResearch)
+        private static string BuildPerplexityInstructions(string model, bool isDeepResearch, NodeTaskMode taskMode)
         {
             string baseText = isDeepResearch
                 ? "你是一個研究型節點內容助手。請直接輸出整理完成後的內容本身，使用繁體中文。不要重述題目，不要輸出前言，不要輸出思考流程。"
@@ -112,8 +113,36 @@ $@"
 
             return
                 baseText +
+                BuildTaskModeInstruction(taskMode) +
                 BuildModelIdentityGuard(model) +
                 BuildContinuationEndMarkerInstruction();
+        }
+
+        private static string BuildTaskModeInstruction(NodeTaskMode taskMode)
+        {
+            return taskMode switch
+            {
+                NodeTaskMode.Translate =>
+                    "目前任務模式是 Translate。請把重點放在忠實翻譯、原意保留、格式清楚、不要額外延伸評論。",
+
+                NodeTaskMode.Research =>
+                    "目前任務模式是 Research。請把重點放在查證、比較、補充背景與整理可信資訊。",
+
+                NodeTaskMode.Summarize =>
+                    "目前任務模式是 Summarize。請把重點放在濃縮重點、保留核心資訊、避免冗長。",
+
+                NodeTaskMode.Rewrite =>
+                    "目前任務模式是 Rewrite。請把重點放在重寫、潤稿、調整語氣與改善可讀性。",
+
+                NodeTaskMode.Extract =>
+                    "目前任務模式是 Extract。請把重點放在抽取欄位、擷取結構化資訊、避免多餘延伸。",
+
+                NodeTaskMode.Code =>
+                    "目前任務模式是 Code。請把重點放在程式正確性、可貼上使用、維持既有架構並清楚說明必要修改。",
+
+                _ =>
+                    "目前任務模式是 Chat。請直接回應使用者需求並完成內容。"
+            };
         }
 
         private static string BuildSegmentDiscoveryInstructions()
@@ -141,15 +170,17 @@ $@"
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
+            var resolvedTask = ResolveAndPersistTaskMode(node, topText);
             var route = PrepareRoute(_main.GetNodeSelectedModel(node));
             string model = route.NodeModel;
 
             if (route.Provider == AiProviderKind.PerplexitySonar)
             {
-                return await GenerateSinglePassOrContinuedAsync(node, topText, model, ct);
+                return await GenerateSinglePassOrContinuedAsync(node, topText, model, resolvedTask.Mode, ct);
             }
 
             bool useSegmentMode =
+                resolvedTask.Mode == NodeTaskMode.Translate &&
                 LooksLikeFullTranslationRequest(topText) &&
                 HasNonImageAttachments(node);
 
@@ -157,7 +188,7 @@ $@"
             {
                 try
                 {
-                    var segmented = await TranslateBySegmentsAsync(node, topText, model, ct);
+                    var segmented = await TranslateBySegmentsAsync(node, topText, model, resolvedTask.Mode, ct);
                     if (!string.IsNullOrWhiteSpace(segmented))
                         return segmented;
                 }
@@ -166,7 +197,7 @@ $@"
                 }
             }
 
-            return await GenerateSinglePassOrContinuedAsync(node, topText, model, ct);
+            return await GenerateSinglePassOrContinuedAsync(node, topText, model, resolvedTask.Mode, ct);
         }
 
         public async Task<string> GenerateStreamAsync(
@@ -178,15 +209,17 @@ $@"
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
+            var resolvedTask = ResolveAndPersistTaskMode(node, topText);
             var route = PrepareRoute(_main.GetNodeSelectedModel(node));
             string model = route.NodeModel;
 
             if (route.Provider == AiProviderKind.PerplexitySonar)
             {
-                return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, onDelta, ct);
+                return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, resolvedTask.Mode, onDelta, ct);
             }
 
             bool useSegmentMode =
+                resolvedTask.Mode == NodeTaskMode.Translate &&
                 LooksLikeFullTranslationRequest(topText) &&
                 HasNonImageAttachments(node);
 
@@ -194,7 +227,7 @@ $@"
             {
                 try
                 {
-                    var segmented = await TranslateBySegmentsStreamAsync(node, topText, model, onDelta, ct);
+                    var segmented = await TranslateBySegmentsStreamAsync(node, topText, model, resolvedTask.Mode, onDelta, ct);
                     if (!string.IsNullOrWhiteSpace(segmented))
                         return segmented;
                 }
@@ -203,22 +236,30 @@ $@"
                 }
             }
 
-            return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, onDelta, ct);
+            return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, resolvedTask.Mode, onDelta, ct);
+        }
+
+        private NodeTaskModeResolution ResolveAndPersistTaskMode(NodeControl node, string topText)
+        {
+            var resolution = NodeTaskModeResolver.Resolve(topText);
+            _main.SetNodeTaskMode(node, resolution.Mode);
+            return resolution;
         }
 
         private async Task<string> GenerateSinglePassOrContinuedAsync(
             NodeControl currentNode,
             string topText,
             string model,
+            NodeTaskMode taskMode,
             CancellationToken ct)
         {
             if (_router.GetProviderKind(model) == AiProviderKind.PerplexitySonar)
             {
-                return await GeneratePerplexitySonarWithContinuationAsync(currentNode, topText, model, ct);
+                return await GeneratePerplexitySonarWithContinuationAsync(currentNode, topText, model, taskMode, ct);
             }
 
-            string instructions = BuildGeneralNodeInstructions(model);
-            string prompt = BuildPromptForNode(currentNode, topText, NodeContextStrategy.Full);
+            string instructions = BuildGeneralNodeInstructions(model, taskMode);
+            string prompt = BuildPromptForNode(currentNode, topText, taskMode, NodeContextStrategy.Full);
 
             return await GenerateWithContinuationAsync(
                 model,
@@ -239,16 +280,17 @@ $@"
             NodeControl currentNode,
             string topText,
             string model,
+            NodeTaskMode taskMode,
             Action<string> onDelta,
             CancellationToken ct)
         {
             if (_router.GetProviderKind(model) == AiProviderKind.PerplexitySonar)
             {
-                return await GeneratePerplexitySonarWithContinuationStreamingAsync(currentNode, topText, model, onDelta, ct);
+                return await GeneratePerplexitySonarWithContinuationStreamingAsync(currentNode, topText, model, taskMode, onDelta, ct);
             }
 
-            string instructions = BuildGeneralNodeInstructions(model);
-            string prompt = BuildPromptForNode(currentNode, topText, NodeContextStrategy.Full);
+            string instructions = BuildGeneralNodeInstructions(model, taskMode);
+            string prompt = BuildPromptForNode(currentNode, topText, taskMode, NodeContextStrategy.Full);
 
             return await GenerateWithContinuationStreamingAsync(
                 model,
@@ -504,6 +546,7 @@ $@"
             NodeControl currentNode,
             string topText,
             string model,
+            NodeTaskMode taskMode,
             CancellationToken ct)
         {
             var finalText = new StringBuilder();
@@ -511,7 +554,7 @@ $@"
             string sonarModel = _router.MapPerplexitySonarModel(model);
             var svc = _router.GetPerplexitySonarService(sonarModel);
 
-            string instructions = BuildPerplexityInstructions(model, isDeepResearch);
+            string instructions = BuildPerplexityInstructions(model, isDeepResearch, taskMode);
             var strategy = GetContextStrategy(model);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
@@ -529,7 +572,7 @@ $@"
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string prompt = BuildPromptForNode(currentNode, topText, strategy) + followUp;
+                string prompt = BuildPromptForNode(currentNode, topText, taskMode, strategy) + followUp;
 
                 string reply = await svc.GenerateAsync(
                     instructions,
@@ -575,6 +618,7 @@ $@"
             NodeControl currentNode,
             string topText,
             string model,
+            NodeTaskMode taskMode,
             Action<string> onDelta,
             CancellationToken ct)
         {
@@ -583,7 +627,7 @@ $@"
             string sonarModel = _router.MapPerplexitySonarModel(model);
             var svc = _router.GetPerplexitySonarService(sonarModel);
 
-            string instructions = BuildPerplexityInstructions(model, isDeepResearch);
+            string instructions = BuildPerplexityInstructions(model, isDeepResearch, taskMode);
             var strategy = GetContextStrategy(model);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
@@ -601,7 +645,7 @@ $@"
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string prompt = BuildPromptForNode(currentNode, topText, strategy) + followUp;
+                string prompt = BuildPromptForNode(currentNode, topText, taskMode, strategy) + followUp;
 
                 string reply;
 
@@ -760,12 +804,13 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
             NodeControl currentNode,
             string topText,
             string model,
+            NodeTaskMode taskMode,
             CancellationToken ct)
         {
             var segments = await TryDiscoverSegmentsAsync(currentNode, topText, model, ct);
             if (segments.Count <= 1)
             {
-                return await GenerateSinglePassOrContinuedAsync(currentNode, topText, model, ct);
+                return await GenerateSinglePassOrContinuedAsync(currentNode, topText, model, taskMode, ct);
             }
 
             var sb = new StringBuilder();
@@ -778,7 +823,10 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
                 int index = i + 1;
 
                 string segmentPrompt =
-$@"使用者要求：
+$@"【系統判定任務模式】
+{taskMode}
+
+使用者要求：
 {topText}
 
 請只處理附件中的第 {index}/{segments.Count} 段：
@@ -826,7 +874,7 @@ $@"使用者要求：
             var final = RemoveRepeatedBlocks(sb.ToString().Trim());
 
             if (string.IsNullOrWhiteSpace(final))
-                return await GenerateSinglePassOrContinuedAsync(currentNode, topText, model, ct);
+                return await GenerateSinglePassOrContinuedAsync(currentNode, topText, model, taskMode, ct);
 
             return final;
         }
@@ -835,13 +883,14 @@ $@"使用者要求：
             NodeControl currentNode,
             string topText,
             string model,
+            NodeTaskMode taskMode,
             Action<string> onDelta,
             CancellationToken ct)
         {
             var segments = await TryDiscoverSegmentsAsync(currentNode, topText, model, ct);
             if (segments.Count <= 1)
             {
-                return await GenerateSinglePassOrContinuedStreamAsync(currentNode, topText, model, onDelta, ct);
+                return await GenerateSinglePassOrContinuedStreamAsync(currentNode, topText, model, taskMode, onDelta, ct);
             }
 
             var sb = new StringBuilder();
@@ -855,7 +904,10 @@ $@"使用者要求：
                 int index = i + 1;
 
                 string segmentPrompt =
-$@"使用者要求：
+$@"【系統判定任務模式】
+{taskMode}
+
+使用者要求：
 {topText}
 
 請只處理附件中的第 {index}/{segments.Count} 段：
@@ -917,7 +969,7 @@ $@"使用者要求：
             var final = RemoveRepeatedBlocks(sb.ToString().Trim());
 
             if (string.IsNullOrWhiteSpace(final))
-                return await GenerateSinglePassOrContinuedStreamAsync(currentNode, topText, model, onDelta, ct);
+                return await GenerateSinglePassOrContinuedStreamAsync(currentNode, topText, model, taskMode, onDelta, ct);
 
             return final;
         }
@@ -933,15 +985,15 @@ $@"使用者要求：
             return NodeContextStrategy.Full;
         }
 
-        private string BuildPromptForNode(NodeControl current, string topText, NodeContextStrategy strategy)
+        private string BuildPromptForNode(NodeControl current, string topText, NodeTaskMode taskMode, NodeContextStrategy strategy)
         {
             var ctx = BuildContextBundle(current, strategy);
 
             return strategy switch
             {
-                NodeContextStrategy.CompactSearch => BuildCompactSearchPrompt(ctx, topText),
-                NodeContextStrategy.Research => BuildResearchPrompt(ctx, topText),
-                _ => BuildFullContextPrompt(ctx, topText)
+                NodeContextStrategy.CompactSearch => BuildCompactSearchPrompt(ctx, topText, taskMode),
+                NodeContextStrategy.Research => BuildResearchPrompt(ctx, topText, taskMode),
+                _ => BuildFullContextPrompt(ctx, topText, taskMode)
             };
         }
 
@@ -1083,7 +1135,7 @@ $@"使用者要求：
             return string.Join("\n\n", lines);
         }
 
-        private string BuildFullContextPrompt(NodeContextBundle ctx, string topText)
+        private string BuildFullContextPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode)
         {
             string primaryContext;
             if (string.IsNullOrWhiteSpace(ctx.UpstreamContext) && string.IsNullOrWhiteSpace(ctx.DownstreamContext))
@@ -1116,6 +1168,9 @@ $@"使用者要求：
             return
 $@"你正在一個節點式筆記檔案中工作。
 
+【系統判定任務模式】
+{taskMode}
+
 【主要記憶：同一條連線上下游】
 {primaryContext}
 
@@ -1131,15 +1186,17 @@ $@"你正在一個節點式筆記檔案中工作。
 不要使用「以下是」「你可以依照以下步驟」「為確保完整」這類開頭。
 
 規則：
-1. 若上半部是翻譯需求：直接輸出翻譯結果。
-2. 若上半部是整理/改寫需求：直接輸出整理完成版本。
-3. 若上半部是提問：直接回答問題，再補必要說明。
-4. 若附件是主要資訊來源：直接根據附件內容完成結果。
-5. 除非上半部明確要求步驟，否則不要輸出流程式條列。
-6. 完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
+1. 若任務模式是 Translate：直接輸出翻譯結果。
+2. 若任務模式是 Summarize：直接輸出濃縮後重點。
+3. 若任務模式是 Rewrite：直接輸出改寫完成版本。
+4. 若任務模式是 Extract：直接輸出抽取後的資訊。
+5. 若任務模式是 Code：直接輸出可用的程式內容與必要說明。
+6. 若附件是主要資訊來源：直接根據附件內容完成結果。
+7. 除非上半部明確要求步驟，否則不要輸出流程式條列。
+8. 完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
-        private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText)
+        private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode)
         {
             string compactUpstream = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
                 ? "（無上游背景）"
@@ -1150,6 +1207,9 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 請以「目前節點問題」為主，並參考精簡版上游背景來回答。
 直接輸出完成結果本身，使用繁體中文。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
+
+【系統判定任務模式】
+{taskMode}
 
 【精簡上游背景】
 {compactUpstream}
@@ -1162,12 +1222,13 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 1. 以目前節點問題為核心，優先做查證、補充、搜尋型回答。
 2. 上游背景只用來理解脈絡，不要被上游語氣或格式綁住。
 3. 若目前問題與上游不同，以目前問題為最高優先。
-4. 若附件是主要來源，請優先根據附件與目前問題回答。
-5. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
-6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
+4. 若任務模式是 Translate / Summarize / Rewrite / Extract / Code，也要依該任務模式輸出最終結果。
+5. 若附件是主要來源，請優先根據附件與目前問題回答。
+6. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
+7. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
-        private string BuildResearchPrompt(NodeContextBundle ctx, string topText)
+        private string BuildResearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode)
         {
             string upstreamPart = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
                 ? "（無上游背景）"
@@ -1187,6 +1248,9 @@ $@"你正在處理一個節點式研究任務。
 直接輸出結果本身，使用繁體中文。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
 
+【系統判定任務模式】
+{taskMode}
+
 【上游背景（中度重要）】
 {upstreamPart}
 
@@ -1204,9 +1268,10 @@ $@"你正在處理一個節點式研究任務。
 1. 優先回答目前節點問題，不要被其它節點帶偏。
 2. 若上游是前情提要、先前整理或研究方向，請承接它再深化。
 3. 可進行查證、補充、比較、延伸分析，但仍要圍繞目前節點。
-4. 若附件是主要來源，請把附件視為高權重背景。
-5. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
-6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
+4. 若任務模式不是單純 Research，也要把最終輸出調整成該任務型態。
+5. 若附件是主要來源，請把附件視為高權重背景。
+6. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
+7. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
         private static string BuildContextSection(
