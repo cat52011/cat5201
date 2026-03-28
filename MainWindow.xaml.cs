@@ -74,6 +74,7 @@ namespace test
 
         private readonly Dictionary<Guid, List<AttachmentInfo>> _attachmentsByNode = new();
         private readonly Dictionary<Guid, string> _nodeModelsById = new();
+        private readonly Dictionary<Guid, NodeTaskMode> _nodeTaskModesById = new();
 
         public sealed class AttachmentInfo
         {
@@ -105,7 +106,8 @@ namespace test
             string? BottomText,
             bool TopLocked,
             double FontSize,
-            string? NodeModel = null
+            string? NodeModel = null,
+            string? TaskMode = null
         );
 
         private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
@@ -187,6 +189,68 @@ namespace test
             return _aiRouter.NormalizeNodeModel(string.IsNullOrWhiteSpace(model)
                 ? GetDefaultNodeModelId()
                 : model);
+        }
+
+        private static NodeTaskMode GetDefaultNodeTaskMode()
+        {
+            return NodeTaskMode.Chat;
+        }
+
+        private static NodeTaskMode NormalizeOrDefaultTaskMode(NodeTaskMode mode)
+        {
+            return Enum.IsDefined(typeof(NodeTaskMode), mode)
+                ? mode
+                : GetDefaultNodeTaskMode();
+        }
+
+        private static NodeTaskMode ParseNodeTaskMode(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return GetDefaultNodeTaskMode();
+
+            return Enum.TryParse<NodeTaskMode>(raw.Trim(), true, out var parsed)
+                ? NormalizeOrDefaultTaskMode(parsed)
+                : GetDefaultNodeTaskMode();
+        }
+
+        public NodeTaskMode GetNodeTaskMode(NodeControl node)
+        {
+            if (node == null)
+                return GetDefaultNodeTaskMode();
+
+            if (_nodeTaskModesById.TryGetValue(node.Id, out var mode))
+                return NormalizeOrDefaultTaskMode(mode);
+
+            var fallback = GetDefaultNodeTaskMode();
+            _nodeTaskModesById[node.Id] = fallback;
+            return fallback;
+        }
+
+        public void SetNodeTaskMode(NodeControl node, NodeTaskMode mode)
+        {
+            if (node == null) return;
+
+            _nodeTaskModesById[node.Id] = NormalizeOrDefaultTaskMode(mode);
+            SaveState();
+        }
+
+        public string GetNodeTaskModeStorageValue(NodeControl node)
+        {
+            return GetNodeTaskMode(node).ToString();
+        }
+
+        public string GetNodeTaskModeDisplayName(NodeControl node)
+        {
+            return GetNodeTaskMode(node) switch
+            {
+                NodeTaskMode.Research => "Research",
+                NodeTaskMode.Translate => "Translate",
+                NodeTaskMode.Summarize => "Summarize",
+                NodeTaskMode.Rewrite => "Rewrite",
+                NodeTaskMode.Extract => "Extract",
+                NodeTaskMode.Code => "Code",
+                _ => "Chat"
+            };
         }
 
         public string GetNodeSelectedModel(NodeControl node)
@@ -296,6 +360,7 @@ namespace test
 
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
+            _nodeTaskModesById.Clear();
 
             _editingNode = null;
             _editingReason = EditReason.None;
@@ -345,6 +410,7 @@ namespace test
             _lastInitialTopSnapshot = "";
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
+            _nodeTaskModesById.Clear();
 
             _editingNode = null;
             _editingReason = EditReason.None;
@@ -631,6 +697,9 @@ namespace test
             if (!_nodeModelsById.ContainsKey(node.Id))
                 _nodeModelsById[node.Id] = GetDefaultNodeModelId();
 
+            if (!_nodeTaskModesById.ContainsKey(node.Id))
+                _nodeTaskModesById[node.Id] = GetDefaultNodeTaskMode();
+
             node.Moved -= Node_Moved;
             node.Moved += Node_Moved;
 
@@ -660,15 +729,25 @@ namespace test
         public void AddNode(double x, double y)
         {
             var node = new NodeControl();
+
             Canvas.SetLeft(node, SafeFinite(x - node.Width / 2, 0));
             Canvas.SetTop(node, SafeFinite(y - node.Height / 2, 0));
             Canvas.SetZIndex(node, GetNextZIndex());
-            MainCanvas.Children.Add(node);
+
             HookNode(node);
 
             _nodeModelsById[node.Id] = GetDefaultNodeModelId();
+            _nodeTaskModesById[node.Id] = GetDefaultNodeTaskMode();
 
-            RequestBeginEdit(node, EditReason.NewNode);
+            MainCanvas.Children.Add(node);
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (MainCanvas.Children.Contains(node))
+                {
+                    RequestBeginEdit(node, EditReason.NewNode);
+                }
+            }), DispatcherPriority.Loaded);
 
             SaveState();
         }
@@ -961,7 +1040,8 @@ namespace test
                     child.GetBottomText(),
                     child.GetTopLocked(),
                     fontSize,
-                    GetNodeSelectedModel(child)
+                    GetNodeSelectedModel(child),
+                    GetNodeTaskModeStorageValue(child)
                 ));
             }
 
@@ -1030,6 +1110,7 @@ namespace test
 
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
+            _nodeTaskModesById.Clear();
 
             foreach (var a in state.Attachments ?? new List<AttachmentState>())
             {
@@ -1072,6 +1153,7 @@ namespace test
                     HookNode(node);
 
                     _nodeModelsById[node.Id] = _aiRouter.NormalizeNodeModel(n.NodeModel);
+                    _nodeTaskModesById[node.Id] = ParseNodeTaskMode(n.TaskMode);
 
                     node.SetTopText(n.TopText ?? "");
                     node.SetBottomText(n.BottomText ?? "");
@@ -1576,6 +1658,7 @@ namespace test
                 MainCanvas.Children.Remove(n);
                 _attachmentsByNode.Remove(n.Id);
                 _nodeModelsById.Remove(n.Id);
+                _nodeTaskModesById.Remove(n.Id);
             }
 
             if (_initialNode != null && nodesToDelete.Contains(_initialNode))

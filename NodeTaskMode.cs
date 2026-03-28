@@ -6,6 +6,8 @@
         Research = 1,
         Translate = 2,
         Summarize = 3,
-        Rewrite = 4
+        Rewrite = 4,
+        Extract = 5,
+        Code = 6
     }
 }

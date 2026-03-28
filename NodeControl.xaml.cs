@@ -59,6 +59,11 @@ namespace test
         {
             InitializeComponent();
 
+            LostMouseCapture += (_, __) =>
+            {
+                _isDraggingNode = false;
+            };
+
             AttachmentItems.ItemsSource = _attachments;
 
             Loaded += (s, e) =>
@@ -777,14 +782,14 @@ namespace test
         private void DragHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (_parent == null) return;
-
-            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null)
-                return;
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
+            if (sender is not FrameworkElement dragHeader) return;
 
             _isDraggingNode = true;
             _dragStartOnCanvas = e.GetPosition(mw.MainCanvas);
             _nodeStartPos = new Point(Canvas.GetLeft(this), Canvas.GetTop(this));
-            CaptureMouse();
+
+            dragHeader.CaptureMouse();
 
             Panel.SetZIndex(this, _parent.GetNextZIndex());
             e.Handled = true;
@@ -793,9 +798,7 @@ namespace test
         private void DragHeader_MouseMove(object sender, MouseEventArgs e)
         {
             if (!_isDraggingNode || _parent == null) return;
-
-            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null)
-                return;
+            if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
 
             var current = e.GetPosition(mw.MainCanvas);
             var offset = current - _dragStartOnCanvas;
@@ -809,8 +812,12 @@ namespace test
         private void DragHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             if (!_isDraggingNode) return;
+
             _isDraggingNode = false;
-            ReleaseMouseCapture();
+
+            if (sender is UIElement element && element.IsMouseCaptured)
+                element.ReleaseMouseCapture();
+
             e.Handled = true;
         }
 
@@ -872,16 +879,44 @@ namespace test
             Point current = Mouse.GetPosition(mw.MainCanvas);
 
             var newNode = new NodeControl();
-            Canvas.SetLeft(newNode, current.X - newNode.Width / 2);
-            Canvas.SetTop(newNode, current.Y - newNode.Height / 2);
-            Canvas.SetZIndex(newNode, _parent.GetNextZIndex());
-            mw.MainCanvas.Children.Add(newNode);
-            _parent.HookNode(newNode);
+            double newWidth = newNode.Width;
+            double newHeight = newNode.Height;
 
+            string sourceThumb = thumb.Name;
             string targetThumb = thumb.Name == "ThumbTL" ? "ThumbTR" : "ThumbTL";
-            _parent.CreateCurve(this, thumb.Name, newNode, targetThumb);
 
-            _parent.RequestBeginEdit(newNode, MainWindow.EditReason.NewNode);
+            double left;
+            double top = current.Y - 20.0; // 目標圓點中心 Y 固定在節點頂部下方 20
+
+            if (targetThumb == "ThumbTL")
+            {
+                // 讓新節點左上角圓點中心落在曲線末端
+                left = current.X - 20.0;
+            }
+            else
+            {
+                // 讓新節點右上角圓點中心落在曲線末端
+                left = current.X - (newWidth - 20.0);
+            }
+
+            Canvas.SetLeft(newNode, left);
+            Canvas.SetTop(newNode, top);
+            Canvas.SetZIndex(newNode, _parent.GetNextZIndex());
+
+            _parent.HookNode(newNode);
+            mw.MainCanvas.Children.Add(newNode);
+
+            mw.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!mw.MainCanvas.Children.Contains(newNode))
+                    return;
+
+                newNode.UpdateLayout();
+                mw.MainCanvas.UpdateLayout();
+
+                _parent.CreateCurve(this, sourceThumb, newNode, targetThumb);
+                _parent.RequestBeginEdit(newNode, MainWindow.EditReason.NewNode);
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         private static Point GetThumbCenterOnCanvas(FrameworkElement thumb, Canvas canvas)
