@@ -165,31 +165,37 @@
                     </Grid.RowDefinitions>
 
                     <Button Grid.Row="0"
-                            Width="22" Height="22"
-                            Margin="0,2,0,0"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Top"
-                            Cursor="Hand"
-                            ToolTip="新增"
-                            Click="NewFile_Click">
+        Width="22"
+        Height="22"
+        Margin="0,2,0,0"
+        Background="Transparent"
+        BorderThickness="0"
+        Padding="0"
+        HorizontalAlignment="Right"
+        VerticalAlignment="Top"
+        Cursor="Hand"
+        ToolTip="新增"
+        Click="NewFile_Click">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
-                                <Grid>
-                                    <Viewbox x:Name="IconBox" Stretch="Uniform">
+                                <Grid Background="Transparent">
+                                    <Viewbox x:Name="IconBox"
+                         Width="20"
+                         Height="20"
+                         Stretch="Fill"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center">
                                         <Canvas Width="18" Height="18">
                                             <Path Data="M9,3 L9,15"
-                                                  Stroke="Black"
-                                                  StrokeThickness="1.6"
-                                                  StrokeStartLineCap="Round"
-                                                  StrokeEndLineCap="Round"/>
+                              Stroke="Black"
+                              StrokeThickness="1.6"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"/>
                                             <Path Data="M3,9 L15,9"
-                                                  Stroke="Black"
-                                                  StrokeThickness="1.6"
-                                                  StrokeStartLineCap="Round"
-                                                  StrokeEndLineCap="Round"/>
+                              Stroke="Black"
+                              StrokeThickness="1.6"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"/>
                                         </Canvas>
                                     </Viewbox>
                                 </Grid>
