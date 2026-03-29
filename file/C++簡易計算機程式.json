@@ -1,0 +1,22 @@
+{
+  "CreatedAt": "2026-03-29T11:39:15.0795604+11:00",
+  "InitialNodeId": "8fca43f2-37df-4262-9db4-77458b3c2785",
+  "Nodes": [
+    {
+      "Id": "8fca43f2-37df-4262-9db4-77458b3c2785",
+      "X": 618,
+      "Y": 220.40000000000003,
+      "Width": 664,
+      "Height": 622.4000000000002,
+      "TopText": "\u5E6B\u6211\u5BEB\u4E00\u500B\u7C21\u55AE\u7684c\u002B\u002B\u8A08\u7B97\u6A5F\u7A0B\u5F0F\r\n",
+      "BottomText": "\u0060\u0060\u0060cpp\n#include \u003Ciostream\u003E\nusing namespace std;\n\nint main() {\n    double num1, num2;\n    char op;\n\ncout \u003C\u003C \u0022\u8ACB\u8F38\u5165\u904B\u7B97\u5F0F\uFF08\u4F8B\u5982 5 \u002B 3\uFF09: \u0022;\n    cin \u003E\u003E num1 \u003E\u003E op \u003E\u003E num2;\n\nswitch (op) {\n        case \u0027\u002B\u0027:\n            cout \u003C\u003C \u0022\u7D50\u679C: \u0022 \u003C\u003C num1 \u002B num2 \u003C\u003C endl;\n            break;\n        case \u0027-\u0027:\n            cout \u003C\u003C \u0022\u7D50\u679C: \u0022 \u003C\u003C num1 - num2 \u003C\u003C endl;\n            break;\n        case \u0027*\u0027:\n            cout \u003C\u003C \u0022\u7D50\u679C: \u0022 \u003C\u003C num1 * num2 \u003C\u003C endl;\n            break;\n        case \u0027/\u0027:\n            if (num2 != 0) {\n                cout \u003C\u003C \u0022\u7D50\u679C: \u0022 \u003C\u003C num1 / num2 \u003C\u003C endl;\n            } else {\n                cout \u003C\u003C \u0022\u932F\u8AA4\uFF1A\u4E0D\u80FD\u9664\u4EE5 0\u0022 \u003C\u003C endl;\n            }\n            break;\n        default:\n            cout \u003C\u003C \u0022\u932F\u8AA4\uFF1A\u4E0D\u652F\u63F4\u7684\u904B\u7B97\u7B26\u865F\u0022 \u003C\u003C endl;\n    }\n\nreturn 0;\n}\n\u0060\u0060\u0060\n\n\u9019\u500B\u7A0B\u5F0F\u652F\u63F4 \u0060\u002B\u0060\u3001\u0060-\u0060\u3001\u0060*\u0060\u3001\u0060/\u0060 \u56DB\u5247\u904B\u7B97\uFF0C\u53EF\u76F4\u63A5\u7DE8\u8B6F\u57F7\u884C\u3002  \n\u8F38\u5165\u683C\u5F0F\u4F8B\u5982\uFF1A\u006012.5 * 4\u0060",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Code"
+    }
+  ],
+  "Connections": [],
+  "Attachments": [],
+  "FileNameLocked": false
+}
