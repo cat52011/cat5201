@@ -33,6 +33,13 @@ namespace test
         private bool _isSyncingModelSelector = false;
         private bool _modelsLoaded = false;
 
+        // ===== 新增：模型正式值 / 編輯草稿值 =====
+        // 上一次真正送出內容時所使用的模型
+        private string _committedModelId = AiModels.DefaultNodeModel;
+
+        // 目前編輯中的暫時模型
+        private string _editingModelId = AiModels.DefaultNodeModel;
+
         public event EventHandler? Moved;
         public event EventHandler? ContentChanged;
 
@@ -73,7 +80,10 @@ namespace test
                 EnsureModelSelectorLoaded();
                 ApplyFontSize(_fontSize);
                 RefreshAttachmentsUI();
+
+                InitializeCommittedModelIfNeeded();
                 RefreshModelSelectionUI();
+
                 UpdateAutoTaskPreview();
                 UpdateEditButtons();
             };
@@ -91,9 +101,30 @@ namespace test
 
         public bool IsEditing => TopEditor != null && TopEditor.IsReadOnly == false;
 
+        // ===== 新增：對外可取目前已提交模型 =====
+        public string GetCommittedModelId()
+            => AiModelHelper.NormalizeNodeModel(_committedModelId);
+
+        // ===== 新增：外部可設定已提交模型（例如載入專案時）=====
+        public void SetCommittedModelId(string modelId, bool syncEditingModel = true)
+        {
+            string normalized = NormalizeSafeModelId(modelId);
+
+            _committedModelId = normalized;
+            if (syncEditingModel)
+                _editingModelId = normalized;
+
+            RefreshModelSelectionUI();
+        }
+
         internal void EnterEditMode()
         {
             _isTopLocked = false;
+
+            InitializeCommittedModelIfNeeded();
+
+            // 進入編輯時，草稿模型 = 上次正式送出的模型
+            _editingModelId = _committedModelId;
 
             TopEditor.IsReadOnly = false;
             TopEditor.Focus();
@@ -107,7 +138,11 @@ namespace test
 
         internal void ForceExitEditMode()
         {
+            // 沒有送出就離開編輯時，丟棄草稿模型，回到正式模型
+            RevertEditingModelToCommitted();
+
             TopEditor.IsReadOnly = true;
+            RefreshModelSelectionUI();
             UpdateAutoTaskPreview();
             UpdateEditButtons();
         }
@@ -115,6 +150,7 @@ namespace test
         internal void EndEditBecauseSent()
         {
             TopEditor.IsReadOnly = true;
+            RefreshModelSelectionUI();
             UpdateAutoTaskPreview();
             UpdateEditButtons();
             _parent?.NotifyEditEnded(this);
@@ -166,7 +202,7 @@ namespace test
             if (ModelSelector == null)
                 return;
 
-            modelId = AiModelHelper.NormalizeNodeModel(modelId);
+            modelId = NormalizeSafeModelId(modelId);
 
             _isSyncingModelSelector = true;
             try
@@ -189,15 +225,68 @@ namespace test
             }
         }
 
-        internal void RefreshModelSelectionUI()
+        // ===== 新增：安全正規化 =====
+        private static string NormalizeSafeModelId(string? modelId)
         {
-            EnsureModelSelectorLoaded();
+            if (string.IsNullOrWhiteSpace(modelId))
+                return AiModels.DefaultNodeModel;
+
+            return AiModelHelper.NormalizeNodeModel(modelId);
+        }
+
+        // ===== 新增：初始化正式模型 =====
+        private void InitializeCommittedModelIfNeeded()
+        {
+            if (_parent == null)
+            {
+                _committedModelId = NormalizeSafeModelId(_committedModelId);
+                _editingModelId = NormalizeSafeModelId(_editingModelId);
+                return;
+            }
+
+            bool committedMissing = string.IsNullOrWhiteSpace(_committedModelId) ||
+                                    string.Equals(_committedModelId, AiModels.DefaultNodeModel, StringComparison.OrdinalIgnoreCase);
+
+            bool editingMissing = string.IsNullOrWhiteSpace(_editingModelId) ||
+                                  string.Equals(_editingModelId, AiModels.DefaultNodeModel, StringComparison.OrdinalIgnoreCase);
+
+            if (committedMissing)
+            {
+                string effective = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
+                _committedModelId = NormalizeSafeModelId(effective);
+            }
+
+            if (editingMissing)
+            {
+                _editingModelId = _committedModelId;
+            }
+        }
+
+        // ===== 新增：未送出離開編輯時回復 =====
+        private void RevertEditingModelToCommitted()
+        {
+            _editingModelId = _committedModelId;
+        }
+
+        // ===== 新增：真正送出時提交模型 =====
+        private void CommitEditingModel()
+        {
+            _committedModelId = NormalizeSafeModelId(_editingModelId);
 
             if (_parent != null)
             {
-                string model = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
-                SelectModelInComboBox(model);
+                _parent.SetNodeSelectedModel(this, _committedModelId);
             }
+        }
+
+        internal void RefreshModelSelectionUI()
+        {
+            EnsureModelSelectorLoaded();
+            InitializeCommittedModelIfNeeded();
+
+            // 編輯狀態顯示草稿模型；非編輯狀態顯示正式模型
+            string displayModel = IsEditing ? _editingModelId : _committedModelId;
+            SelectModelInComboBox(displayModel);
 
             UpdateEditButtons();
         }
@@ -239,25 +328,48 @@ namespace test
             if (_parent == null || ModelSelector == null)
                 return;
 
-            string model = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
-            SelectModelInComboBox(model);
+            // 自動模式下：
+            // 編輯狀態顯示依當前文字推算的暫時模型，但不覆蓋 committed
+            // 非編輯狀態永遠顯示 committed model
+            if (IsEditing)
+            {
+                string model = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
+                _editingModelId = NormalizeSafeModelId(model);
+                SelectModelInComboBox(_editingModelId);
+            }
+            else
+            {
+                SelectModelInComboBox(_committedModelId);
+            }
         }
 
         private void ModelSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isSyncingModelSelector) return;
             if (_parent == null) return;
+            if (ModelSelector.SelectedItem is not AiModelDefinition model) return;
+            if (string.IsNullOrWhiteSpace(model.Id)) return;
+
+            string selectedId = NormalizeSafeModelId(model.Id);
 
             if (!_parent.CanUserManuallySelectModel())
             {
+                // 自動模式下不允許手動改正式值，直接回到目前應顯示的值
                 SyncModelSelectorFromParent();
                 return;
             }
 
-            if (ModelSelector.SelectedItem is not AiModelDefinition model) return;
-            if (string.IsNullOrWhiteSpace(model.Id)) return;
-
-            _parent.SetNodeSelectedModel(this, model.Id);
+            // 只改編輯草稿模型，不改正式模型
+            if (IsEditing)
+            {
+                _editingModelId = selectedId;
+            }
+            else
+            {
+                // 非編輯狀態通常不應該改，但保險起見仍維持正式值
+                SelectModelInComboBox(_committedModelId);
+                return;
+            }
         }
 
         public bool GetTopLocked() => _isTopLocked;
@@ -265,7 +377,14 @@ namespace test
         public void SetTopLocked(bool locked)
         {
             _isTopLocked = locked;
+
+            if (locked && !IsEditing)
+            {
+                RevertEditingModelToCommitted();
+            }
+
             TopEditor.IsReadOnly = true;
+            RefreshModelSelectionUI();
             UpdateAutoTaskPreview();
             UpdateEditButtons();
         }
@@ -608,6 +727,13 @@ namespace test
                 _parent.IsAutoModelSelectionEnabled() &&
                 !string.IsNullOrWhiteSpace(TopEditor.Text))
             {
+                // 自動模式下，只有編輯中的草稿模型會跟著變
+                if (IsEditing)
+                {
+                    string autoModel = _parent.GetEffectiveNodeModel(this, TopEditor.Text);
+                    _editingModelId = NormalizeSafeModelId(autoModel);
+                }
+
                 RefreshModelSelectionUI();
             }
 
@@ -660,6 +786,15 @@ namespace test
 
             var top = TopEditor.Text ?? "";
             if (string.IsNullOrWhiteSpace(top)) return;
+
+            // 送出前，將目前草稿模型正式提交為本次送出模型
+            // 自動模式下取當前文字實際推算出的模型；手動模式下取 editingModel
+            if (_parent != null && _parent.IsAutoModelSelectionEnabled())
+            {
+                _editingModelId = NormalizeSafeModelId(_parent.GetEffectiveNodeModel(this, top));
+            }
+
+            CommitEditingModel();
 
             _isTopLocked = true;
             EndEditBecauseSent();
