@@ -73,7 +73,7 @@ namespace test
                 EnsureModelSelectorLoaded();
                 ApplyFontSize(_fontSize);
                 RefreshAttachmentsUI();
-                SyncModelSelectorFromParent();
+                RefreshModelSelectionUI();
                 UpdateAutoTaskPreview();
                 UpdateEditButtons();
             };
@@ -100,7 +100,7 @@ namespace test
             TopEditor.CaretIndex = TopEditor.Text?.Length ?? 0;
 
             EnsureModelSelectorLoaded();
-            SyncModelSelectorFromParent();
+            RefreshModelSelectionUI();
             UpdateAutoTaskPreview();
             UpdateEditButtons();
         }
@@ -189,6 +189,19 @@ namespace test
             }
         }
 
+        internal void RefreshModelSelectionUI()
+        {
+            EnsureModelSelectorLoaded();
+
+            if (_parent != null)
+            {
+                string model = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
+                SelectModelInComboBox(model);
+            }
+
+            UpdateEditButtons();
+        }
+
         private void UpdateEditButtons()
         {
             bool editable = (TopEditor != null && TopEditor.IsReadOnly == false);
@@ -208,7 +221,12 @@ namespace test
             if (ModelSelector != null)
             {
                 ModelSelector.Visibility = Visibility.Visible;
-                ModelSelector.IsEnabled = editable && !_isGenerating;
+
+                bool canManualSelect =
+                    _parent != null &&
+                    _parent.CanUserManuallySelectModel();
+
+                ModelSelector.IsEnabled = editable && !_isGenerating && canManualSelect;
             }
 
             RefreshAttachmentsUI();
@@ -221,7 +239,7 @@ namespace test
             if (_parent == null || ModelSelector == null)
                 return;
 
-            var model = _parent.GetNodeSelectedModel(this);
+            string model = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
             SelectModelInComboBox(model);
         }
 
@@ -229,6 +247,13 @@ namespace test
         {
             if (_isSyncingModelSelector) return;
             if (_parent == null) return;
+
+            if (!_parent.CanUserManuallySelectModel())
+            {
+                SyncModelSelectorFromParent();
+                return;
+            }
+
             if (ModelSelector.SelectedItem is not AiModelDefinition model) return;
             if (string.IsNullOrWhiteSpace(model.Id)) return;
 
@@ -578,6 +603,12 @@ namespace test
                 _isTopLocked = false;
 
             UpdateAutoTaskPreview();
+
+            if (_parent != null && _parent.IsAutoModelSelectionEnabled())
+            {
+                RefreshModelSelectionUI();
+            }
+
             ContentChanged?.Invoke(this, EventArgs.Empty);
         }
 

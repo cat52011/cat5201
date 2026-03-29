@@ -7,10 +7,8 @@
         WindowState="Maximized"
         ResizeMode="CanResize">
 
-    <!-- ✅ 只給 FileList 右鍵選單使用：外觀與 NodeControl 一樣（白底、圓角、無陰影、縮小間距） -->
     <Window.Resources>
 
-        <!-- 與 NodeControl 相同的色系 -->
         <SolidColorBrush x:Key="FileMenuBg" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="FileMenuBorder" Color="#D6D6D6"/>
         <SolidColorBrush x:Key="FileMenuText" Color="#222222"/>
@@ -41,7 +39,6 @@
             </Setter>
         </Style>
 
-        <!-- ✅ 與 NodeControl 相同：FontSize=13、Padding=8,6、Margin=1 -->
         <Style x:Key="FileMenuItemStyle" TargetType="{x:Type MenuItem}">
             <Setter Property="Foreground" Value="{StaticResource FileMenuText}"/>
             <Setter Property="FontSize" Value="13"/>
@@ -57,7 +54,6 @@
                         <Border Background="Transparent"
                                 CornerRadius="8"
                                 SnapsToDevicePixels="True">
-                            <!-- ✅ 關鍵：MenuItem 文字在 Header -->
                             <ContentPresenter x:Name="HeaderPresenter"
                                               ContentSource="Header"
                                               Margin="{TemplateBinding Padding}"
@@ -100,7 +96,7 @@
     </Window.Resources>
 
     <Grid>
-        <!-- ✅ 側邊欄：啟動後保持顯示 -->
+        <!-- 側邊欄 -->
         <Grid x:Name="Sidebar"
               Width="280"
               Background="#F0F0F0"
@@ -115,7 +111,6 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- ✅ 縮小版「+」按鈕（右上角） -->
                     <Button Grid.Row="0"
                             Width="22" Height="22"
                             Margin="0,2,0,0"
@@ -157,7 +152,6 @@
                         </Button.Template>
                     </Button>
 
-                    <!-- ✅ 檔案清單 -->
                     <ListBox x:Name="FileList"
                              Grid.Row="1"
                              Margin="0,10,0,10"
@@ -222,7 +216,7 @@
             </Border>
         </Grid>
 
-        <!-- ✅ 起始畫面 -->
+        <!-- 起始畫面 -->
         <Grid x:Name="StartUI"
               Margin="280,0,0,0"
               Background="White"
@@ -282,7 +276,7 @@
             </Grid>
         </Grid>
 
-        <!-- ✅ 主畫面 -->
+        <!-- 主畫面 -->
         <Grid x:Name="MainUI"
               Visibility="Collapsed">
 
@@ -372,7 +366,33 @@
                 </Border>
             </Grid>
 
-            <!-- 🧭 右下角定位按鈕 -->
+            <!-- 右下角自動模型開關 -->
+            <Border x:Name="AutoModelSwitchPanel"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,70,18"
+                    Padding="12,8"
+                    CornerRadius="14"
+                    Background="#F7F7F7"
+                    BorderBrush="#D9D9D9"
+                    BorderThickness="1"
+                    Panel.ZIndex="9999">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock x:Name="AutoModelSwitchLabel"
+                               Text="自動判定模型"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"
+                               FontSize="13"
+                               Foreground="#222222" />
+
+                    <CheckBox x:Name="AutoModelSwitch"
+                              VerticalAlignment="Center"
+                              Checked="AutoModelSwitch_Checked"
+                              Unchecked="AutoModelSwitch_Unchecked"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 右下角定位按鈕 -->
             <Button x:Name="CenterOnInitialButton"
                     Width="38" Height="38"
                     HorizontalAlignment="Right"
@@ -407,5 +427,3 @@
         </Grid>
     </Grid>
 </Window>
-
-

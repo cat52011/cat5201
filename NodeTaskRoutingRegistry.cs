@@ -13,20 +13,14 @@ namespace test
                 Mode = NodeTaskMode.Chat,
                 DisplayName = "Chat",
                 Description = "一般對話 / 綜合型任務",
-                PreferredModelIds = new[]
-                {
-                    AiModels.OpenAi_Gpt54,
-                    AiModels.Claude_Sonnet46,
-                    AiModels.Claude_Opus46,
-                    AiModels.Perplexity_Sonar
-                },
+                PreferredModelIds = Array.Empty<string>(),
                 PreferredCapabilities =
                     AiModelCapability.Streaming |
                     AiModelCapability.LongContext,
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "一般對話以穩定、通用、可延展為主。"
+                Notes = "Chat 不強制指定固定首選模型，優先保留目前節點手動模型；若沒有可用模型則回退到 gpt-5.4。"
             },
 
             new NodeTaskRoutingProfile
@@ -36,19 +30,18 @@ namespace test
                 Description = "查證 / 搜尋 / 最新資訊 / 比較分析",
                 PreferredModelIds = new[]
                 {
-                    AiModels.Perplexity_SonarDeepResearch,
                     AiModels.Perplexity_Sonar,
+                    AiModels.Perplexity_SonarDeepResearch,
                     AiModels.OpenAi_Gpt54,
                     AiModels.Claude_Sonnet46
                 },
                 PreferredCapabilities =
                     AiModelCapability.Search |
-                    AiModelCapability.LongContext |
                     AiModelCapability.Streaming,
                 PrefersSearch = true,
-                PrefersLongContext = true,
-                PrefersDeepResearch = true,
-                Notes = "Research 優先搜尋能力，其次長上下文與整理能力。"
+                PrefersLongContext = false,
+                PrefersDeepResearch = false,
+                Notes = "Research 首選 pplx-sonar，次選 pplx-sonar-deep-research，理由是搜尋 / 查證 / 最新資訊。"
             },
 
             new NodeTaskRoutingProfile
@@ -70,7 +63,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Translate 優先多模態、文件理解與穩定輸出品質。"
+                Notes = "Translate 首選 gpt-5.4，次選 claude-sonnet-4-6。"
             },
 
             new NodeTaskRoutingProfile
@@ -90,7 +83,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Summarize 優先長上下文與輸出穩定性。"
+                Notes = "Summarize 首選 gpt-5.4，次選 claude-sonnet-4-6。"
             },
 
             new NodeTaskRoutingProfile
@@ -110,7 +103,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Rewrite 優先語氣控制、文字細緻度與長文連貫性。"
+                Notes = "Rewrite 首選 claude-sonnet-4-6，次選 gpt-5.4。"
             },
 
             new NodeTaskRoutingProfile
@@ -132,7 +125,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Extract 優先文件理解、抽取穩定性與結構化能力。"
+                Notes = "Extract 首選 gpt-5.4，次選 claude-sonnet-4-6。"
             },
 
             new NodeTaskRoutingProfile
@@ -142,8 +135,8 @@ namespace test
                 Description = "程式 / 除錯 / 架構修改 / 可直接貼上",
                 PreferredModelIds = new[]
                 {
-                    AiModels.OpenAi_Gpt54,
                     AiModels.Claude_Opus46,
+                    AiModels.OpenAi_Gpt54,
                     AiModels.Claude_Sonnet46
                 },
                 PreferredCapabilities =
@@ -153,7 +146,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Code 優先程式正確性、長上下文與大型修改能力。"
+                Notes = "Code 首選 claude-opus-4-6，次選 gpt-5.4。"
             }
         };
 
@@ -201,21 +194,23 @@ namespace test
 
         public static string RecommendModel(NodeTaskMode mode, string? currentSelectedModel = null)
         {
-            var normalizedCurrent = AiModelHelper.NormalizeNodeModel(currentSelectedModel);
+            mode = NodeTaskModeHelper.Normalize(mode);
 
-            // 如果目前手動選的模型本來就在此 TaskMode 偏好內，就保留它
-            if (IsPreferredModel(mode, normalizedCurrent))
-                return normalizedCurrent;
-
-            // 否則取第一個可用的偏好模型
-            foreach (var modelId in GetPreferredModelIds(mode))
+            return mode switch
             {
-                if (AiModelRegistry.IsKnown(modelId))
-                    return modelId;
-            }
+                NodeTaskMode.Research => AiModels.Perplexity_Sonar,
+                NodeTaskMode.Translate => AiModels.OpenAi_Gpt54,
+                NodeTaskMode.Code => AiModels.Claude_Opus46,
+                NodeTaskMode.Summarize => AiModels.OpenAi_Gpt54,
+                NodeTaskMode.Rewrite => AiModels.Claude_Sonnet46,
+                NodeTaskMode.Extract => AiModels.OpenAi_Gpt54,
 
-            // 最後 fallback
-            return normalizedCurrent;
+                NodeTaskMode.Chat => AiModelRegistry.IsKnown(currentSelectedModel)
+                    ? AiModelHelper.NormalizeNodeModel(currentSelectedModel)
+                    : AiModels.OpenAi_Gpt54,
+
+                _ => AiModels.OpenAi_Gpt54
+            };
         }
 
         public static AiModelCapability GetPreferredCapabilities(NodeTaskMode mode)
@@ -242,9 +237,9 @@ namespace test
         {
             var profile = Get(mode);
 
-            string models = string.Join(", ", profile.PreferredModelIds);
-            if (string.IsNullOrWhiteSpace(models))
-                models = "(none)";
+            string models = profile.PreferredModelIds != null && profile.PreferredModelIds.Count > 0
+                ? string.Join(", ", profile.PreferredModelIds)
+                : "(use current manual model or fallback gpt-5.4)";
 
             return
                 $"TaskMode = {profile.DisplayName}\n" +
@@ -268,7 +263,6 @@ namespace test
             if (required == AiModelCapability.None)
                 return true;
 
-            // 只要至少命中一項偏好能力，就算有對到方向
             return (def.Capabilities & required) != AiModelCapability.None;
         }
 

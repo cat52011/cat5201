@@ -76,6 +76,8 @@ namespace test
         private readonly Dictionary<Guid, string> _nodeModelsById = new();
         private readonly Dictionary<Guid, NodeTaskMode> _nodeTaskModesById = new();
 
+        private bool _isAutoModelSelectionEnabled = false;
+
         public sealed class AttachmentInfo
         {
             public string FileName { get; set; } = "";
@@ -126,7 +128,8 @@ namespace test
             List<NodeState> Nodes,
             List<ConnState> Connections,
             List<AttachmentState> Attachments,
-            bool FileNameLocked = false
+            bool FileNameLocked = false,
+            bool AutoModelSelectionEnabled = false
         );
 
         private static string DisplayNameFromPath(string path)
@@ -263,6 +266,54 @@ namespace test
             SaveState();
         }
 
+        public bool IsAutoModelSelectionEnabled()
+        {
+            return _isAutoModelSelectionEnabled;
+        }
+
+        public void SetAutoModelSelectionEnabled(bool enabled, bool save = true)
+        {
+            _isAutoModelSelectionEnabled = enabled;
+
+            if (AutoModelSwitch != null)
+                AutoModelSwitch.IsChecked = enabled;
+
+            RefreshAllNodeModelSelectionUIs();
+
+            if (save)
+                SaveState();
+        }
+
+        public string GetEffectiveNodeModel(NodeControl node, string? topText = null)
+        {
+            var manualModel = GetNodeSelectedModel(node);
+
+            if (!_isAutoModelSelectionEnabled)
+                return manualModel;
+
+            string text = topText ?? node?.GetTopText() ?? "";
+            var resolution = NodeTaskModeResolver.Resolve(text);
+
+            string recommended = NodeTaskRoutingRegistry.RecommendModel(
+                resolution.Mode,
+                manualModel);
+
+            return AiModelHelper.NormalizeNodeModel(recommended);
+        }
+
+        public bool CanUserManuallySelectModel()
+        {
+            return !_isAutoModelSelectionEnabled;
+        }
+
+        public void RefreshAllNodeModelSelectionUIs()
+        {
+            foreach (var node in MainCanvas.Children.OfType<NodeControl>())
+            {
+                node.RefreshModelSelectionUI();
+            }
+        }
+
         public void RequestBeginEdit(NodeControl node, EditReason reason)
         {
             if (node == null) return;
@@ -320,6 +371,9 @@ namespace test
 
             _aiRouter.WarmupSafely();
             _nodeService = new NodeService(_aiRouter, this);
+
+            if (AutoModelSwitch != null)
+                AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
         }
 
         private void SetRandomStartMessage()
@@ -342,6 +396,9 @@ namespace test
             _currentFilePath = System.IO.Path.Combine(SavesDir, DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".json");
             CurrentFileLabel.Text = $"目前檔案：{DisplayNameFromPath(_currentFilePath)}";
             _hasStarted = true;
+
+            if (AutoModelSwitch != null)
+                AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
 
             _fileNameLockedByUser = false;
             _lastAppliedAutoKeyword = "";
@@ -404,6 +461,11 @@ namespace test
 
             _editingNode = null;
             _editingReason = EditReason.None;
+
+            _isAutoModelSelectionEnabled = false;
+
+            if (AutoModelSwitch != null)
+                AutoModelSwitch.IsChecked = false;
         }
 
         private void FileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -488,7 +550,7 @@ namespace test
                 }
 
                 if (!string.IsNullOrEmpty(_currentFilePath) &&
-    string.Equals(_currentFilePath, path, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(_currentFilePath, path, StringComparison.OrdinalIgnoreCase))
                 {
                     _currentFilePath = null;
                     _hasStarted = false;
@@ -499,6 +561,10 @@ namespace test
                     _attachmentsByNode.Clear();
                     _nodeModelsById.Clear();
                     _nodeTaskModesById.Clear();
+                    _isAutoModelSelectionEnabled = false;
+
+                    if (AutoModelSwitch != null)
+                        AutoModelSwitch.IsChecked = false;
                 }
 
                 RefreshFileList();
@@ -1069,7 +1135,8 @@ namespace test
                 nodes,
                 conns,
                 atts,
-                FileNameLocked: _fileNameLockedByUser
+                FileNameLocked: _fileNameLockedByUser,
+                AutoModelSelectionEnabled: _isAutoModelSelectionEnabled
             );
 
             if (string.IsNullOrEmpty(_currentFilePath))
@@ -1096,8 +1163,12 @@ namespace test
             CurrentFileLabel.Text = $"目前檔案：{DisplayNameFromPath(_currentFilePath)}";
 
             _fileNameLockedByUser = state.FileNameLocked;
+            _isAutoModelSelectionEnabled = state.AutoModelSelectionEnabled;
             _lastAppliedAutoKeyword = "";
             _lastInitialTopSnapshot = "";
+
+            if (AutoModelSwitch != null)
+                AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
 
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
@@ -1187,6 +1258,7 @@ namespace test
                 SaveState();
                 RefreshFileList();
                 SelectFileInList(path);
+                RefreshAllNodeModelSelectionUIs();
             }
         }
 
@@ -1324,13 +1396,13 @@ namespace test
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
-            string model = GetNodeSelectedModel(node);
+            string model = GetEffectiveNodeModel(node, topText);
             var route = _aiRouter.GetRouteInfo(model);
 
             string instructions = "你是一個善於替筆記自動命名的助手。";
 
             string user =
-        $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短標題/關鍵字」：
+$@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短標題/關鍵字」：
 - 使用繁體中文
 - 盡量 6~16 字
 - 只輸出標題本身，不要加引號、不要加編號、不要加任何解釋
@@ -1605,6 +1677,16 @@ namespace test
         }
 
         private void HotZoneContainer_MouseEnter(object sender, MouseEventArgs e) { }
+
+        private void AutoModelSwitch_Checked(object sender, RoutedEventArgs e)
+        {
+            SetAutoModelSelectionEnabled(true);
+        }
+
+        private void AutoModelSwitch_Unchecked(object sender, RoutedEventArgs e)
+        {
+            SetAutoModelSelectionEnabled(false);
+        }
 
         public void DeleteNodeAndDescendants(NodeControl root)
         {

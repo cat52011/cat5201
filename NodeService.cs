@@ -171,7 +171,8 @@ $@"
                 return "";
 
             var resolvedTask = ResolveAndPersistTaskMode(node, topText);
-            var route = PrepareRoute(_main.GetNodeSelectedModel(node));
+            var effectiveModel = _main.GetEffectiveNodeModel(node, topText);
+            var route = PrepareRoute(effectiveModel);
             string model = route.NodeModel;
 
             if (route.Provider == AiProviderKind.PerplexitySonar)
@@ -210,7 +211,8 @@ $@"
                 return "";
 
             var resolvedTask = ResolveAndPersistTaskMode(node, topText);
-            var route = PrepareRoute(_main.GetNodeSelectedModel(node));
+            var effectiveModel = _main.GetEffectiveNodeModel(node, topText);
+            var route = PrepareRoute(effectiveModel);
             string model = route.NodeModel;
 
             if (route.Provider == AiProviderKind.PerplexitySonar)
