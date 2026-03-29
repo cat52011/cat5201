@@ -604,7 +604,9 @@ namespace test
 
             UpdateAutoTaskPreview();
 
-            if (_parent != null && _parent.IsAutoModelSelectionEnabled())
+            if (_parent != null &&
+                _parent.IsAutoModelSelectionEnabled() &&
+                !string.IsNullOrWhiteSpace(TopEditor.Text))
             {
                 RefreshModelSelectionUI();
             }

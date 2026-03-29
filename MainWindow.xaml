@@ -93,6 +93,59 @@
             </Setter>
         </Style>
 
+        <Style x:Key="AppleSwitchStyle" TargetType="CheckBox">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Width="{TemplateBinding Width}" Height="{TemplateBinding Height}">
+
+                            <!-- 背景 -->
+                            <Border x:Name="SwitchTrack"
+                            CornerRadius="11"
+                            Background="#D1D1D6"
+                            BorderBrush="#D1D1D6"
+                            BorderThickness="1"/>
+
+                            <!-- 滑塊 -->
+                            <Border x:Name="SwitchThumb"
+                            Width="18"
+                            Height="18"
+                            CornerRadius="9"
+                            Background="White"
+                            HorizontalAlignment="Left"
+                            Margin="2,2,0,2">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="4"
+                                              ShadowDepth="1"
+                                              Opacity="0.2"/>
+                                </Border.Effect>
+                            </Border>
+                        </Grid>
+
+                        <ControlTemplate.Triggers>
+
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="SwitchTrack" Property="Background" Value="#34C759"/>
+                                <Setter TargetName="SwitchTrack" Property="BorderBrush" Value="#34C759"/>
+
+                                <Setter TargetName="SwitchThumb" Property="HorizontalAlignment" Value="Right"/>
+                                <Setter TargetName="SwitchThumb" Property="Margin" Value="0,2,2,2"/>
+                            </Trigger>
+
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="SwitchTrack" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <Grid>
@@ -368,27 +421,31 @@
 
             <!-- 右下角自動模型開關 -->
             <Border x:Name="AutoModelSwitchPanel"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Bottom"
-                    Margin="0,0,70,18"
-                    Padding="12,8"
-                    CornerRadius="14"
-                    Background="#F7F7F7"
-                    BorderBrush="#D9D9D9"
-                    BorderThickness="1"
-                    Panel.ZIndex="9999">
+        HorizontalAlignment="Right"
+        VerticalAlignment="Bottom"
+        Margin="0,0,65,18"
+        Padding="8,6"
+        CornerRadius="20"
+        Background="#F7F7F7"
+        BorderBrush="#D9D9D9"
+        BorderThickness="1"
+        Panel.ZIndex="9999">
+
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock x:Name="AutoModelSwitchLabel"
-                               Text="自動判定模型"
-                               VerticalAlignment="Center"
-                               Margin="0,0,10,0"
-                               FontSize="13"
-                               Foreground="#222222" />
+
+                    <TextBlock Text="Auto"
+                   VerticalAlignment="Center"
+                   Margin="0,0,6,0"
+                   FontSize="12.5"
+                   FontWeight="SemiBold"
+                   Foreground="#222"/>
 
                     <CheckBox x:Name="AutoModelSwitch"
-                              VerticalAlignment="Center"
-                              Checked="AutoModelSwitch_Checked"
-                              Unchecked="AutoModelSwitch_Unchecked"/>
+                  Style="{StaticResource AppleSwitchStyle}"
+                  VerticalAlignment="Center"
+                  Checked="AutoModelSwitch_Checked"
+                  Unchecked="AutoModelSwitch_Unchecked"/>
+
                 </StackPanel>
             </Border>
 
