@@ -425,32 +425,181 @@
                 </Border>
             </Grid>
 
+            <!-- 右上角決策可視化視窗 -->
+            <Border x:Name="DecisionPanel"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,18,18,0"
+                    Width="320"
+                    Padding="14,12"
+                    CornerRadius="18"
+                    Background="#FAFAFA"
+                    BorderBrush="#DADADA"
+                    BorderThickness="1"
+                    Panel.ZIndex="9999">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="10"
+                                      ShadowDepth="2"
+                                      Opacity="0.16"/>
+                </Border.Effect>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" LastChildFill="False">
+                        <TextBlock Text="決策可視化"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#202020"
+                                   VerticalAlignment="Center"/>
+
+                        <Border x:Name="DecisionStatusBadge"
+                                DockPanel.Dock="Right"
+                                Background="#EDEDED"
+                                CornerRadius="9"
+                                Padding="8,3"
+                                Margin="10,0,0,0">
+                            <TextBlock x:Name="DecisionStatusText"
+                                       Text="Idle"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="#404040"/>
+                        </Border>
+                    </DockPanel>
+
+                    <Border Grid.Row="1"
+                            Margin="0,10,0,0"
+                            Height="1"
+                            Background="#E8E8E8"/>
+
+                    <Grid Grid.Row="2" Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="84"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="模式"
+                                   FontSize="12"
+                                   Foreground="#707070"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="DecisionModeText"
+                                   Grid.Column="1"
+                                   Text="Manual"
+                                   FontSize="12.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#202020"
+                                   TextWrapping="Wrap"/>
+                    </Grid>
+
+                    <Grid Grid.Row="3" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="84"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="策略"
+                                   FontSize="12"
+                                   Foreground="#707070"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="DecisionResolverText"
+                                   Grid.Column="1"
+                                   Text="Manual"
+                                   FontSize="12.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#202020"
+                                   TextWrapping="Wrap"/>
+                    </Grid>
+
+                    <Grid Grid.Row="4" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="84"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="模型"
+                                   FontSize="12"
+                                   Foreground="#707070"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="DecisionModelText"
+                                   Grid.Column="1"
+                                   Text="-"
+                                   FontSize="12.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#202020"
+                                   TextWrapping="Wrap"/>
+                    </Grid>
+
+                    <Grid Grid.Row="5" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="84"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="任務 / 信心"
+                                   FontSize="12"
+                                   Foreground="#707070"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="DecisionTaskText"
+                                   Grid.Column="1"
+                                   Text="-"
+                                   FontSize="12.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#202020"
+                                   TextWrapping="Wrap"/>
+                    </Grid>
+                </Grid>
+            </Border>
+
             <!-- 右下角自動模型開關 -->
             <Border x:Name="AutoModelSwitchPanel"
-        HorizontalAlignment="Right"
-        VerticalAlignment="Bottom"
-        Margin="0,0,65,18"
-        Padding="8,6"
-        CornerRadius="20"
-        Background="#F7F7F7"
-        BorderBrush="#D9D9D9"
-        BorderThickness="1"
-        Panel.ZIndex="9999">
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,65,18"
+                    Padding="10,7"
+                    CornerRadius="22"
+                    Background="#F7F7F7"
+                    BorderBrush="#D9D9D9"
+                    BorderThickness="1"
+                    Panel.ZIndex="9999">
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center">
 
                     <TextBlock Text="Auto"
-                   VerticalAlignment="Center"
-                   Margin="0,0,6,0"
-                   FontSize="12.5"
-                   FontWeight="SemiBold"
-                   Foreground="#222"/>
+                               VerticalAlignment="Center"
+                               Margin="0,0,6,0"
+                               FontSize="12.5"
+                               FontWeight="SemiBold"
+                               Foreground="#222"/>
 
                     <CheckBox x:Name="AutoModelSwitch"
-                  Style="{StaticResource AppleSwitchStyle}"
-                  VerticalAlignment="Center"
-                  Checked="AutoModelSwitch_Checked"
-                  Unchecked="AutoModelSwitch_Unchecked"/>
+                              Style="{StaticResource AppleSwitchStyle}"
+                              VerticalAlignment="Center"
+                              Checked="AutoModelSwitch_Checked"
+                              Unchecked="AutoModelSwitch_Unchecked"/>
+
+                    <Border Margin="8,0,0,0"
+                            Width="1"
+                            Height="16"
+                            Background="#D9D9D9"
+                            VerticalAlignment="Center"/>
+
+                    <TextBlock Text="API"
+                               VerticalAlignment="Center"
+                               Margin="8,0,6,0"
+                               FontSize="12.5"
+                               FontWeight="SemiBold"
+                               Foreground="#222"/>
+
+                    <CheckBox x:Name="AdvancedAutoResolverSwitch"
+                              Style="{StaticResource AppleSwitchStyle}"
+                              VerticalAlignment="Center"
+                              Visibility="Collapsed"
+                              Checked="AdvancedAutoResolverSwitch_Checked"
+                              Unchecked="AdvancedAutoResolverSwitch_Unchecked"/>
 
                 </StackPanel>
             </Border>

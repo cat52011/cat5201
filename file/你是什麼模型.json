@@ -1,0 +1,120 @@
+{
+  "CreatedAt": "2026-03-31T14:34:53.2924956+11:00",
+  "InitialNodeId": "6ac57f3d-299c-4dbe-8bd8-835780cb9e12",
+  "Nodes": [
+    {
+      "Id": "6ac57f3d-299c-4dbe-8bd8-835780cb9e12",
+      "X": 618,
+      "Y": 220.40000000000003,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F GPT-5.4\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "8b35a8d2-4ad9-4d76-8f50-4c59ea48a5db",
+      "X": 1044.8981440000002,
+      "Y": 118.986784,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F **Perplexity Sonar** \u6A21\u578B\u3002[\u6A21\u578B\u8EAB\u5206\u898F\u5247]",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "pplx-sonar",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "6d71f3a6-dbb5-436d-ad1d-9ba568fc2162",
+      "X": 1040.0581440000003,
+      "Y": 635.898784,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F Claude Sonnet 4.6\uFF0C\u7531 Anthropic \u958B\u767C\u7684 AI \u52A9\u624B\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "claude-sonnet-4-6",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "076cd045-cf26-4473-a132-4f66da22d395",
+      "X": 1629.1328016000004,
+      "Y": 730.5384016,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u7C21\u55AE\u641C\u5C0B\u570B\u7ACB\u81FA\u5317\u6559\u80B2\u5927\u5B78\u7684\u8CC7\u6599",
+      "BottomText": "\u570B\u7ACB\u81FA\u5317\u6559\u80B2\u5927\u5B78\uFF08\u7C21\u7A31\u5317\u6559\u5927\uFF09\u662F\u81FA\u7063\u5C08\u9580\u57F9\u80B2\u5C0F\u5B78\u5E2B\u8CC7\u7684\u6559\u80B2\u5927\u5B78\uFF0C\u5275\u7ACB\u65BC1895\u5E74\uFF0C\u4F4D\u65BC\u81FA\u5317\u5E02\u5927\u5B89\u5340\u548C\u5E73\u6771\u8DEF\u4E8C\u6BB5134\u865F\u3002[1][2][3][7]\n\n### \u6B77\u53F2\u6CBF\u9769\n- 1895\u5E74\u5275\u7ACB\u70BA\u81FA\u7063\u7E3D\u7763\u5E9C\u5E2B\u7BC4\u5B78\u6821\uFF0C\u70BA\u81FA\u7063\u7B2C\u4E00\u6240\u6559\u80B2\u6A5F\u69CB\u3002[2][4]\n- 1945\u5E74\u66F4\u540D\u81FA\u7063\u7701\u7ACB\u81FA\u5317\u5E2B\u7BC4\u5B78\u6821\uFF0C1961\u5E74\u6539\u5236\u70BA\u81FA\u7063\u7701\u7ACB\u81FA\u5317\u5E2B\u7BC4\u5C08\u79D1\u5B78\u6821\uFF0C1987\u5E74\u5347\u683C\u70BA\u81FA\u7063\u7701\u7ACB\u81FA\u5317\u5E2B\u7BC4\u5B78\u9662\uFF0C1991\u5E74\u6539\u96B8\u570B\u7ACB\u81FA\u5317\u5E2B\u7BC4\u5B78\u9662\uFF0C2005\u5E74\u5347\u683C\u70BA\u570B\u7ACB\u81FA\u5317\u6559\u80B2\u5927\u5B78\u3002[2][3]\n\n### \u6821\u5712\u8207\u898F\u6A21\n- \u8A2D\u6709\u6559\u80B2\u5B78\u9662\u3001\u4EBA\u6587\u85DD\u8853\u5B78\u9662\u3001\u7406\u5B78\u9662\uFF0C\u5C08\u4EFB\u6559\u5E2B205\u4EBA\uFF08\u535A\u58EB158\u4EBA\uFF09\uFF0C\u5B78\u751F\u7D045,800\u4EBA\u3002[3][7]\n- \u5E2B\u751F\u6BD414.2\uFF0C\u8A3B\u518A\u738795.82%\uFF0C\u7537\u5973\u6BD43:7\u3002[6]\n- \u7562\u696D\u5C31\u696D\u7387\u6B77\u5E74\u5747\u9AD8\u905498.34%\uFF0C\u6559\u5E2B\u7504\u8A66\u9304\u53D6\u7387\u512A\u7570\uFF0C\u70BA\u96D9\u8A9E\u570B\u5BB6\u653F\u7B56\u91CD\u93AE\u3002[1]\n\n### \u5B78\u7CFB\u8207\u7279\u8272\n- \u6559\u80B2\u5B78\u9662\u67098\u500B\u5B78\u7CFB\uFF0C\u63D0\u4F9B12\u500B\u78A9\u58EB\u73ED\u53CA2\u500B\u535A\u58EB\u73ED\uFF0C\u5982\u6559\u80B2\u5B78\u7CFB\uFF08\u57F9\u80B2\u5C0F\u5B78\u6559\u5E2B\u53CA\u5B78\u7FD2\u8A2D\u8A08\u3001\u6559\u80B2\u79D1\u6280\u5C08\u5BB6\uFF09\u3002[5]\n- \u5176\u4ED6\u79D1\u7CFB\u5305\u542B\u97F3\u6A02\u5B78\u7CFB\u3001\u5152\u7AE5\u82F1\u8A9E\u6559\u80B2\u5B78\u7CFB\u3001\u85DD\u8853\u8207\u9020\u5F62\u8A2D\u8A08\u5B78\u7CFB\u7B49\u3002[6]\n- \u516D\u5927\u9858\u666F\uFF1A\u6559\u80B2\u5C08\u696D\u5316\u3001\u6700\u9069\u798F\u7949\u3001\u71B1\u60C5\u6D3B\u529B\u3001\u5FA9\u8208\u5275\u65B0\u7B49\uFF0C\u5F37\u8ABF\u6559\u5E2B\u5148\u92D2\u3001\u591A\u5B78\u79D1\u5275\u65B0\u53CA\u6C38\u7E8C\u6821\u5712\u3002[1][5]",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "pplx-sonar",
+      "TaskMode": "Research"
+    },
+    {
+      "Id": "8fd3ed41-348e-4f6a-9f61-447b99823213",
+      "X": 2144.314719400001,
+      "Y": 922.485276368,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u628A\u4E0A\u4E00\u7BC7\u7684\u5167\u5BB9\u6539\u7684\u7C21\u55AE\u4E00\u9EDE",
+      "BottomText": "\u570B\u7ACB\u81FA\u5317\u6559\u80B2\u5927\u5B78\uFF08\u5317\u6559\u5927\uFF09\u4F4D\u65BC\u81FA\u5317\u5E02\u5927\u5B89\u5340\uFF0C\u5275\u7ACB\u65BC1895\u5E74\uFF0C\u662F\u81FA\u7063\u6B77\u53F2\u6700\u60A0\u4E45\u7684\u6559\u80B2\u6A5F\u69CB\uFF0C\u5C08\u9580\u57F9\u80B2\u5C0F\u5B78\u5E2B\u8CC7\u3002\n\n\u5B78\u6821\u8A2D\u6709\u6559\u80B2\u3001\u4EBA\u6587\u85DD\u8853\u3001\u7406\u5B78\u4E09\u500B\u5B78\u9662\uFF0C\u5C08\u4EFB\u6559\u5E2B205\u4EBA\uFF0C\u5B78\u751F\u7D045,800\u4EBA\u3002\u7562\u696D\u751F\u5C31\u696D\u7387\u9577\u671F\u7DAD\u6301\u572898%\u4EE5\u4E0A\uFF0C\u6559\u5E2B\u7504\u8A66\u9304\u53D6\u7387\u8868\u73FE\u4EAE\u773C\u3002\n\n\u4E3B\u8981\u5B78\u7CFB\u5305\u62EC\u6559\u80B2\u5B78\u7CFB\u3001\u97F3\u6A02\u5B78\u7CFB\u3001\u5152\u7AE5\u82F1\u8A9E\u6559\u80B2\u5B78\u7CFB\u3001\u85DD\u8853\u8207\u9020\u5F62\u8A2D\u8A08\u5B78\u7CFB\u7B49\uFF0C\u4E26\u7A4D\u6975\u63A8\u52D5\u96D9\u8A9E\u6559\u80B2\u653F\u7B56\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Rewrite"
+    },
+    {
+      "Id": "cd242f21-e8c4-450d-945b-37553e5a7a52",
+      "X": 2528.2290446685092,
+      "Y": 967.5163201148468,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u628A\u4E0A\u4E00\u7BC7\u6539\u5BEB\u6210\u82F1\u6587",
+      "BottomText": "National Taipei University of Education (NTUE), located in Da\u2019an District, Taipei City, was founded in 1895 and is the oldest educational institution in Taiwan, specializing in the training of elementary school teachers.\n\nThe university has three colleges: Education, Humanities and Arts, and Science. It has 205 full-time faculty members and about 5,800 students. Its graduate employment rate has long remained above 98%, and its teacher recruitment exam pass rate is also outstanding.\n\nIts major departments include the Department of Education, Department of Music, Department of Children English Education, and Department of Arts and Design. The university also actively promotes bilingual education policies.",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Translate"
+    }
+  ],
+  "Connections": [
+    {
+      "StartId": "6ac57f3d-299c-4dbe-8bd8-835780cb9e12",
+      "EndId": "8b35a8d2-4ad9-4d76-8f50-4c59ea48a5db",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "6ac57f3d-299c-4dbe-8bd8-835780cb9e12",
+      "EndId": "6d71f3a6-dbb5-436d-ad1d-9ba568fc2162",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "6d71f3a6-dbb5-436d-ad1d-9ba568fc2162",
+      "EndId": "076cd045-cf26-4473-a132-4f66da22d395",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "076cd045-cf26-4473-a132-4f66da22d395",
+      "EndId": "8fd3ed41-348e-4f6a-9f61-447b99823213",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "8fd3ed41-348e-4f6a-9f61-447b99823213",
+      "EndId": "cd242f21-e8c4-450d-945b-37553e5a7a52",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    }
+  ],
+  "Attachments": [],
+  "FileNameLocked": false,
+  "AutoModelSelectionEnabled": true,
+  "AdvancedAutoResolverEnabled": true
+}

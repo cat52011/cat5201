@@ -15,12 +15,12 @@ namespace test
     {
         private readonly AiServiceRouter _router;
         private readonly MainWindow _main;
+        private readonly AiAutoModelResolverService _autoResolver;
 
         private const int MainReplyMaxOutputTokens = 8000;
         private const int ContinuationMaxRounds = 5;
         private const int SegmentDiscoveryMaxTokens = 1200;
         private const int SegmentTranslationMaxTokens = 8000;
-        private const int OtherNodeContextLimit = 3;
 
         private enum NodeContextStrategy
         {
@@ -47,14 +47,26 @@ namespace test
         {
             public string UpstreamContext { get; set; } = "";
             public string DownstreamContext { get; set; } = "";
-            public string OtherNodesContext { get; set; } = "";
+            public string BranchSummaryContext { get; set; } = "";
             public string AttachmentHint { get; set; } = "";
+        }
+
+        private sealed class ExecutionDecision
+        {
+            public string ModelId { get; set; } = "";
+            public NodeTaskMode TaskMode { get; set; } = NodeTaskMode.Chat;
+            public string ResolverLabel { get; set; } = "Manual";
+            public string StatusLabel { get; set; } = "Manual";
+            public double Confidence { get; set; }
+            public bool UsedApiResolver { get; set; }
+            public bool UsedFallbackToRules { get; set; }
         }
 
         public NodeService(AiServiceRouter router, MainWindow main)
         {
             _router = router;
             _main = main;
+            _autoResolver = new AiAutoModelResolverService(router);
         }
 
         private static string GetRuntimeModelLabel(string model)
@@ -98,7 +110,7 @@ $@"
                 "除非使用者明確要求步驟說明，否則請直接輸出結果本身。" +
                 "若是翻譯需求，就直接翻譯；若是整理需求，就直接整理完成內容；若是問答需求，就直接回答。" +
                 "回應請使用繁體中文。" +
-                "可以參考上下游節點，但不要被其它節點的語氣或格式帶偏。" +
+                "可以參考主鏈上下游與支線摘要，但不要被支線帶偏。" +
                 "若有附件（圖片/檔案），請閱讀後直接根據附件內容作答。" +
                 BuildTaskModeInstruction(taskMode) +
                 BuildModelIdentityGuard(model) +
@@ -170,18 +182,20 @@ $@"
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
-            var resolvedTask = ResolveAndPersistTaskMode(node, topText);
-            var effectiveModel = _main.GetEffectiveNodeModel(node, topText);
-            var route = PrepareRoute(effectiveModel);
+            var decision = await ResolveExecutionDecisionAsync(node, topText, ct);
+            ApplyDecisionVisualization(decision);
+            SyncActualModelToNode(node, decision);
+
+            var route = PrepareRoute(decision.ModelId);
             string model = route.NodeModel;
 
             if (route.Provider == AiProviderKind.PerplexitySonar)
             {
-                return await GenerateSinglePassOrContinuedAsync(node, topText, model, resolvedTask.Mode, ct);
+                return await GenerateSinglePassOrContinuedAsync(node, topText, model, decision.TaskMode, ct);
             }
 
             bool useSegmentMode =
-                resolvedTask.Mode == NodeTaskMode.Translate &&
+                decision.TaskMode == NodeTaskMode.Translate &&
                 LooksLikeFullTranslationRequest(topText) &&
                 HasNonImageAttachments(node);
 
@@ -189,7 +203,7 @@ $@"
             {
                 try
                 {
-                    var segmented = await TranslateBySegmentsAsync(node, topText, model, resolvedTask.Mode, ct);
+                    var segmented = await TranslateBySegmentsAsync(node, topText, model, decision.TaskMode, ct);
                     if (!string.IsNullOrWhiteSpace(segmented))
                         return segmented;
                 }
@@ -198,7 +212,7 @@ $@"
                 }
             }
 
-            return await GenerateSinglePassOrContinuedAsync(node, topText, model, resolvedTask.Mode, ct);
+            return await GenerateSinglePassOrContinuedAsync(node, topText, model, decision.TaskMode, ct);
         }
 
         public async Task<string> GenerateStreamAsync(
@@ -210,18 +224,20 @@ $@"
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
-            var resolvedTask = ResolveAndPersistTaskMode(node, topText);
-            var effectiveModel = _main.GetEffectiveNodeModel(node, topText);
-            var route = PrepareRoute(effectiveModel);
+            var decision = await ResolveExecutionDecisionAsync(node, topText, ct);
+            ApplyDecisionVisualization(decision);
+            SyncActualModelToNode(node, decision);
+
+            var route = PrepareRoute(decision.ModelId);
             string model = route.NodeModel;
 
             if (route.Provider == AiProviderKind.PerplexitySonar)
             {
-                return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, resolvedTask.Mode, onDelta, ct);
+                return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, decision.TaskMode, onDelta, ct);
             }
 
             bool useSegmentMode =
-                resolvedTask.Mode == NodeTaskMode.Translate &&
+                decision.TaskMode == NodeTaskMode.Translate &&
                 LooksLikeFullTranslationRequest(topText) &&
                 HasNonImageAttachments(node);
 
@@ -229,7 +245,7 @@ $@"
             {
                 try
                 {
-                    var segmented = await TranslateBySegmentsStreamAsync(node, topText, model, resolvedTask.Mode, onDelta, ct);
+                    var segmented = await TranslateBySegmentsStreamAsync(node, topText, model, decision.TaskMode, onDelta, ct);
                     if (!string.IsNullOrWhiteSpace(segmented))
                         return segmented;
                 }
@@ -238,7 +254,144 @@ $@"
                 }
             }
 
-            return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, resolvedTask.Mode, onDelta, ct);
+            return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, decision.TaskMode, onDelta, ct);
+        }
+
+        private async Task<ExecutionDecision> ResolveExecutionDecisionAsync(
+            NodeControl node,
+            string topText,
+            CancellationToken ct)
+        {
+            string selectedModel = _main.GetNodeSelectedModel(node);
+
+            if (!_main.IsAutoModelSelectionEnabled())
+            {
+                var manualTask = ResolveAndPersistTaskMode(node, topText);
+
+                return new ExecutionDecision
+                {
+                    ModelId = AiModelHelper.NormalizeNodeModel(selectedModel),
+                    TaskMode = manualTask.Mode,
+                    ResolverLabel = "Manual",
+                    StatusLabel = "Manual",
+                    Confidence = 1.0,
+                    UsedApiResolver = false,
+                    UsedFallbackToRules = false
+                };
+            }
+
+            if (_main.IsAdvancedAutoResolverEnabled())
+            {
+                try
+                {
+                    var resolution = await _autoResolver.ResolveAsync(
+                        topText,
+                        _main.GetAttachmentsForNode(node),
+                        ct);
+
+                    var resolvedMode = NodeTaskModeHelper.Normalize(resolution.TaskMode);
+                    _main.SetNodeTaskMode(node, resolvedMode);
+
+                    string resolvedModel = AiModelHelper.NormalizeNodeModel(resolution.RecommendedModel);
+
+                    return new ExecutionDecision
+                    {
+                        ModelId = resolvedModel,
+                        TaskMode = resolvedMode,
+                        ResolverLabel = "Responses API",
+                        StatusLabel = "API Auto",
+                        Confidence = resolution.Confidence,
+                        UsedApiResolver = true,
+                        UsedFallbackToRules = false
+                    };
+                }
+                catch
+                {
+                    var fallbackTask = ResolveAndPersistTaskMode(node, topText);
+                    string fallbackModel = _main.GetEffectiveNodeModel(node, topText);
+
+                    return new ExecutionDecision
+                    {
+                        ModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
+                        TaskMode = fallbackTask.Mode,
+                        ResolverLabel = "Rules (fallback)",
+                        StatusLabel = "API Auto",
+                        Confidence = 0.30,
+                        UsedApiResolver = true,
+                        UsedFallbackToRules = true
+                    };
+                }
+            }
+
+            var ruleTask = ResolveAndPersistTaskMode(node, topText);
+            string autoModel = _main.GetEffectiveNodeModel(node, topText);
+
+            return new ExecutionDecision
+            {
+                ModelId = AiModelHelper.NormalizeNodeModel(autoModel),
+                TaskMode = ruleTask.Mode,
+                ResolverLabel = "Rules",
+                StatusLabel = "Rule Auto",
+                Confidence = 0.80,
+                UsedApiResolver = false,
+                UsedFallbackToRules = false
+            };
+        }
+
+        private void ApplyDecisionVisualization(ExecutionDecision decision)
+        {
+            string modelLabel = GetRuntimeModelLabel(decision.ModelId);
+            string taskLabel = NodeTaskModeHelper.ToDisplayName(decision.TaskMode);
+            string confidenceText = $"{decision.Confidence:0.00}";
+            string taskSummary = $"{taskLabel} / {confidenceText}";
+
+            if (decision.UsedApiResolver)
+            {
+                if (decision.UsedFallbackToRules)
+                {
+                    _main.SetDecisionVisualization(
+                        status: decision.StatusLabel,
+                        mode: "Auto",
+                        resolver: decision.ResolverLabel,
+                        model: modelLabel,
+                        taskSummary: taskSummary,
+                        statusBrushHex: "#FFF4E8",
+                        statusTextBrushHex: "#9A5A00");
+                    return;
+                }
+
+                _main.SetDecisionVisualization(
+                    status: decision.StatusLabel,
+                    mode: "Auto",
+                    resolver: decision.ResolverLabel,
+                    model: modelLabel,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#EAF4FF",
+                    statusTextBrushHex: "#245A9B");
+                return;
+            }
+
+            if (_main.IsAutoModelSelectionEnabled())
+            {
+                _main.SetDecisionVisualization(
+                    status: decision.StatusLabel,
+                    mode: "Auto",
+                    resolver: decision.ResolverLabel,
+                    model: modelLabel,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#EEF7EA",
+                    statusTextBrushHex: "#2E6A2E");
+                return;
+            }
+
+            _main.SetDecisionVisualization(
+                status: decision.StatusLabel,
+                mode: "Manual",
+                resolver: decision.ResolverLabel,
+                model: modelLabel,
+                taskSummary: taskSummary,
+                statusBrushHex: "#EDEDED",
+                statusTextBrushHex: "#404040");
         }
 
         private NodeTaskModeResolution ResolveAndPersistTaskMode(NodeControl node, string topText)
@@ -261,19 +414,13 @@ $@"
             }
 
             string instructions = BuildGeneralNodeInstructions(model, taskMode);
-            string prompt = BuildPromptForNode(currentNode, topText, taskMode, NodeContextStrategy.Full);
+            string prompt = BuildPromptForNode(currentNode, topText, taskMode, GetContextStrategy(model));
 
             return await GenerateWithContinuationAsync(
                 model,
                 instructions,
-                async followUp =>
-                {
-                    return await BuildOpenAiUserContentAsync(currentNode, prompt + followUp, ct);
-                },
-                async followUp =>
-                {
-                    return await BuildClaudeUserContentAsync(currentNode, prompt + followUp, ct);
-                },
+                async followUp => await BuildOpenAiUserContentAsync(currentNode, prompt + followUp, ct),
+                async followUp => await BuildClaudeUserContentAsync(currentNode, prompt + followUp, ct),
                 MainReplyMaxOutputTokens,
                 ct);
         }
@@ -292,19 +439,13 @@ $@"
             }
 
             string instructions = BuildGeneralNodeInstructions(model, taskMode);
-            string prompt = BuildPromptForNode(currentNode, topText, taskMode, NodeContextStrategy.Full);
+            string prompt = BuildPromptForNode(currentNode, topText, taskMode, GetContextStrategy(model));
 
             return await GenerateWithContinuationStreamingAsync(
                 model,
                 instructions,
-                async followUp =>
-                {
-                    return await BuildOpenAiUserContentAsync(currentNode, prompt + followUp, ct);
-                },
-                async followUp =>
-                {
-                    return await BuildClaudeUserContentAsync(currentNode, prompt + followUp, ct);
-                },
+                async followUp => await BuildOpenAiUserContentAsync(currentNode, prompt + followUp, ct),
+                async followUp => await BuildClaudeUserContentAsync(currentNode, prompt + followUp, ct),
                 onDelta,
                 MainReplyMaxOutputTokens,
                 ct);
@@ -325,15 +466,9 @@ $@"
             {
                 ct.ThrowIfCancellationRequested();
 
-                string followUp;
-                if (round == 0)
-                {
-                    followUp = "";
-                }
-                else
-                {
-                    followUp =
-$@"
+                string followUp = round == 0
+                    ? ""
+                    : $@"
 
 【你前一次已輸出的內容（不可重複，僅供接續）】
 {finalText}
@@ -341,7 +476,6 @@ $@"
 請直接從上一行未完成處繼續輸出。
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
-                }
 
                 string reply;
 
@@ -359,11 +493,7 @@ $@"
                     var openAiContent = await buildOpenAiContentFactory(followUp);
                     var input = new object[]
                     {
-                        new
-                        {
-                            role = "user",
-                            content = openAiContent.ToArray()
-                        }
+                        new { role = "user", content = openAiContent.ToArray() }
                     };
 
                     reply = await _router.GetOpenAiService(model).GenerateAsync(
@@ -388,15 +518,13 @@ $@"
                     var append = RemoveLeadingOverlap(finalText.ToString(), cleaned);
                     append = RemoveRepeatedBlocks(append);
 
-                    if (!string.IsNullOrWhiteSpace(append))
+                    if (!string.IsNullOrWhiteSpace(append) &&
+                        !IsHighlySimilarByContainment(finalText.ToString(), append))
                     {
-                        if (!IsHighlySimilarByContainment(finalText.ToString(), append))
-                        {
-                            if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
-                                finalText.AppendLine();
+                        if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
+                            finalText.AppendLine();
 
-                            finalText.Append(append.Trim());
-                        }
+                        finalText.Append(append.Trim());
                     }
                 }
 
@@ -423,15 +551,9 @@ $@"
             {
                 ct.ThrowIfCancellationRequested();
 
-                string followUp;
-                if (round == 0)
-                {
-                    followUp = "";
-                }
-                else
-                {
-                    followUp =
-$@"
+                string followUp = round == 0
+                    ? ""
+                    : $@"
 
 【你前一次已輸出的內容（不可重複，僅供接續）】
 {finalText}
@@ -439,7 +561,6 @@ $@"
 請直接從上一行未完成處繼續輸出。
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
-                }
 
                 string reply;
 
@@ -451,7 +572,7 @@ $@"
                         reply = await _router.GetClaudeService(model).GenerateStreamAsync(
                             instructions,
                             claudeContent,
-                            delta => { onDelta?.Invoke(delta); },
+                            delta => onDelta?.Invoke(delta),
                             maxOutputTokens,
                             ct);
                     }
@@ -460,17 +581,13 @@ $@"
                         var openAiContent = await buildOpenAiContentFactory(followUp);
                         var input = new object[]
                         {
-                            new
-                            {
-                                role = "user",
-                                content = openAiContent.ToArray()
-                            }
+                            new { role = "user", content = openAiContent.ToArray() }
                         };
 
                         reply = await _router.GetOpenAiService(model).GenerateStreamAsync(
                             instructions,
                             input,
-                            delta => { onDelta?.Invoke(delta); },
+                            delta => onDelta?.Invoke(delta),
                             maxOutputTokens,
                             ct);
                     }
@@ -491,11 +608,7 @@ $@"
                         var openAiContent = await buildOpenAiContentFactory(followUp);
                         var input = new object[]
                         {
-                            new
-                            {
-                                role = "user",
-                                content = openAiContent.ToArray()
-                            }
+                            new { role = "user", content = openAiContent.ToArray() }
                         };
 
                         reply = await _router.GetOpenAiService(model).GenerateAsync(
@@ -521,19 +634,17 @@ $@"
                     var append = RemoveLeadingOverlap(finalText.ToString(), cleaned);
                     append = RemoveRepeatedBlocks(append);
 
-                    if (!string.IsNullOrWhiteSpace(append))
+                    if (!string.IsNullOrWhiteSpace(append) &&
+                        !IsHighlySimilarByContainment(finalText.ToString(), append))
                     {
-                        if (!IsHighlySimilarByContainment(finalText.ToString(), append))
+                        if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
                         {
-                            if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
-                            {
-                                finalText.AppendLine();
-                                onDelta?.Invoke(Environment.NewLine);
-                            }
-
-                            finalText.Append(append.Trim());
-                            onDelta?.Invoke(append.Trim());
+                            finalText.AppendLine();
+                            onDelta?.Invoke(Environment.NewLine);
                         }
+
+                        finalText.Append(append.Trim());
+                        onDelta?.Invoke(append.Trim());
                     }
                 }
 
@@ -579,8 +690,8 @@ $@"
                 string reply = await svc.GenerateAsync(
                     instructions,
                     prompt,
-                    maxOutputTokens: MainReplyMaxOutputTokens,
-                    ct: ct);
+                    MainReplyMaxOutputTokens,
+                    ct);
 
                 if (string.IsNullOrWhiteSpace(reply))
                     break;
@@ -597,15 +708,13 @@ $@"
                     var append = RemoveLeadingOverlap(finalText.ToString(), cleaned);
                     append = RemoveRepeatedBlocks(append);
 
-                    if (!string.IsNullOrWhiteSpace(append))
+                    if (!string.IsNullOrWhiteSpace(append) &&
+                        !IsHighlySimilarByContainment(finalText.ToString(), append))
                     {
-                        if (!IsHighlySimilarByContainment(finalText.ToString(), append))
-                        {
-                            if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
-                                finalText.AppendLine();
+                        if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
+                            finalText.AppendLine();
 
-                            finalText.Append(append.Trim());
-                        }
+                        finalText.Append(append.Trim());
                     }
                 }
 
@@ -649,25 +758,9 @@ $@"
 
                 string prompt = BuildPromptForNode(currentNode, topText, taskMode, strategy) + followUp;
 
-                string reply;
-
-                if (round == 0)
-                {
-                    reply = await svc.GenerateStreamAsync(
-                        instructions,
-                        prompt,
-                        onDelta,
-                        maxOutputTokens: MainReplyMaxOutputTokens,
-                        ct: ct);
-                }
-                else
-                {
-                    reply = await svc.GenerateAsync(
-                        instructions,
-                        prompt,
-                        maxOutputTokens: MainReplyMaxOutputTokens,
-                        ct: ct);
-                }
+                string reply = round == 0
+                    ? await svc.GenerateStreamAsync(instructions, prompt, onDelta, MainReplyMaxOutputTokens, ct)
+                    : await svc.GenerateAsync(instructions, prompt, MainReplyMaxOutputTokens, ct);
 
                 if (string.IsNullOrWhiteSpace(reply))
                     break;
@@ -684,19 +777,17 @@ $@"
                     var append = RemoveLeadingOverlap(finalText.ToString(), cleaned);
                     append = RemoveRepeatedBlocks(append);
 
-                    if (!string.IsNullOrWhiteSpace(append))
+                    if (!string.IsNullOrWhiteSpace(append) &&
+                        !IsHighlySimilarByContainment(finalText.ToString(), append))
                     {
-                        if (!IsHighlySimilarByContainment(finalText.ToString(), append))
+                        if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
                         {
-                            if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
-                            {
-                                finalText.AppendLine();
-                                onDelta?.Invoke(Environment.NewLine);
-                            }
-
-                            finalText.Append(append.Trim());
-                            onDelta?.Invoke(append.Trim());
+                            finalText.AppendLine();
+                            onDelta?.Invoke(Environment.NewLine);
                         }
+
+                        finalText.Append(append.Trim());
+                        onDelta?.Invoke(append.Trim());
                     }
                 }
 
@@ -730,7 +821,6 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
 {topText}";
 
             string instructions = BuildSegmentDiscoveryInstructions();
-
             string raw;
 
             if (_router.GetProviderKind(model) == AiProviderKind.Claude)
@@ -743,11 +833,7 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
                 var content = await BuildOpenAiUserContentAsync(currentNode, discoveryPrompt, ct);
                 var input = new object[]
                 {
-                    new
-                    {
-                        role = "user",
-                        content = content.ToArray()
-                    }
+                    new { role = "user", content = content.ToArray() }
                 };
 
                 raw = await _router.GetOpenAiService(model).GenerateAsync(instructions, input, SegmentDiscoveryMaxTokens, ct);
@@ -759,7 +845,6 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
             try
             {
                 var json = raw.Trim();
-
                 int firstBrace = json.IndexOf('{');
                 int lastBrace = json.LastIndexOf('}');
                 if (firstBrace >= 0 && lastBrace > firstBrace)
@@ -772,14 +857,8 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
                 var result = new List<SegmentPlanItem>();
                 foreach (var item in arr.EnumerateArray())
                 {
-                    string title = "";
-                    string hint = "";
-
-                    if (item.TryGetProperty("title", out var titleEl))
-                        title = titleEl.GetString() ?? "";
-
-                    if (item.TryGetProperty("hint", out var hintEl))
-                        hint = hintEl.GetString() ?? "";
+                    string title = item.TryGetProperty("title", out var titleEl) ? titleEl.GetString() ?? "" : "";
+                    string hint = item.TryGetProperty("hint", out var hintEl) ? hintEl.GetString() ?? "" : "";
 
                     title = title.Trim();
                     hint = hint.Trim();
@@ -848,23 +927,14 @@ $@"【系統判定任務模式】
                 string translated = await GenerateWithContinuationAsync(
                     model,
                     instructions,
-                    async followUp =>
-                    {
-                        return await BuildOpenAiUserContentAsync(currentNode, segmentPrompt + followUp, ct);
-                    },
-                    async followUp =>
-                    {
-                        return await BuildClaudeUserContentAsync(currentNode, segmentPrompt + followUp, ct);
-                    },
+                    async followUp => await BuildOpenAiUserContentAsync(currentNode, segmentPrompt + followUp, ct),
+                    async followUp => await BuildClaudeUserContentAsync(currentNode, segmentPrompt + followUp, ct),
                     SegmentTranslationMaxTokens,
                     ct);
 
                 translated = RemoveRepeatedBlocks(translated.Trim());
 
-                if (string.IsNullOrWhiteSpace(translated))
-                    continue;
-
-                if (SegmentLooksDuplicate(sb, translated))
+                if (string.IsNullOrWhiteSpace(translated) || SegmentLooksDuplicate(sb, translated))
                     continue;
 
                 if (sb.Length > 0)
@@ -874,7 +944,6 @@ $@"【系統判定任務模式】
             }
 
             var final = RemoveRepeatedBlocks(sb.ToString().Trim());
-
             if (string.IsNullOrWhiteSpace(final))
                 return await GenerateSinglePassOrContinuedAsync(currentNode, topText, model, taskMode, ct);
 
@@ -925,20 +994,13 @@ $@"【系統判定任務模式】
 6. 這一段完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
                 string instructions = BuildSegmentTranslationInstructions();
-
                 bool segmentStarted = false;
 
                 string translated = await GenerateWithContinuationStreamingAsync(
                     model,
                     instructions,
-                    async followUp =>
-                    {
-                        return await BuildOpenAiUserContentAsync(currentNode, segmentPrompt + followUp, ct);
-                    },
-                    async followUp =>
-                    {
-                        return await BuildClaudeUserContentAsync(currentNode, segmentPrompt + followUp, ct);
-                    },
+                    async followUp => await BuildOpenAiUserContentAsync(currentNode, segmentPrompt + followUp, ct),
+                    async followUp => await BuildClaudeUserContentAsync(currentNode, segmentPrompt + followUp, ct),
                     delta =>
                     {
                         if (!segmentStarted)
@@ -955,10 +1017,7 @@ $@"【系統判定任務模式】
 
                 translated = RemoveRepeatedBlocks(translated.Trim());
 
-                if (string.IsNullOrWhiteSpace(translated))
-                    continue;
-
-                if (SegmentLooksDuplicate(sb, translated))
+                if (string.IsNullOrWhiteSpace(translated) || SegmentLooksDuplicate(sb, translated))
                     continue;
 
                 if (sb.Length > 0)
@@ -969,7 +1028,6 @@ $@"【系統判定任務模式】
             }
 
             var final = RemoveRepeatedBlocks(sb.ToString().Trim());
-
             if (string.IsNullOrWhiteSpace(final))
                 return await GenerateSinglePassOrContinuedStreamAsync(currentNode, topText, model, taskMode, onDelta, ct);
 
@@ -1013,28 +1071,28 @@ $@"【系統判定任務模式】
         {
             var bundle = CreateBaseContextBundle(current);
 
-            var upstream = CollectUpstream(current, 10);
-            var downstream = CollectDownstream(current, 2);
+            var upstream = CollectUpstream(current, 20);
+            var downstream = CollectDownstream(current, 6);
 
             bundle.UpstreamContext = BuildContextSection(
                 upstream,
-                topLimit: 220,
-                bottomLimit: 180,
-                maxCount: 6);
+                topLimit: 1200,
+                bottomLimit: 1200,
+                maxCount: int.MaxValue);
 
             bundle.DownstreamContext = BuildContextSection(
                 downstream,
-                topLimit: 140,
-                bottomLimit: 120,
-                maxCount: 2);
+                topLimit: 700,
+                bottomLimit: 700,
+                maxCount: int.MaxValue);
 
-            bundle.OtherNodesContext = BuildOtherNodesContext(
+            bundle.BranchSummaryContext = BuildBranchSummaryContext(
                 current,
                 upstream,
                 downstream,
-                topLimit: 120,
-                bottomLimit: 120,
-                maxCount: OtherNodeContextLimit);
+                representativeCountPerBranch: 3,
+                summaryTopLimit: 120,
+                summaryBottomLimit: 100);
 
             return bundle;
         }
@@ -1043,46 +1101,75 @@ $@"【系統判定任務模式】
         {
             var bundle = CreateBaseContextBundle(current);
 
-            var upstream = CollectUpstream(current, 10);
+            var upstream = CollectUpstream(current, 12);
+            var downstream = CollectDownstream(current, 3);
 
             bundle.UpstreamContext = BuildContextSection(
                 upstream,
-                topLimit: 180,
-                bottomLimit: 120,
-                maxCount: 4);
+                topLimit: 700,
+                bottomLimit: 500,
+                maxCount: int.MaxValue);
 
-            bundle.DownstreamContext = "";
-            bundle.OtherNodesContext = "";
+            bundle.DownstreamContext = BuildContextSection(
+                downstream,
+                topLimit: 320,
+                bottomLimit: 240,
+                maxCount: int.MaxValue);
+
+            bundle.BranchSummaryContext = BuildBranchSummaryContext(
+                current,
+                upstream,
+                downstream,
+                representativeCountPerBranch: 2,
+                summaryTopLimit: 70,
+                summaryBottomLimit: 60);
 
             return bundle;
+        }
+
+        private void SyncActualModelToNode(NodeControl node, ExecutionDecision decision)
+        {
+            if (node == null || decision == null)
+                return;
+
+            string actualModel = AiModelHelper.NormalizeNodeModel(decision.ModelId);
+
+            // 讓節點顯示真正使用的模型
+            node.SetCommittedModelId(actualModel, syncEditingModel: true);
+
+            // 讓 MainWindow 的 node model 狀態也同步
+            _main.SetNodeSelectedModel(node, actualModel);
+
+            // 刷新節點 UI
+            node.RefreshModelSelectionUI();
         }
 
         private NodeContextBundle BuildResearchContextBundle(NodeControl current)
         {
             var bundle = CreateBaseContextBundle(current);
 
-            var upstream = CollectUpstream(current, 10);
-            var downstream = CollectDownstream(current, 2);
+            var upstream = CollectUpstream(current, 20);
+            var downstream = CollectDownstream(current, 6);
 
             bundle.UpstreamContext = BuildContextSection(
                 upstream,
-                topLimit: 220,
-                bottomLimit: 180,
-                maxCount: 6);
+                topLimit: 1100,
+                bottomLimit: 1000,
+                maxCount: int.MaxValue);
 
             bundle.DownstreamContext = BuildContextSection(
                 downstream,
-                topLimit: 140,
-                bottomLimit: 120,
-                maxCount: 2);
+                topLimit: 520,
+                bottomLimit: 420,
+                maxCount: int.MaxValue);
 
-            bundle.OtherNodesContext = BuildOtherNodesContext(
+            bundle.BranchSummaryContext = BuildBranchSummaryContext(
                 current,
                 upstream,
                 downstream,
-                topLimit: 120,
-                bottomLimit: 120,
-                maxCount: OtherNodeContextLimit);
+                representativeCountPerBranch: 4,
+                summaryTopLimit: 120,
+                summaryBottomLimit: 110);
 
             return bundle;
         }
@@ -1102,39 +1189,136 @@ $@"【系統判定任務模式】
             return bundle;
         }
 
-        private string BuildOtherNodesContext(
+        private string BuildBranchSummaryContext(
             NodeControl current,
             IEnumerable<NodeControl> upstream,
             IEnumerable<NodeControl> downstream,
-            int topLimit,
-            int bottomLimit,
-            int maxCount)
+            int representativeCountPerBranch,
+            int summaryTopLimit,
+            int summaryBottomLimit)
         {
-            var mainSet = new HashSet<Guid> { current.Id };
-            foreach (var n in upstream) mainSet.Add(n.Id);
-            foreach (var n in downstream) mainSet.Add(n.Id);
+            var excluded = new HashSet<Guid> { current.Id };
+            foreach (var n in upstream) excluded.Add(n.Id);
+            foreach (var n in downstream) excluded.Add(n.Id);
 
-            var others = _main.GetAllNodesInCanvas()
-                .Where(n => !mainSet.Contains(n.Id))
-                .Take(maxCount)
+            var allOthers = _main.GetAllNodesInCanvas()
+                .Where(n => !excluded.Contains(n.Id))
                 .ToList();
 
-            if (others.Count == 0)
+            if (allOthers.Count == 0)
+                return "";
+
+            var visited = new HashSet<Guid>();
+            var branchGroups = new List<List<NodeControl>>();
+
+            foreach (var node in allOthers)
+            {
+                if (!visited.Add(node.Id))
+                    continue;
+
+                var group = CollectUndirectedConnectedGroup(node, excluded);
+                foreach (var g in group)
+                    visited.Add(g.Id);
+
+                if (group.Count > 0)
+                    branchGroups.Add(group);
+            }
+
+            if (branchGroups.Count == 0)
                 return "";
 
             var lines = new List<string>
             {
-                $"（以下為同檔案其它節點的低權重參考，最多顯示 {maxCount} 個）"
+                $"（以下為其它支線摘要，共 {branchGroups.Count} 條。僅供理解全局，不可蓋過目前節點與主鏈。）"
             };
 
-            foreach (var n in others)
+            int branchIndex = 1;
+            foreach (var group in branchGroups.OrderByDescending(g => g.Count))
             {
-                var top = Truncate((n.GetTopText() ?? "").Trim(), topLimit);
-                var bottom = Truncate((n.GetBottomText() ?? "").Trim(), bottomLimit);
-                lines.Add($"- Node {n.Id}\nTop: {top}\nBottom: {bottom}".Trim());
+                var representatives = group
+                    .OrderByDescending(n => ScoreNodeForSummary(n))
+                    .Take(Math.Max(1, representativeCountPerBranch))
+                    .ToList();
+
+                var summaryParts = new List<string>();
+                foreach (var n in representatives)
+                {
+                    var top = Truncate((n.GetTopText() ?? "").Trim(), summaryTopLimit);
+                    var bottom = Truncate((n.GetBottomText() ?? "").Trim(), summaryBottomLimit);
+
+                    if (!string.IsNullOrWhiteSpace(top) && !string.IsNullOrWhiteSpace(bottom))
+                        summaryParts.Add($"Top: {top} / Bottom: {bottom}");
+                    else if (!string.IsNullOrWhiteSpace(top))
+                        summaryParts.Add($"Top: {top}");
+                    else if (!string.IsNullOrWhiteSpace(bottom))
+                        summaryParts.Add($"Bottom: {bottom}");
+                }
+
+                if (summaryParts.Count == 0)
+                    continue;
+
+                lines.Add($"- 支線 {branchIndex}（{group.Count} 節點）");
+                foreach (var part in summaryParts)
+                    lines.Add($"  • {part}");
+
+                branchIndex++;
             }
 
-            return string.Join("\n\n", lines);
+            return string.Join("\n", lines);
+        }
+
+        private List<NodeControl> CollectUndirectedConnectedGroup(NodeControl seed, HashSet<Guid> excluded)
+        {
+            var result = new List<NodeControl>();
+            var queue = new Queue<NodeControl>();
+            var visited = new HashSet<Guid>();
+
+            queue.Enqueue(seed);
+            visited.Add(seed.Id);
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                result.Add(current);
+
+                foreach (var next in GetUndirectedNeighbors(current))
+                {
+                    if (next == null) continue;
+                    if (excluded.Contains(next.Id)) continue;
+                    if (!visited.Add(next.Id)) continue;
+
+                    queue.Enqueue(next);
+                }
+            }
+
+            return result;
+        }
+
+        private IEnumerable<NodeControl> GetUndirectedNeighbors(NodeControl node)
+        {
+            foreach (var c in GetConnections())
+            {
+                if (ReferenceEquals(c.StartNode, node) && c.EndNode != null)
+                    yield return c.EndNode;
+
+                if (ReferenceEquals(c.EndNode, node) && c.StartNode != null)
+                    yield return c.StartNode;
+            }
+        }
+
+        private static int ScoreNodeForSummary(NodeControl n)
+        {
+            int score = 0;
+            var top = (n.GetTopText() ?? "").Trim();
+            var bottom = (n.GetBottomText() ?? "").Trim();
+
+            score += Math.Min(top.Length, 200);
+            score += Math.Min(bottom.Length, 120);
+
+            if (n.GetTopLocked())
+                score += 30;
+
+            return score;
         }
 
         private string BuildFullContextPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode)
@@ -1150,22 +1334,22 @@ $@"【系統判定任務模式】
 
                 if (!string.IsNullOrWhiteSpace(ctx.UpstreamContext))
                 {
-                    lines.Add("【上游（較重要）】");
+                    lines.Add("【上游主鏈（最高權重）】");
                     lines.Add(ctx.UpstreamContext);
                 }
 
                 if (!string.IsNullOrWhiteSpace(ctx.DownstreamContext))
                 {
-                    lines.Add("【下游（較重要）】");
+                    lines.Add("【下游主鏈（高權重）】");
                     lines.Add(ctx.DownstreamContext);
                 }
 
                 primaryContext = string.Join("\n\n", lines);
             }
 
-            string secondaryContext = string.IsNullOrWhiteSpace(ctx.OtherNodesContext)
-                ? "（無其它節點）"
-                : ctx.OtherNodesContext;
+            string branchContext = string.IsNullOrWhiteSpace(ctx.BranchSummaryContext)
+                ? "（無其它支線）"
+                : ctx.BranchSummaryContext;
 
             return
 $@"你正在一個節點式筆記檔案中工作。
@@ -1173,107 +1357,114 @@ $@"你正在一個節點式筆記檔案中工作。
 【系統判定任務模式】
 {taskMode}
 
-【主要記憶：同一條連線上下游】
+【主鏈上下游】
 {primaryContext}
 
-【次要參考：同檔案其它節點】
-{secondaryContext}
+【其它支線摘要（低權重）】
+{branchContext}
 
 【目前節點上半部內容】
 {topText}
 {ctx.AttachmentHint}
 
-請直接輸出「完成後的內容本身」作為下半部結果。
-不要輸出前言、不要解釋你要怎麼做、不要寫成工作流程或注意事項模板。
-不要使用「以下是」「你可以依照以下步驟」「為確保完整」這類開頭。
-
-規則：
-1. 若任務模式是 Translate：直接輸出翻譯結果。
-2. 若任務模式是 Summarize：直接輸出濃縮後重點。
-3. 若任務模式是 Rewrite：直接輸出改寫完成版本。
-4. 若任務模式是 Extract：直接輸出抽取後的資訊。
-5. 若任務模式是 Code：直接輸出可用的程式內容與必要說明。
-6. 若附件是主要資訊來源：直接根據附件內容完成結果。
-7. 除非上半部明確要求步驟，否則不要輸出流程式條列。
-8. 完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
+要求：
+1. 目前節點內容是最高優先。
+2. 主鏈上下游是高權重背景，請優先承接。
+3. 其它支線摘要只用來理解全局，不可蓋過目前節點與主鏈。
+4. 若支線與主鏈衝突，以目前節點與主鏈為準。
+5. 直接輸出完成後的內容本身，不要寫前言、規則重述、流程說明。
+6. 除非使用者明確要求步驟，否則不要輸出流程式條列。
+7. 完整輸出完成後，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
         private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode)
         {
             string compactUpstream = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
-                ? "（無上游背景）"
+                ? "（無上游主鏈）"
                 : ctx.UpstreamContext;
+
+            string compactDownstream = string.IsNullOrWhiteSpace(ctx.DownstreamContext)
+                ? "（無下游主鏈）"
+                : ctx.DownstreamContext;
+
+            string compactBranches = string.IsNullOrWhiteSpace(ctx.BranchSummaryContext)
+                ? "（無其它支線）"
+                : ctx.BranchSummaryContext;
 
             return
 $@"你正在處理一個節點式即時搜尋 / 查證任務。
-請以「目前節點問題」為主，並參考精簡版上游背景來回答。
+請以目前節點問題為主，並參考主鏈與支線摘要回答。
 直接輸出完成結果本身，使用繁體中文。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
 
 【系統判定任務模式】
 {taskMode}
 
-【精簡上游背景】
+【上游主鏈（較重要）】
 {compactUpstream}
+
+【下游主鏈（可參考）】
+{compactDownstream}
+
+【其它支線摘要（低權重）】
+{compactBranches}
 
 【目前節點內容】
 {topText}
 {ctx.AttachmentHint}
 
 要求：
-1. 以目前節點問題為核心，優先做查證、補充、搜尋型回答。
-2. 上游背景只用來理解脈絡，不要被上游語氣或格式綁住。
-3. 若目前問題與上游不同，以目前問題為最高優先。
-4. 若任務模式是 Translate / Summarize / Rewrite / Extract / Code，也要依該任務模式輸出最終結果。
-5. 若附件是主要來源，請優先根據附件與目前問題回答。
-6. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
-7. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
+1. 目前節點問題最高優先。
+2. 主鏈比支線重要。
+3. 支線摘要只用來理解大方向，不可主導回答。
+4. 若任務模式是 Translate / Summarize / Rewrite / Extract / Code，也要輸出對應結果型態。
+5. 若附件是主要來源，請優先根據附件與目前節點回答。
+6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
         private string BuildResearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode)
         {
             string upstreamPart = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
-                ? "（無上游背景）"
+                ? "（無上游主鏈）"
                 : ctx.UpstreamContext;
 
             string downstreamPart = string.IsNullOrWhiteSpace(ctx.DownstreamContext)
                 ? "（目前沒有明確下游）"
                 : ctx.DownstreamContext;
 
-            string otherNodesPart = string.IsNullOrWhiteSpace(ctx.OtherNodesContext)
-                ? "（無其它節點參考）"
-                : ctx.OtherNodesContext;
+            string branchPart = string.IsNullOrWhiteSpace(ctx.BranchSummaryContext)
+                ? "（無其它支線）"
+                : ctx.BranchSummaryContext;
 
             return
 $@"你正在處理一個節點式研究任務。
-請先理解目前問題，再結合中度上下文鏈做較完整的研究、查證、補充與整理。
+請先理解目前問題，再結合主鏈與支線摘要進行較完整的研究、查證、補充與整理。
 直接輸出結果本身，使用繁體中文。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
 
 【系統判定任務模式】
 {taskMode}
 
-【上游背景（中度重要）】
+【上游主鏈（高權重）】
 {upstreamPart}
 
 【目前節點內容】
 {topText}
 {ctx.AttachmentHint}
 
-【可參考的下游方向】
+【下游主鏈方向（可參考）】
 {downstreamPart}
 
-【同檔案其它節點（低權重參考）】
-{otherNodesPart}
+【其它支線摘要（低權重）】
+{branchPart}
 
 要求：
-1. 優先回答目前節點問題，不要被其它節點帶偏。
-2. 若上游是前情提要、先前整理或研究方向，請承接它再深化。
-3. 可進行查證、補充、比較、延伸分析，但仍要圍繞目前節點。
-4. 若任務模式不是單純 Research，也要把最終輸出調整成該任務型態。
+1. 優先回答目前節點問題。
+2. 承接主鏈上下游的脈絡與研究方向。
+3. 支線摘要只用來幫助理解全局，不可取代主鏈。
+4. 可進行查證、比較、補充、延伸分析，但仍要圍繞目前節點。
 5. 若附件是主要來源，請把附件視為高權重背景。
-6. 除非目前節點明確要求步驟，否則不要輸出流程式條列。
-7. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
+6. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。";
         }
 
         private static string BuildContextSection(
@@ -1282,12 +1473,18 @@ $@"你正在處理一個節點式研究任務。
             int bottomLimit,
             int maxCount)
         {
-            var list = nodes?
-                .Take(maxCount)
+            var source = nodes ?? Enumerable.Empty<NodeControl>();
+            if (maxCount != int.MaxValue)
+                source = source.Take(maxCount);
+
+            var list = source
                 .Select(n =>
                 {
                     var top = Truncate((n.GetTopText() ?? "").Trim(), topLimit);
                     var bottom = Truncate((n.GetBottomText() ?? "").Trim(), bottomLimit);
+
+                    if (string.IsNullOrWhiteSpace(top) && string.IsNullOrWhiteSpace(bottom))
+                        return "";
 
                     if (string.IsNullOrWhiteSpace(bottom))
                         return $"- Node {n.Id}\nTop: {top}".Trim();
@@ -1297,7 +1494,7 @@ $@"你正在處理一個節點式研究任務。
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToList();
 
-            if (list == null || list.Count == 0)
+            if (list.Count == 0)
                 return "";
 
             return string.Join("\n\n", list);
@@ -1646,18 +1843,6 @@ $@"你正在處理一個節點式研究任務。
             return aTail == bTail;
         }
 
-        private static string NodeBrief(NodeControl n)
-        {
-            var top = (n.GetTopText() ?? "").Trim();
-            var bottom = (n.GetBottomText() ?? "").Trim();
-
-            top = Truncate(top, 260);
-            bottom = Truncate(bottom, 260);
-
-            var locked = n.GetTopLocked() ? "Locked" : "Unlocked";
-            return $"[{locked}] Top: {top}\nBottom: {bottom}".Trim();
-        }
-
         private AiRouteInfo PrepareRoute(string? selectedModel)
         {
             var route = _router.GetRouteInfo(selectedModel);
@@ -1668,6 +1853,7 @@ $@"你正在處理一個節點式研究任務。
         private static string Truncate(string s, int maxChars)
         {
             if (string.IsNullOrEmpty(s)) return "";
+            if (maxChars <= 0) return "";
             if (s.Length <= maxChars) return s;
             return s.Substring(0, maxChars) + "…";
         }

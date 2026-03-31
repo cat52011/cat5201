@@ -77,6 +77,7 @@ namespace test
         private readonly Dictionary<Guid, NodeTaskMode> _nodeTaskModesById = new();
 
         private bool _isAutoModelSelectionEnabled = false;
+        private bool _isAdvancedAutoResolverEnabled = false;
 
         public sealed class AttachmentInfo
         {
@@ -129,7 +130,8 @@ namespace test
             List<ConnState> Connections,
             List<AttachmentState> Attachments,
             bool FileNameLocked = false,
-            bool AutoModelSelectionEnabled = false
+            bool AutoModelSelectionEnabled = false,
+            bool AdvancedAutoResolverEnabled = false
         );
 
         private static string DisplayNameFromPath(string path)
@@ -271,6 +273,11 @@ namespace test
             return _isAutoModelSelectionEnabled;
         }
 
+        public bool IsAdvancedAutoResolverEnabled()
+        {
+            return _isAdvancedAutoResolverEnabled;
+        }
+
         public void SetAutoModelSelectionEnabled(bool enabled, bool save = true)
         {
             _isAutoModelSelectionEnabled = enabled;
@@ -278,10 +285,131 @@ namespace test
             if (AutoModelSwitch != null)
                 AutoModelSwitch.IsChecked = enabled;
 
+            if (!enabled)
+                _isAdvancedAutoResolverEnabled = false;
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = _isAdvancedAutoResolverEnabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
             RefreshAllNodeModelSelectionUIs();
 
             if (save)
                 SaveState();
+        }
+
+        public void SetAdvancedAutoResolverEnabled(bool enabled, bool save = true)
+        {
+            if (!_isAutoModelSelectionEnabled)
+                enabled = false;
+
+            _isAdvancedAutoResolverEnabled = enabled;
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = enabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
+            RefreshAllNodeModelSelectionUIs();
+
+            if (save)
+                SaveState();
+        }
+
+        private void UpdateAdvancedAutoResolverVisibility()
+        {
+            if (AdvancedAutoResolverSwitch == null)
+                return;
+
+            AdvancedAutoResolverSwitch.Visibility =
+                _isAutoModelSelectionEnabled
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        private void UpdateDecisionPanelForCurrentMode()
+        {
+            if (!_isAutoModelSelectionEnabled)
+            {
+                SetDecisionVisualization(
+                    status: "Manual",
+                    mode: "Manual",
+                    resolver: "Manual",
+                    model: "-",
+                    taskSummary: "-",
+                    statusBrushHex: "#EDEDED",
+                    statusTextBrushHex: "#404040");
+                return;
+            }
+
+            if (_isAdvancedAutoResolverEnabled)
+            {
+                SetDecisionVisualization(
+                    status: "API Auto",
+                    mode: "Auto",
+                    resolver: "Responses API",
+                    model: "等待送出",
+                    taskSummary: "-",
+                    statusBrushHex: "#EAF4FF",
+                    statusTextBrushHex: "#245A9B");
+                return;
+            }
+
+            SetDecisionVisualization(
+                status: "Rule Auto",
+                mode: "Auto",
+                resolver: "Rules",
+                model: "等待送出",
+                taskSummary: "-",
+                statusBrushHex: "#EEF7EA",
+                statusTextBrushHex: "#2E6A2E");
+        }
+
+        public void SetDecisionVisualization(
+            string status,
+            string mode,
+            string resolver,
+            string model,
+            string taskSummary,
+            string statusBrushHex = "#EDEDED",
+            string statusTextBrushHex = "#404040")
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (DecisionStatusText != null)
+                    DecisionStatusText.Text = string.IsNullOrWhiteSpace(status) ? "-" : status;
+
+                if (DecisionModeText != null)
+                    DecisionModeText.Text = string.IsNullOrWhiteSpace(mode) ? "-" : mode;
+
+                if (DecisionResolverText != null)
+                    DecisionResolverText.Text = string.IsNullOrWhiteSpace(resolver) ? "-" : resolver;
+
+                if (DecisionModelText != null)
+                    DecisionModelText.Text = string.IsNullOrWhiteSpace(model) ? "-" : model;
+
+                if (DecisionTaskText != null)
+                    DecisionTaskText.Text = string.IsNullOrWhiteSpace(taskSummary) ? "-" : taskSummary;
+
+                if (DecisionStatusBadge != null)
+                    DecisionStatusBadge.Background = CreateBrush(statusBrushHex, "#EDEDED");
+
+                if (DecisionStatusText != null)
+                    DecisionStatusText.Foreground = CreateBrush(statusTextBrushHex, "#404040");
+            });
+        }
+
+        private static SolidColorBrush CreateBrush(string? hex, string fallbackHex)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(hex))
+                    return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)!);
+            }
+            catch { }
+
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(fallbackHex)!);
         }
 
         public string GetEffectiveNodeModel(NodeControl node, string? topText = null)
@@ -374,6 +502,18 @@ namespace test
 
             if (AutoModelSwitch != null)
                 AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = _isAdvancedAutoResolverEnabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = _isAdvancedAutoResolverEnabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
         }
 
         private void SetRandomStartMessage()
@@ -399,6 +539,12 @@ namespace test
 
             if (AutoModelSwitch != null)
                 AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = _isAdvancedAutoResolverEnabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
 
             _fileNameLockedByUser = false;
             _lastAppliedAutoKeyword = "";
@@ -463,9 +609,16 @@ namespace test
             _editingReason = EditReason.None;
 
             _isAutoModelSelectionEnabled = false;
+            _isAdvancedAutoResolverEnabled = false;
 
             if (AutoModelSwitch != null)
                 AutoModelSwitch.IsChecked = false;
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = false;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
         }
 
         private void FileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -562,9 +715,16 @@ namespace test
                     _nodeModelsById.Clear();
                     _nodeTaskModesById.Clear();
                     _isAutoModelSelectionEnabled = false;
+                    _isAdvancedAutoResolverEnabled = false;
 
                     if (AutoModelSwitch != null)
                         AutoModelSwitch.IsChecked = false;
+
+                    if (AdvancedAutoResolverSwitch != null)
+                        AdvancedAutoResolverSwitch.IsChecked = false;
+
+                    UpdateAdvancedAutoResolverVisibility();
+                    UpdateDecisionPanelForCurrentMode();
                 }
 
                 RefreshFileList();
@@ -1136,7 +1296,8 @@ namespace test
                 conns,
                 atts,
                 FileNameLocked: _fileNameLockedByUser,
-                AutoModelSelectionEnabled: _isAutoModelSelectionEnabled
+                AutoModelSelectionEnabled: _isAutoModelSelectionEnabled,
+                AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled
             );
 
             if (string.IsNullOrEmpty(_currentFilePath))
@@ -1164,11 +1325,24 @@ namespace test
 
             _fileNameLockedByUser = state.FileNameLocked;
             _isAutoModelSelectionEnabled = state.AutoModelSelectionEnabled;
+            _isAdvancedAutoResolverEnabled = _isAutoModelSelectionEnabled && state.AdvancedAutoResolverEnabled;
             _lastAppliedAutoKeyword = "";
             _lastInitialTopSnapshot = "";
 
             if (AutoModelSwitch != null)
                 AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = _isAdvancedAutoResolverEnabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
+
+            if (AdvancedAutoResolverSwitch != null)
+                AdvancedAutoResolverSwitch.IsChecked = _isAdvancedAutoResolverEnabled;
+
+            UpdateAdvancedAutoResolverVisibility();
+            UpdateDecisionPanelForCurrentMode();
 
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
@@ -1686,6 +1860,16 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         private void AutoModelSwitch_Unchecked(object sender, RoutedEventArgs e)
         {
             SetAutoModelSelectionEnabled(false);
+        }
+
+        private void AdvancedAutoResolverSwitch_Checked(object sender, RoutedEventArgs e)
+        {
+            SetAdvancedAutoResolverEnabled(true);
+        }
+
+        private void AdvancedAutoResolverSwitch_Unchecked(object sender, RoutedEventArgs e)
+        {
+            SetAdvancedAutoResolverEnabled(false);
         }
 
         public void DeleteNodeAndDescendants(NodeControl root)
