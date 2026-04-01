@@ -53,13 +53,36 @@ namespace test
 
         private sealed class ExecutionDecision
         {
+            public string RequestedModelId { get; set; } = "";
             public string ModelId { get; set; } = "";
+
+            public string ActualModelId { get; set; } = "";
+
             public NodeTaskMode TaskMode { get; set; } = NodeTaskMode.Chat;
+
             public string ResolverLabel { get; set; } = "Manual";
             public string StatusLabel { get; set; } = "Manual";
+
             public double Confidence { get; set; }
+
             public bool UsedApiResolver { get; set; }
             public bool UsedFallbackToRules { get; set; }
+
+            public bool UseStreaming { get; set; } = true;
+
+            public bool CapabilityAdjusted { get; set; }
+            public string CapabilityReason { get; set; } = "";
+
+            public bool RuntimeFallbackUsed { get; set; }
+            public string RuntimeFallbackSummary { get; set; } = "";
+
+            public string SelectionModeLabel =>
+                UsedApiResolver || _mainRefHack == null
+                    ? ""
+                    : "";
+
+            // 不用這個，下面會用方法算，保留空白避免你誤用
+            private MainWindow? _mainRefHack;
         }
 
         public NodeService(AiServiceRouter router, MainWindow main)
@@ -182,85 +205,261 @@ $@"
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
+            var startedAtUtc = DateTime.UtcNow;
             var decision = await ResolveExecutionDecisionAsync(node, topText, ct);
-            ApplyDecisionVisualization(decision);
-            SyncActualModelToNode(node, decision);
 
-            var route = PrepareRoute(decision.ModelId);
-            string model = route.NodeModel;
-
-            if (route.Provider == AiProviderKind.PerplexitySonar)
+            try
             {
-                return await GenerateSinglePassOrContinuedAsync(node, topText, model, decision.TaskMode, ct);
+                var execution = await ExecuteWithFallbackAsync(
+                    node,
+                    topText,
+                    decision,
+                    onDelta: null,
+                    useStreaming: false,
+                    ct);
+
+                if (!execution.IsSuccess)
+                {
+                    FinalizeDecisionAfterExecution(decision, execution);
+                    ApplyDecisionVisualization(decision);
+                    CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: execution.ErrorMessage);
+                    throw new InvalidOperationException(execution.ErrorMessage);
+                }
+
+                FinalizeDecisionAfterExecution(decision, execution);
+                ApplyDecisionVisualization(decision);
+                SyncActualModelToNode(node, decision);
+                CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                return execution.Text;
             }
-
-            bool useSegmentMode =
-                decision.TaskMode == NodeTaskMode.Translate &&
-                LooksLikeFullTranslationRequest(topText) &&
-                HasNonImageAttachments(node);
-
-            if (useSegmentMode)
+            catch (Exception ex)
             {
-                try
-                {
-                    var segmented = await TranslateBySegmentsAsync(node, topText, model, decision.TaskMode, ct);
-                    if (!string.IsNullOrWhiteSpace(segmented))
-                        return segmented;
-                }
-                catch
-                {
-                }
+                CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: ex.Message);
+                throw;
             }
-
-            return await GenerateSinglePassOrContinuedAsync(node, topText, model, decision.TaskMode, ct);
         }
 
         public async Task<string> GenerateStreamAsync(
-            NodeControl node,
-            string topText,
-            Action<string> onDelta,
-            CancellationToken ct)
+    NodeControl node,
+    string topText,
+    Action<string> onDelta,
+    CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
+            var startedAtUtc = DateTime.UtcNow;
             var decision = await ResolveExecutionDecisionAsync(node, topText, ct);
-            ApplyDecisionVisualization(decision);
-            SyncActualModelToNode(node, decision);
 
-            var route = PrepareRoute(decision.ModelId);
-            string model = route.NodeModel;
-
-            if (route.Provider == AiProviderKind.PerplexitySonar)
+            try
             {
-                return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, decision.TaskMode, onDelta, ct);
+                if (!decision.UseStreaming)
+                {
+                    var nonStreamingExecution = await ExecuteWithFallbackAsync(
+                        node,
+                        topText,
+                        decision,
+                        onDelta: null,
+                        useStreaming: false,
+                        ct);
+
+                    if (!nonStreamingExecution.IsSuccess)
+                    {
+                        FinalizeDecisionAfterExecution(decision, nonStreamingExecution);
+                        ApplyDecisionVisualization(decision);
+                        CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: nonStreamingExecution.ErrorMessage);
+                        throw new InvalidOperationException(nonStreamingExecution.ErrorMessage);
+                    }
+
+                    FinalizeDecisionAfterExecution(decision, nonStreamingExecution);
+                    ApplyDecisionVisualization(decision);
+                    SyncActualModelToNode(node, decision);
+                    CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                    if (!string.IsNullOrWhiteSpace(nonStreamingExecution.Text))
+                        onDelta?.Invoke(nonStreamingExecution.Text);
+
+                    return nonStreamingExecution.Text;
+                }
+
+                var streamingExecution = await ExecuteWithFallbackAsync(
+                    node,
+                    topText,
+                    decision,
+                    onDelta,
+                    useStreaming: true,
+                    ct);
+
+                if (!streamingExecution.IsSuccess)
+                {
+                    FinalizeDecisionAfterExecution(decision, streamingExecution);
+                    ApplyDecisionVisualization(decision);
+                    CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: streamingExecution.ErrorMessage);
+                    throw new InvalidOperationException(streamingExecution.ErrorMessage);
+                }
+
+                FinalizeDecisionAfterExecution(decision, streamingExecution);
+                ApplyDecisionVisualization(decision);
+                SyncActualModelToNode(node, decision);
+                CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                return streamingExecution.Text;
+            }
+            catch (Exception ex)
+            {
+                CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: ex.Message);
+                throw;
+            }
+        }
+
+        private async Task<AiFallbackExecutionResult> ExecuteWithFallbackAsync(
+    NodeControl node,
+    string topText,
+    ExecutionDecision decision,
+    Action<string>? onDelta,
+    bool useStreaming,
+    CancellationToken ct)
+        {
+            var candidates = AiFallbackPlanner.BuildCandidates(decision.ModelId, decision.TaskMode);
+
+            var attempts = new List<AiFallbackAttempt>();
+            int emittedChars = 0;
+
+            Action<string>? countingDelta = null;
+            if (onDelta != null)
+            {
+                countingDelta = delta =>
+                {
+                    if (!string.IsNullOrEmpty(delta))
+                        emittedChars += delta.Length;
+
+                    onDelta(delta);
+                };
             }
 
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var candidate = candidates[i];
+                string candidateModel = AiModelHelper.NormalizeNodeModel(candidate.ModelId);
+
+                try
+                {
+                    string text = await TryExecuteOnceAsync(
+                        node,
+                        topText,
+                        candidateModel,
+                        decision.TaskMode,
+                        useStreaming ? countingDelta : null,
+                        useStreaming && decision.UseStreaming && i == 0,
+                        ct);
+
+                    attempts.Add(new AiFallbackAttempt
+                    {
+                        AttemptIndex = i + 1,
+                        ModelId = candidateModel,
+                        Reason = candidate.Reason,
+                        Success = true,
+                        ErrorMessage = ""
+                    });
+
+                    bool usedFallback =
+                        attempts.Count > 1 ||
+                        !string.Equals(candidateModel, decision.ModelId, StringComparison.OrdinalIgnoreCase);
+
+                    string summary = usedFallback
+                        ? $"fallback 成功：{GetRuntimeModelLabel(candidateModel)}"
+                        : "";
+
+                    return new AiFallbackExecutionResult
+                    {
+                        IsSuccess = true,
+                        Text = text ?? "",
+                        ActualModelId = candidateModel,
+                        UsedFallback = usedFallback,
+                        Summary = summary,
+                        ErrorMessage = "",
+                        Attempts = attempts
+                    };
+                }
+                catch (Exception ex)
+                {
+                    attempts.Add(new AiFallbackAttempt
+                    {
+                        AttemptIndex = i + 1,
+                        ModelId = candidateModel,
+                        Reason = candidate.Reason,
+                        Success = false,
+                        ErrorMessage = ex.Message
+                    });
+
+                    // 若第一個串流嘗試已經有輸出，後面不能安全 fallback，避免混入兩個模型的內容
+                    if (useStreaming && emittedChars > 0)
+                    {
+                        return new AiFallbackExecutionResult
+                        {
+                            IsSuccess = false,
+                            Text = "",
+                            ActualModelId = candidateModel,
+                            UsedFallback = false,
+                            Summary = "串流過程中斷，已停止後續 fallback",
+                            ErrorMessage = ex.Message,
+                            Attempts = attempts
+                        };
+                    }
+                }
+            }
+
+            string lastError = attempts.Count > 0
+                ? attempts[attempts.Count - 1].ErrorMessage
+                : "未知錯誤";
+
+            return new AiFallbackExecutionResult
+            {
+                IsSuccess = false,
+                Text = "",
+                ActualModelId = decision.ModelId,
+                UsedFallback = attempts.Count > 1,
+                Summary = attempts.Count > 1 ? "所有 fallback 皆失敗" : "",
+                ErrorMessage = lastError,
+                Attempts = attempts
+            };
+        }
+
+        private async Task<string> TryExecuteOnceAsync(
+    NodeControl node,
+    string topText,
+    string model,
+    NodeTaskMode taskMode,
+    Action<string>? onDelta,
+    bool useStreaming,
+    CancellationToken ct)
+        {
             bool useSegmentMode =
-                decision.TaskMode == NodeTaskMode.Translate &&
+                taskMode == NodeTaskMode.Translate &&
                 LooksLikeFullTranslationRequest(topText) &&
                 HasNonImageAttachments(node);
 
             if (useSegmentMode)
             {
-                try
-                {
-                    var segmented = await TranslateBySegmentsStreamAsync(node, topText, model, decision.TaskMode, onDelta, ct);
-                    if (!string.IsNullOrWhiteSpace(segmented))
-                        return segmented;
-                }
-                catch
-                {
-                }
+                if (useStreaming && onDelta != null)
+                    return await TranslateBySegmentsStreamAsync(node, topText, model, taskMode, onDelta, ct);
+
+                return await TranslateBySegmentsAsync(node, topText, model, taskMode, ct);
             }
 
-            return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, decision.TaskMode, onDelta, ct);
+            if (useStreaming && onDelta != null)
+                return await GenerateSinglePassOrContinuedStreamAsync(node, topText, model, taskMode, onDelta, ct);
+
+            return await GenerateSinglePassOrContinuedAsync(node, topText, model, taskMode, ct);
         }
 
         private async Task<ExecutionDecision> ResolveExecutionDecisionAsync(
-            NodeControl node,
-            string topText,
-            CancellationToken ct)
+    NodeControl node,
+    string topText,
+    CancellationToken ct)
         {
             string selectedModel = _main.GetNodeSelectedModel(node);
 
@@ -268,16 +467,20 @@ $@"
             {
                 var manualTask = ResolveAndPersistTaskMode(node, topText);
 
-                return new ExecutionDecision
+                var manualDecision = new ExecutionDecision
                 {
+                    RequestedModelId = AiModelHelper.NormalizeNodeModel(selectedModel),
                     ModelId = AiModelHelper.NormalizeNodeModel(selectedModel),
                     TaskMode = manualTask.Mode,
                     ResolverLabel = "Manual",
                     StatusLabel = "Manual",
                     Confidence = 1.0,
                     UsedApiResolver = false,
-                    UsedFallbackToRules = false
+                    UsedFallbackToRules = false,
+                    UseStreaming = true
                 };
+
+                return ApplyCapabilityCheck(node, manualDecision);
             }
 
             if (_main.IsAdvancedAutoResolverEnabled())
@@ -294,56 +497,176 @@ $@"
 
                     string resolvedModel = AiModelHelper.NormalizeNodeModel(resolution.RecommendedModel);
 
-                    return new ExecutionDecision
+                    var apiDecision = new ExecutionDecision
                     {
+                        RequestedModelId = resolvedModel,
                         ModelId = resolvedModel,
                         TaskMode = resolvedMode,
                         ResolverLabel = "Responses API",
                         StatusLabel = "API Auto",
                         Confidence = resolution.Confidence,
                         UsedApiResolver = true,
-                        UsedFallbackToRules = false
+                        UsedFallbackToRules = false,
+                        UseStreaming = true
                     };
+
+                    return ApplyCapabilityCheck(node, apiDecision);
                 }
                 catch
                 {
                     var fallbackTask = ResolveAndPersistTaskMode(node, topText);
                     string fallbackModel = _main.GetEffectiveNodeModel(node, topText);
 
-                    return new ExecutionDecision
+                    var fallbackDecision = new ExecutionDecision
                     {
+                        RequestedModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
                         ModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
                         TaskMode = fallbackTask.Mode,
                         ResolverLabel = "Rules (fallback)",
                         StatusLabel = "API Auto",
                         Confidence = 0.30,
                         UsedApiResolver = true,
-                        UsedFallbackToRules = true
+                        UsedFallbackToRules = true,
+                        UseStreaming = true
                     };
+
+                    return ApplyCapabilityCheck(node, fallbackDecision);
                 }
             }
 
             var ruleTask = ResolveAndPersistTaskMode(node, topText);
             string autoModel = _main.GetEffectiveNodeModel(node, topText);
 
-            return new ExecutionDecision
+            var ruleDecision = new ExecutionDecision
             {
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(autoModel),
                 ModelId = AiModelHelper.NormalizeNodeModel(autoModel),
                 TaskMode = ruleTask.Mode,
                 ResolverLabel = "Rules",
                 StatusLabel = "Rule Auto",
                 Confidence = 0.80,
                 UsedApiResolver = false,
-                UsedFallbackToRules = false
+                UsedFallbackToRules = false,
+                UseStreaming = true
             };
+
+            return ApplyCapabilityCheck(node, ruleDecision);
+        }
+
+        private ExecutionDecision ApplyCapabilityCheck(
+    NodeControl node,
+    ExecutionDecision decision)
+        {
+            var attachments = _main.GetAttachmentsForNode(node);
+
+            bool hasImageAttachments = attachments.Any(a =>
+                string.Equals(a.Kind, "image", StringComparison.OrdinalIgnoreCase));
+
+            bool hasFileAttachments = attachments.Any(a =>
+                !string.Equals(a.Kind, "image", StringComparison.OrdinalIgnoreCase));
+
+            bool requireSearchCapability =
+                _main.IsAutoModelSelectionEnabled() &&
+                decision.TaskMode == NodeTaskMode.Research;
+
+            var check = AiCapabilityGuard.Resolve(
+                requestedModelId: decision.ModelId,
+                taskMode: decision.TaskMode,
+                wantsStreaming: true,
+                hasImageAttachments: hasImageAttachments,
+                hasFileAttachments: hasFileAttachments,
+                requireSearchCapability: requireSearchCapability);
+
+            decision.RequestedModelId = check.RequestedModelId;
+            decision.ModelId = check.ResolvedModelId;
+            decision.UseStreaming = check.StreamingAllowed;
+            decision.CapabilityAdjusted = check.ModelAdjusted || check.StreamingAdjusted;
+            decision.CapabilityReason = check.Reason ?? "";
+
+            if (decision.CapabilityAdjusted)
+            {
+                decision.ResolverLabel = string.IsNullOrWhiteSpace(decision.ResolverLabel)
+                    ? "Capability Guard"
+                    : decision.ResolverLabel + " + Capability Guard";
+            }
+
+            return decision;
+        }
+
+        private ExecutionDecision FinalizeDecisionAfterExecution(
+    ExecutionDecision decision,
+    AiFallbackExecutionResult execution)
+        {
+            if (decision == null)
+                throw new ArgumentNullException(nameof(decision));
+
+            if (execution == null)
+                throw new ArgumentNullException(nameof(execution));
+
+            decision.ActualModelId = string.IsNullOrWhiteSpace(execution.ActualModelId)
+                ? decision.ModelId
+                : AiModelHelper.NormalizeNodeModel(execution.ActualModelId);
+
+            decision.RuntimeFallbackUsed = execution.UsedFallback;
+            decision.RuntimeFallbackSummary = execution.Summary ?? "";
+
+            return decision;
         }
 
         private void ApplyDecisionVisualization(ExecutionDecision decision)
         {
-            string modelLabel = GetRuntimeModelLabel(decision.ModelId);
+            string requestedBaseModel = string.IsNullOrWhiteSpace(decision.RequestedModelId)
+                ? decision.ModelId
+                : decision.RequestedModelId;
+
+            string actualBaseModel = string.IsNullOrWhiteSpace(decision.ActualModelId)
+                ? decision.ModelId
+                : decision.ActualModelId;
+
+            string requestedModelLabel = GetRuntimeModelLabel(requestedBaseModel);
+            string actualModelLabel = GetRuntimeModelLabel(actualBaseModel);
+
+            string modelLabel =
+                string.Equals(actualModelLabel, requestedModelLabel, StringComparison.OrdinalIgnoreCase)
+                    ? actualModelLabel
+                    : $"{actualModelLabel} ← {requestedModelLabel}";
+
             string taskLabel = NodeTaskModeHelper.ToDisplayName(decision.TaskMode);
             string confidenceText = $"{decision.Confidence:0.00}";
+
             string taskSummary = $"{taskLabel} / {confidenceText}";
+
+            if (!string.IsNullOrWhiteSpace(decision.CapabilityReason))
+                taskSummary += $" / {decision.CapabilityReason}";
+
+            if (decision.RuntimeFallbackUsed && !string.IsNullOrWhiteSpace(decision.RuntimeFallbackSummary))
+                taskSummary += $" / {decision.RuntimeFallbackSummary}";
+
+            if (decision.RuntimeFallbackUsed)
+            {
+                _main.SetDecisionVisualization(
+                    status: decision.StatusLabel,
+                    mode: _main.IsAutoModelSelectionEnabled() ? "Auto" : "Manual",
+                    resolver: decision.ResolverLabel + " + Runtime Fallback",
+                    model: modelLabel,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#FFE9E9",
+                    statusTextBrushHex: "#9B2C2C");
+                return;
+            }
+
+            if (decision.CapabilityAdjusted)
+            {
+                _main.SetDecisionVisualization(
+                    status: decision.StatusLabel,
+                    mode: _main.IsAutoModelSelectionEnabled() ? "Auto" : "Manual",
+                    resolver: decision.ResolverLabel,
+                    model: modelLabel,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#FFF4E8",
+                    statusTextBrushHex: "#9A5A00");
+                return;
+            }
 
             if (decision.UsedApiResolver)
             {
@@ -392,13 +715,6 @@ $@"
                 taskSummary: taskSummary,
                 statusBrushHex: "#EDEDED",
                 statusTextBrushHex: "#404040");
-        }
-
-        private NodeTaskModeResolution ResolveAndPersistTaskMode(NodeControl node, string topText)
-        {
-            var resolution = NodeTaskModeResolver.Resolve(topText);
-            _main.SetNodeTaskMode(node, resolution.Mode);
-            return resolution;
         }
 
         private async Task<string> GenerateSinglePassOrContinuedAsync(
@@ -957,15 +1273,13 @@ $@"【系統判定任務模式】
             if (node == null || decision == null)
                 return;
 
-            string actualModel = AiModelHelper.NormalizeNodeModel(decision.ModelId);
+            string actualModel = AiModelHelper.NormalizeNodeModel(
+                string.IsNullOrWhiteSpace(decision.ActualModelId)
+                    ? decision.ModelId
+                    : decision.ActualModelId);
 
-            // 讓節點顯示真正使用的模型
             node.SetCommittedModelId(actualModel, syncEditingModel: true);
-
-            // 讓 MainWindow 的 node model 狀態也同步
             _main.SetNodeSelectedModel(node, actualModel);
-
-            // 刷新節點 UI
             node.RefreshModelSelectionUI();
         }
 
@@ -1591,6 +1905,27 @@ $@"你正在處理一個節點式研究任務。
                 .ToList();
         }
 
+        private NodeTaskModeResolution ResolveAndPersistTaskMode(
+    NodeControl node,
+    string topText)
+        {
+            // 1. 用 resolver 判斷任務模式
+            var resolution = NodeTaskModeResolver.Resolve(topText);
+
+            // 2. 正規化（保險）
+            var normalized = NodeTaskModeHelper.Normalize(resolution.Mode);
+
+            // 3. 寫回 node（這很重要，不然 UI 不會同步）
+            _main.SetNodeTaskMode(node, normalized);
+
+            return new NodeTaskModeResolution
+            {
+                Mode = normalized,
+                Reason = resolution.Reason,
+                Confidence = resolution.Confidence,
+                MatchedKeywords = resolution.MatchedKeywords
+            };
+        }
         private Task<AiRequest> BuildAiRequestAsync(
             NodeControl currentNode,
             string model,
@@ -1617,6 +1952,90 @@ $@"你正在處理一個節點式研究任務。
             };
 
             return Task.FromResult(request);
+        }
+
+        private string GetSelectionModeLabel(ExecutionDecision decision)
+        {
+            if (decision == null)
+                return "Unknown";
+
+            if (!_main.IsAutoModelSelectionEnabled())
+                return "Manual";
+
+            if (_main.IsAdvancedAutoResolverEnabled())
+                return "API Auto";
+
+            return "Auto";
+        }
+
+        private AiExecutionLogEntry BuildExecutionLogEntry(
+            NodeControl node,
+            ExecutionDecision decision,
+            DateTime startedAtUtc,
+            DateTime endedAtUtc,
+            bool success,
+            string errorMessage = "")
+        {
+            string requestedModel = string.IsNullOrWhiteSpace(decision.RequestedModelId)
+                ? decision.ModelId
+                : decision.RequestedModelId;
+
+            string plannedModel = string.IsNullOrWhiteSpace(decision.ModelId)
+                ? requestedModel
+                : decision.ModelId;
+
+            string actualModel = string.IsNullOrWhiteSpace(decision.ActualModelId)
+                ? plannedModel
+                : decision.ActualModelId;
+
+            long durationMs = (long)Math.Max(0, (endedAtUtc - startedAtUtc).TotalMilliseconds);
+
+            return new AiExecutionLogEntry
+            {
+                NodeId = node.Id.ToString(),
+                StartedAtUtc = startedAtUtc,
+                EndedAtUtc = endedAtUtc,
+                DurationMs = durationMs,
+
+                SelectionMode = GetSelectionModeLabel(decision),
+                Resolver = decision.ResolverLabel ?? "",
+
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(requestedModel),
+                PlannedModelId = AiModelHelper.NormalizeNodeModel(plannedModel),
+                ActualModelId = AiModelHelper.NormalizeNodeModel(actualModel),
+
+                TaskMode = NodeTaskModeHelper.ToStorageValue(decision.TaskMode),
+                Confidence = decision.Confidence,
+
+                CapabilityAdjusted = decision.CapabilityAdjusted,
+                CapabilityReason = decision.CapabilityReason ?? "",
+
+                RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
+                RuntimeFallbackSummary = decision.RuntimeFallbackSummary ?? "",
+
+                Success = success,
+                ErrorMessage = errorMessage ?? ""
+            };
+        }
+
+        private void CommitExecutionLog(
+            NodeControl node,
+            ExecutionDecision decision,
+            DateTime startedAtUtc,
+            bool success,
+            string errorMessage = "")
+        {
+            var endedAtUtc = DateTime.UtcNow;
+
+            var entry = BuildExecutionLogEntry(
+                node,
+                decision,
+                startedAtUtc,
+                endedAtUtc,
+                success,
+                errorMessage);
+
+            _main.AddExecutionLog(entry);
         }
         private AiRouteInfo PrepareRoute(string? selectedModel)
         {

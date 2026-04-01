@@ -12,6 +12,8 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Media.Effects;
+using System.Windows.Media.Animation;
 
 namespace test
 {
@@ -53,6 +55,22 @@ namespace test
         private double _attachScrollStartX;
         private const double AttachmentDragThreshold = 4.0;
 
+        private bool _isHoveredVisual = false;
+
+        private TransformGroup? _hoverTransformGroup;
+        private ScaleTransform? _hoverScaleTransform;
+        private TranslateTransform? _hoverTranslateTransform;
+        private DropShadowEffect? _hoverShadowEffect;
+
+        private const double HoverScaleValue = 1.03;
+        private const double HoverLiftY = -2.5;
+        private const double HoverShadowBlur = 26.0;
+        private const double HoverShadowOpacity = 0.26;
+
+        private static readonly Duration HoverEnterDuration = new Duration(TimeSpan.FromMilliseconds(180));
+        private static readonly Duration HoverLeaveDuration = new Duration(TimeSpan.FromMilliseconds(220));
+
+
         private sealed class AttachmentVm
         {
             public string FileName { get; set; } = "";
@@ -62,6 +80,135 @@ namespace test
         }
 
         public NodeControl() : this(Guid.NewGuid().ToString()) { }
+
+        private void InitializeHoverVisualObjects()
+        {
+            if (_hoverScaleTransform == null)
+                _hoverScaleTransform = new ScaleTransform(1.0, 1.0);
+
+            if (_hoverTranslateTransform == null)
+                _hoverTranslateTransform = new TranslateTransform(0.0, 0.0);
+
+            if (_hoverTransformGroup == null)
+            {
+                _hoverTransformGroup = new TransformGroup();
+                _hoverTransformGroup.Children.Add(_hoverScaleTransform);
+                _hoverTransformGroup.Children.Add(_hoverTranslateTransform);
+            }
+
+            if (_hoverShadowEffect == null)
+            {
+                _hoverShadowEffect = new DropShadowEffect
+                {
+                    BlurRadius = 0,
+                    ShadowDepth = 0,
+                    Opacity = 0,
+                    Color = Color.FromRgb(80, 120, 255)
+                };
+            }
+
+            RenderTransformOrigin = new Point(0.5, 0.5);
+            RenderTransform = _hoverTransformGroup;
+            Effect = _hoverShadowEffect;
+        }
+
+        private void ApplyHoveredVisualState(bool hovered)
+        {
+            if (_isHoveredVisual == hovered)
+                return;
+
+            _isHoveredVisual = hovered;
+
+            InitializeHoverVisualObjects();
+
+            if (_parent != null && hovered)
+                Panel.SetZIndex(this, _parent.GetNextZIndex());
+
+            double targetScale = hovered ? HoverScaleValue : 1.0;
+            double targetLiftY = hovered ? HoverLiftY : 0.0;
+            double targetBlur = hovered ? HoverShadowBlur : 0.0;
+            double targetShadowOpacity = hovered ? HoverShadowOpacity : 0.0;
+
+            var duration = hovered ? HoverEnterDuration : HoverLeaveDuration;
+
+            IEasingFunction easing = hovered
+                ? new CubicEase { EasingMode = EasingMode.EaseOut }
+                : new QuadraticEase { EasingMode = EasingMode.EaseOut };
+
+            var scaleXAnim = new DoubleAnimation
+            {
+                To = targetScale,
+                Duration = duration,
+                EasingFunction = easing
+            };
+
+            var scaleYAnim = new DoubleAnimation
+            {
+                To = targetScale,
+                Duration = duration,
+                EasingFunction = easing
+            };
+
+            var liftAnim = new DoubleAnimation
+            {
+                To = targetLiftY,
+                Duration = duration,
+                EasingFunction = easing
+            };
+
+            var blurAnim = new DoubleAnimation
+            {
+                To = targetBlur,
+                Duration = duration,
+                EasingFunction = easing
+            };
+
+            var shadowOpacityAnim = new DoubleAnimation
+            {
+                To = targetShadowOpacity,
+                Duration = duration,
+                EasingFunction = easing
+            };
+
+            _hoverScaleTransform!.BeginAnimation(ScaleTransform.ScaleXProperty, scaleXAnim, HandoffBehavior.SnapshotAndReplace);
+            _hoverScaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim, HandoffBehavior.SnapshotAndReplace);
+
+            _hoverTranslateTransform!.BeginAnimation(TranslateTransform.YProperty, liftAnim, HandoffBehavior.SnapshotAndReplace);
+
+            _hoverShadowEffect!.BeginAnimation(DropShadowEffect.BlurRadiusProperty, blurAnim, HandoffBehavior.SnapshotAndReplace);
+            _hoverShadowEffect.BeginAnimation(DropShadowEffect.OpacityProperty, shadowOpacityAnim, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private void ResetHoverVisualStateImmediately()
+        {
+            InitializeHoverVisualObjects();
+
+            _hoverScaleTransform!.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            _hoverScaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            _hoverTranslateTransform!.BeginAnimation(TranslateTransform.YProperty, null);
+            _hoverShadowEffect!.BeginAnimation(DropShadowEffect.BlurRadiusProperty, null);
+            _hoverShadowEffect.BeginAnimation(DropShadowEffect.OpacityProperty, null);
+
+            _hoverScaleTransform.ScaleX = 1.0;
+            _hoverScaleTransform.ScaleY = 1.0;
+            _hoverTranslateTransform.Y = 0.0;
+            _hoverShadowEffect.BlurRadius = 0.0;
+            _hoverShadowEffect.Opacity = 0.0;
+
+            _isHoveredVisual = false;
+        }
+
+        private void NodeControl_MouseEnter(object sender, MouseEventArgs e)
+        {
+            ApplyHoveredVisualState(true);
+            _parent?.NotifyNodeHoverEntered(this);
+        }
+
+        private void NodeControl_MouseLeave(object sender, MouseEventArgs e)
+        {
+            ApplyHoveredVisualState(false);
+            _parent?.NotifyNodeHoverLeft(this);
+        }
 
         public NodeControl(string idString)
         {
@@ -77,6 +224,9 @@ namespace test
             Loaded += (s, e) =>
             {
                 _parent = Window.GetWindow(this) as MainWindow;
+
+                InitializeHoverVisualObjects();
+
                 EnsureModelSelectorLoaded();
                 ApplyFontSize(_fontSize);
                 RefreshAttachmentsUI();
@@ -97,6 +247,9 @@ namespace test
 
             TopEditor.TextChanged += TopEditor_TextChanged;
             TopEditor.PreviewMouseLeftButtonDown += TopEditor_PreviewMouseLeftButtonDown;
+            MouseEnter += NodeControl_MouseEnter;
+            MouseLeave += NodeControl_MouseLeave;
+            Unloaded += (_, __) => ResetHoverVisualStateImmediately();
         }
 
         public bool IsEditing => TopEditor != null && TopEditor.IsReadOnly == false;
@@ -138,13 +291,15 @@ namespace test
 
         internal void ForceExitEditMode()
         {
-            // 沒有送出就離開編輯時，丟棄草稿模型，回到正式模型
             RevertEditingModelToCommitted();
 
             TopEditor.IsReadOnly = true;
             RefreshModelSelectionUI();
             UpdateAutoTaskPreview();
             UpdateEditButtons();
+
+            if (!IsMouseOver)
+                ResetHoverVisualStateImmediately();
         }
 
         internal void EndEditBecauseSent()

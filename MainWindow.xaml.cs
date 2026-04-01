@@ -38,6 +38,9 @@ namespace test
         private NodeService _nodeService = null!;
         public NodeService NodeService => _nodeService;
 
+        private NodeControl? _hoveredDecisionNode;
+        private NodeControl? _lastDecisionNode;
+
         public enum EditReason
         {
             None = 0,
@@ -78,6 +81,8 @@ namespace test
 
         private bool _isAutoModelSelectionEnabled = false;
         private bool _isAdvancedAutoResolverEnabled = false;
+
+        private readonly AiExecutionLogService _executionLogService = new();
 
         public sealed class AttachmentInfo
         {
@@ -156,6 +161,130 @@ namespace test
             Viewport.MouseMove += Viewport_MouseMove;
 
             Loaded += MainWindow_Loaded;
+        }
+
+        private void ShowDecisionForNode(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            _lastDecisionNode = node;
+
+            var latest = GetLatestExecutionLog(node);
+            if (latest != null)
+            {
+                string requestedLabel = AiModelHelper.GetDefinition(latest.RequestedModelId).DisplayName;
+                string actualLabel = AiModelHelper.GetDefinition(latest.ActualModelId).DisplayName;
+
+                string modelLabel =
+                    string.Equals(requestedLabel, actualLabel, StringComparison.OrdinalIgnoreCase)
+                        ? actualLabel
+                        : $"{actualLabel} ← {requestedLabel}";
+
+                string taskSummary = $"{latest.TaskMode} / {latest.Confidence:0.00} / {latest.DurationMs}ms";
+
+                if (!string.IsNullOrWhiteSpace(latest.CapabilityReason))
+                    taskSummary += $" / {latest.CapabilityReason}";
+
+                if (!string.IsNullOrWhiteSpace(latest.RuntimeFallbackSummary))
+                    taskSummary += $" / {latest.RuntimeFallbackSummary}";
+
+                if (!latest.Success && !string.IsNullOrWhiteSpace(latest.ErrorMessage))
+                    taskSummary += $" / {latest.ErrorMessage}";
+
+                bool apiFallbackUsed =
+                    latest.Resolver?.Contains("fallback", StringComparison.OrdinalIgnoreCase) == true;
+
+                ApplyDecisionThemeByMode(
+                    status: latest.SelectionMode switch
+                    {
+                        "API Auto" => "API Auto",
+                        "Auto" => "Rule Auto",
+                        _ => "Manual"
+                    },
+                    mode: latest.SelectionMode switch
+                    {
+                        "Manual" => "Manual",
+                        _ => "Auto"
+                    },
+                    resolver: string.IsNullOrWhiteSpace(latest.Resolver) ? "-" : latest.Resolver,
+                    model: modelLabel,
+                    taskSummary: taskSummary,
+                    capabilityAdjusted: latest.CapabilityAdjusted,
+                    runtimeFallbackUsed: latest.RuntimeFallbackUsed,
+                    apiFallbackUsed: apiFallbackUsed);
+
+                return;
+            }
+
+            // 沒有 execution log 時，顯示即時預估資訊
+            NodeTaskMode previewTask = ResolvePreviewTaskModeForNode(node);
+            string previewTaskName = NodeTaskModeHelper.ToDisplayName(previewTask);
+
+            string requestedModel = GetNodeSelectedModel(node);
+            string effectiveModel = GetEffectiveNodeModel(node, node.GetTopText());
+            string requestedLabel2 = AiModelHelper.GetDefinition(requestedModel).DisplayName;
+            string effectiveLabel2 = AiModelHelper.GetDefinition(effectiveModel).DisplayName;
+
+            string previewModel =
+                string.Equals(requestedLabel2, effectiveLabel2, StringComparison.OrdinalIgnoreCase)
+                    ? effectiveLabel2
+                    : $"{effectiveLabel2} ← {requestedLabel2}";
+
+            string modeText;
+            string statusText;
+            string resolverText;
+
+            if (!IsAutoModelSelectionEnabled())
+            {
+                modeText = "Manual";
+                statusText = "Manual";
+                resolverText = "Manual";
+            }
+            else if (IsAdvancedAutoResolverEnabled())
+            {
+                modeText = "Auto";
+                statusText = "API Auto";
+                resolverText = "Responses API（預估）";
+            }
+            else
+            {
+                modeText = "Auto";
+                statusText = "Rule Auto";
+                resolverText = "Rules（預估）";
+            }
+
+            string previewSummary = $"{previewTaskName} / 尚未執行";
+
+            ApplyDecisionThemeByMode(
+                status: statusText,
+                mode: modeText,
+                resolver: resolverText,
+                model: previewModel,
+                taskSummary: previewSummary,
+                capabilityAdjusted: false,
+                runtimeFallbackUsed: false,
+                apiFallbackUsed: false);
+        }
+
+        public void NotifyNodeHoverEntered(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            _hoveredDecisionNode = node;
+            ShowDecisionForNode(node);
+        }
+
+        public void NotifyNodeHoverLeft(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            if (ReferenceEquals(_hoveredDecisionNode, node))
+                _hoveredDecisionNode = null;
+
+            // 這版先保留最後顯示內容，不自動重置
         }
 
         private static double SafeFinite(double value, double fallback = 0)
@@ -247,6 +376,19 @@ namespace test
             return NodeTaskModeHelper.ToDisplayName(GetNodeTaskMode(node));
         }
 
+        private NodeTaskMode ResolvePreviewTaskModeForNode(NodeControl node)
+        {
+            if (node == null)
+                return GetDefaultNodeTaskMode();
+
+            string text = node.GetTopText() ?? "";
+            if (string.IsNullOrWhiteSpace(text))
+                return GetNodeTaskMode(node);
+
+            var resolution = NodeTaskModeResolver.Resolve(text);
+            return NodeTaskModeHelper.Normalize(resolution.Mode);
+        }
+
         public string GetNodeSelectedModel(NodeControl node)
         {
             if (node == null)
@@ -258,6 +400,35 @@ namespace test
             var fallback = GetDefaultNodeModelId();
             _nodeModelsById[node.Id] = fallback;
             return fallback;
+        }
+
+        public void AddExecutionLog(AiExecutionLogEntry entry)
+        {
+            _executionLogService.Add(entry);
+        }
+
+        public IReadOnlyList<AiExecutionLogEntry> GetExecutionLogs(NodeControl node)
+        {
+            if (node == null)
+                return Array.Empty<AiExecutionLogEntry>();
+
+            return _executionLogService.GetLogs(node.Id.ToString());
+        }
+
+        public AiExecutionLogEntry? GetLatestExecutionLog(NodeControl node)
+        {
+            if (node == null)
+                return null;
+
+            return _executionLogService.GetLatest(node.Id.ToString());
+        }
+
+        public void ClearExecutionLogs(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            _executionLogService.ClearNode(node.Id.ToString());
         }
 
         public void SetNodeSelectedModel(NodeControl node, string model)
@@ -410,6 +581,79 @@ namespace test
             catch { }
 
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(fallbackHex)!);
+        }
+
+        private void ApplyDecisionThemeByMode(
+    string status,
+    string mode,
+    string resolver,
+    string model,
+    string taskSummary,
+    bool capabilityAdjusted,
+    bool runtimeFallbackUsed,
+    bool apiFallbackUsed)
+        {
+            if (runtimeFallbackUsed)
+            {
+                SetDecisionVisualization(
+                    status: status,
+                    mode: mode,
+                    resolver: resolver,
+                    model: model,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#FFE9E9",
+                    statusTextBrushHex: "#9B2C2C");
+                return;
+            }
+
+            if (capabilityAdjusted || apiFallbackUsed)
+            {
+                SetDecisionVisualization(
+                    status: status,
+                    mode: mode,
+                    resolver: resolver,
+                    model: model,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#FFF4E8",
+                    statusTextBrushHex: "#9A5A00");
+                return;
+            }
+
+            if (string.Equals(mode, "Auto", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(status, "API Auto", StringComparison.OrdinalIgnoreCase))
+            {
+                SetDecisionVisualization(
+                    status: status,
+                    mode: mode,
+                    resolver: resolver,
+                    model: model,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#EAF4FF",
+                    statusTextBrushHex: "#245A9B");
+                return;
+            }
+
+            if (string.Equals(mode, "Auto", StringComparison.OrdinalIgnoreCase))
+            {
+                SetDecisionVisualization(
+                    status: status,
+                    mode: mode,
+                    resolver: resolver,
+                    model: model,
+                    taskSummary: taskSummary,
+                    statusBrushHex: "#EEF7EA",
+                    statusTextBrushHex: "#2E6A2E");
+                return;
+            }
+
+            SetDecisionVisualization(
+                status: status,
+                mode: mode,
+                resolver: resolver,
+                model: model,
+                taskSummary: taskSummary,
+                statusBrushHex: "#EDEDED",
+                statusTextBrushHex: "#404040");
         }
 
         public string GetEffectiveNodeModel(NodeControl node, string? topText = null)
@@ -1917,6 +2161,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 _attachmentsByNode.Remove(n.Id);
                 _nodeModelsById.Remove(n.Id);
                 _nodeTaskModesById.Remove(n.Id);
+                ClearExecutionLogs(n);
             }
 
             if (_initialNode != null && nodesToDelete.Contains(_initialNode))
