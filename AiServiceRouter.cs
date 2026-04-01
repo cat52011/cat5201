@@ -9,6 +9,10 @@ namespace test
         private PerplexityService? _perplexityTool;
         private PerplexitySonarService? _perplexitySonar;
 
+        private OpenAiProvider? _openAiProvider;
+        private ClaudeProvider? _claudeProvider;
+        private PerplexitySonarProvider? _perplexitySonarProvider;
+
         private string _openAiModel = AiModels.DefaultOpenAiModel;
         private string _claudeModel = AiModels.DefaultClaudeModel;
         private string _perplexitySonarModel = AiModels.DefaultPerplexitySonarApiModel;
@@ -39,6 +43,40 @@ namespace test
 
         public AiRouteInfo GetRouteInfo(string? model)
             => AiModelHelper.BuildRouteInfo(model);
+
+        public IAiProvider GetProvider(string? model)
+            => GetProvider(GetRouteInfo(model));
+
+        public IAiProvider GetProvider(AiRouteInfo route)
+        {
+            if (route == null || !route.IsValid)
+                route = GetRouteInfo(null);
+
+            return route.Provider switch
+            {
+                AiProviderKind.Claude => GetClaudeProvider(),
+                AiProviderKind.PerplexitySonar => GetPerplexitySonarProvider(),
+                _ => GetOpenAiProvider()
+            };
+        }
+
+        public OpenAiProvider GetOpenAiProvider()
+        {
+            _openAiProvider ??= new OpenAiProvider(this);
+            return _openAiProvider;
+        }
+
+        public ClaudeProvider GetClaudeProvider()
+        {
+            _claudeProvider ??= new ClaudeProvider(this);
+            return _claudeProvider;
+        }
+
+        public PerplexitySonarProvider GetPerplexitySonarProvider()
+        {
+            _perplexitySonarProvider ??= new PerplexitySonarProvider(this);
+            return _perplexitySonarProvider;
+        }
 
         public void EnsureServiceReady(AiRouteInfo route)
         {

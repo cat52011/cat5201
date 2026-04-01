@@ -402,65 +402,81 @@ $@"
         }
 
         private async Task<string> GenerateSinglePassOrContinuedAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            CancellationToken ct)
+    NodeControl currentNode,
+    string topText,
+    string model,
+    NodeTaskMode taskMode,
+    CancellationToken ct)
         {
-            if (_router.GetProviderKind(model) == AiProviderKind.PerplexitySonar)
-            {
-                return await GeneratePerplexitySonarWithContinuationAsync(currentNode, topText, model, taskMode, ct);
-            }
+            var route = _router.GetRouteInfo(model);
 
-            string instructions = BuildGeneralNodeInstructions(model, taskMode);
+            string instructions = route.Provider == AiProviderKind.PerplexitySonar
+                ? BuildPerplexityInstructions(model, route.IsDeepResearch, taskMode)
+                : BuildGeneralNodeInstructions(model, taskMode);
+
             string prompt = BuildPromptForNode(currentNode, topText, taskMode, GetContextStrategy(model));
 
             return await GenerateWithContinuationAsync(
                 model,
+                taskMode,
                 instructions,
-                async followUp => await BuildOpenAiUserContentAsync(currentNode, prompt + followUp, ct),
-                async followUp => await BuildClaudeUserContentAsync(currentNode, prompt + followUp, ct),
+                async followUp => await BuildAiRequestAsync(
+                    currentNode,
+                    model,
+                    instructions,
+                    prompt + followUp,
+                    taskMode,
+                    useStreaming: false,
+                    maxOutputTokens: MainReplyMaxOutputTokens,
+                    ct),
                 MainReplyMaxOutputTokens,
                 ct);
         }
 
         private async Task<string> GenerateSinglePassOrContinuedStreamAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            Action<string> onDelta,
-            CancellationToken ct)
+    NodeControl currentNode,
+    string topText,
+    string model,
+    NodeTaskMode taskMode,
+    Action<string> onDelta,
+    CancellationToken ct)
         {
-            if (_router.GetProviderKind(model) == AiProviderKind.PerplexitySonar)
-            {
-                return await GeneratePerplexitySonarWithContinuationStreamingAsync(currentNode, topText, model, taskMode, onDelta, ct);
-            }
+            var route = _router.GetRouteInfo(model);
 
-            string instructions = BuildGeneralNodeInstructions(model, taskMode);
+            string instructions = route.Provider == AiProviderKind.PerplexitySonar
+                ? BuildPerplexityInstructions(model, route.IsDeepResearch, taskMode)
+                : BuildGeneralNodeInstructions(model, taskMode);
+
             string prompt = BuildPromptForNode(currentNode, topText, taskMode, GetContextStrategy(model));
 
             return await GenerateWithContinuationStreamingAsync(
                 model,
+                taskMode,
                 instructions,
-                async followUp => await BuildOpenAiUserContentAsync(currentNode, prompt + followUp, ct),
-                async followUp => await BuildClaudeUserContentAsync(currentNode, prompt + followUp, ct),
+                async followUp => await BuildAiRequestAsync(
+                    currentNode,
+                    model,
+                    instructions,
+                    prompt + followUp,
+                    taskMode,
+                    useStreaming: true,
+                    maxOutputTokens: MainReplyMaxOutputTokens,
+                    ct),
                 onDelta,
                 MainReplyMaxOutputTokens,
                 ct);
         }
 
         private async Task<string> GenerateWithContinuationAsync(
-            string model,
-            string instructions,
-            Func<string, Task<List<object>>> buildOpenAiContentFactory,
-            Func<string, Task<List<object>>> buildClaudeContentFactory,
-            int maxOutputTokens,
-            CancellationToken ct)
+    string model,
+    NodeTaskMode taskMode,
+    string instructions,
+    Func<string, Task<AiRequest>> buildRequestFactory,
+    int maxOutputTokens,
+    CancellationToken ct)
         {
             var finalText = new StringBuilder();
-            bool useClaude = _router.GetProviderKind(model) == AiProviderKind.Claude;
+            var provider = _router.GetProvider(model);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
             {
@@ -477,31 +493,9 @@ $@"
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
-                string reply;
-
-                if (useClaude)
-                {
-                    var claudeContent = await buildClaudeContentFactory(followUp);
-                    reply = await _router.GetClaudeService(model).GenerateAsync(
-                        instructions,
-                        claudeContent,
-                        maxOutputTokens,
-                        ct);
-                }
-                else
-                {
-                    var openAiContent = await buildOpenAiContentFactory(followUp);
-                    var input = new object[]
-                    {
-                        new { role = "user", content = openAiContent.ToArray() }
-                    };
-
-                    reply = await _router.GetOpenAiService(model).GenerateAsync(
-                        instructions,
-                        input,
-                        maxOutputTokens,
-                        ct);
-                }
+                var request = await buildRequestFactory(followUp);
+                var response = await provider.GenerateAsync(request, ct);
+                string reply = response.Text;
 
                 if (string.IsNullOrWhiteSpace(reply))
                     break;
@@ -536,16 +530,16 @@ $@"
         }
 
         private async Task<string> GenerateWithContinuationStreamingAsync(
-            string model,
-            string instructions,
-            Func<string, Task<List<object>>> buildOpenAiContentFactory,
-            Func<string, Task<List<object>>> buildClaudeContentFactory,
-            Action<string> onDelta,
-            int maxOutputTokens,
-            CancellationToken ct)
+    string model,
+    NodeTaskMode taskMode,
+    string instructions,
+    Func<string, Task<AiRequest>> buildRequestFactory,
+    Action<string> onDelta,
+    int maxOutputTokens,
+    CancellationToken ct)
         {
             var finalText = new StringBuilder();
-            bool useClaude = _router.GetProviderKind(model) == AiProviderKind.Claude;
+            var provider = _router.GetProvider(model);
 
             for (int round = 0; round < ContinuationMaxRounds; round++)
             {
@@ -562,61 +556,18 @@ $@"
 不要重複前面內容。
 若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
 
+                var request = await buildRequestFactory(followUp);
                 string reply;
 
                 if (round == 0)
                 {
-                    if (useClaude)
-                    {
-                        var claudeContent = await buildClaudeContentFactory(followUp);
-                        reply = await _router.GetClaudeService(model).GenerateStreamAsync(
-                            instructions,
-                            claudeContent,
-                            delta => onDelta?.Invoke(delta),
-                            maxOutputTokens,
-                            ct);
-                    }
-                    else
-                    {
-                        var openAiContent = await buildOpenAiContentFactory(followUp);
-                        var input = new object[]
-                        {
-                            new { role = "user", content = openAiContent.ToArray() }
-                        };
-
-                        reply = await _router.GetOpenAiService(model).GenerateStreamAsync(
-                            instructions,
-                            input,
-                            delta => onDelta?.Invoke(delta),
-                            maxOutputTokens,
-                            ct);
-                    }
+                    var streamed = await provider.GenerateStreamAsync(request, delta => onDelta?.Invoke(delta), ct);
+                    reply = streamed.Text;
                 }
                 else
                 {
-                    if (useClaude)
-                    {
-                        var claudeContent = await buildClaudeContentFactory(followUp);
-                        reply = await _router.GetClaudeService(model).GenerateAsync(
-                            instructions,
-                            claudeContent,
-                            maxOutputTokens,
-                            ct);
-                    }
-                    else
-                    {
-                        var openAiContent = await buildOpenAiContentFactory(followUp);
-                        var input = new object[]
-                        {
-                            new { role = "user", content = openAiContent.ToArray() }
-                        };
-
-                        reply = await _router.GetOpenAiService(model).GenerateAsync(
-                            instructions,
-                            input,
-                            maxOutputTokens,
-                            ct);
-                    }
+                    var normal = await provider.GenerateAsync(request, ct);
+                    reply = normal.Text;
                 }
 
                 if (string.IsNullOrWhiteSpace(reply))
@@ -655,157 +606,18 @@ $@"
             return RemoveRepeatedBlocks(finalText.ToString().Trim());
         }
 
-        private async Task<string> GeneratePerplexitySonarWithContinuationAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            CancellationToken ct)
-        {
-            var finalText = new StringBuilder();
-            bool isDeepResearch = _router.IsPerplexityDeepResearchModel(model);
-            string sonarModel = _router.MapPerplexitySonarModel(model);
-            var svc = _router.GetPerplexitySonarService(sonarModel);
+        
 
-            string instructions = BuildPerplexityInstructions(model, isDeepResearch, taskMode);
-            var strategy = GetContextStrategy(model);
-
-            for (int round = 0; round < ContinuationMaxRounds; round++)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                string followUp = round == 0
-                    ? ""
-                    : $@"
-
-【你前一次已輸出的內容（不可重複，僅供接續）】
-{finalText}
-
-請直接從上一行未完成處繼續輸出。
-不要重複前面內容。
-若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
-
-                string prompt = BuildPromptForNode(currentNode, topText, taskMode, strategy) + followUp;
-
-                string reply = await svc.GenerateAsync(
-                    instructions,
-                    prompt,
-                    MainReplyMaxOutputTokens,
-                    ct);
-
-                if (string.IsNullOrWhiteSpace(reply))
-                    break;
-
-                bool ended = HasEndMarker(reply);
-                string cleaned = RemoveEndMarker(reply);
-
-                if (round == 0)
-                {
-                    finalText.Append(cleaned.Trim());
-                }
-                else
-                {
-                    var append = RemoveLeadingOverlap(finalText.ToString(), cleaned);
-                    append = RemoveRepeatedBlocks(append);
-
-                    if (!string.IsNullOrWhiteSpace(append) &&
-                        !IsHighlySimilarByContainment(finalText.ToString(), append))
-                    {
-                        if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
-                            finalText.AppendLine();
-
-                        finalText.Append(append.Trim());
-                    }
-                }
-
-                if (ended)
-                    break;
-            }
-
-            return RemoveRepeatedBlocks(finalText.ToString().Trim());
-        }
-
-        private async Task<string> GeneratePerplexitySonarWithContinuationStreamingAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            Action<string> onDelta,
-            CancellationToken ct)
-        {
-            var finalText = new StringBuilder();
-            bool isDeepResearch = _router.IsPerplexityDeepResearchModel(model);
-            string sonarModel = _router.MapPerplexitySonarModel(model);
-            var svc = _router.GetPerplexitySonarService(sonarModel);
-
-            string instructions = BuildPerplexityInstructions(model, isDeepResearch, taskMode);
-            var strategy = GetContextStrategy(model);
-
-            for (int round = 0; round < ContinuationMaxRounds; round++)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                string followUp = round == 0
-                    ? ""
-                    : $@"
-
-【你前一次已輸出的內容（不可重複，僅供接續）】
-{finalText}
-
-請直接從上一行未完成處繼續輸出。
-不要重複前面內容。
-若這次已完整完成，請在最後一行單獨輸出 [[END_OF_RESPONSE]]。";
-
-                string prompt = BuildPromptForNode(currentNode, topText, taskMode, strategy) + followUp;
-
-                string reply = round == 0
-                    ? await svc.GenerateStreamAsync(instructions, prompt, onDelta, MainReplyMaxOutputTokens, ct)
-                    : await svc.GenerateAsync(instructions, prompt, MainReplyMaxOutputTokens, ct);
-
-                if (string.IsNullOrWhiteSpace(reply))
-                    break;
-
-                bool ended = HasEndMarker(reply);
-                string cleaned = RemoveEndMarker(reply);
-
-                if (round == 0)
-                {
-                    finalText.Append(cleaned.Trim());
-                }
-                else
-                {
-                    var append = RemoveLeadingOverlap(finalText.ToString(), cleaned);
-                    append = RemoveRepeatedBlocks(append);
-
-                    if (!string.IsNullOrWhiteSpace(append) &&
-                        !IsHighlySimilarByContainment(finalText.ToString(), append))
-                    {
-                        if (finalText.Length > 0 && !finalText.ToString().EndsWith("\n"))
-                        {
-                            finalText.AppendLine();
-                            onDelta?.Invoke(Environment.NewLine);
-                        }
-
-                        finalText.Append(append.Trim());
-                        onDelta?.Invoke(append.Trim());
-                    }
-                }
-
-                if (ended)
-                    break;
-            }
-
-            return RemoveRepeatedBlocks(finalText.ToString().Trim());
-        }
+        
 
         private async Task<List<SegmentPlanItem>> TryDiscoverSegmentsAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            CancellationToken ct)
+     NodeControl currentNode,
+     string topText,
+     string model,
+     CancellationToken ct)
         {
             var discoveryPrompt =
-$@"請根據目前附件文件內容，將整份文件拆成「按原始順序」處理的邏輯段落。
+        $@"請根據目前附件文件內容，將整份文件拆成「按原始順序」處理的邏輯段落。
 適用於：菜單、PDF、文章、說明文件。
 
 重要規則：
@@ -821,23 +633,20 @@ $@"請根據目前附件文件內容，將整份文件拆成「按原始順序�
 {topText}";
 
             string instructions = BuildSegmentDiscoveryInstructions();
-            string raw;
 
-            if (_router.GetProviderKind(model) == AiProviderKind.Claude)
-            {
-                var content = await BuildClaudeUserContentAsync(currentNode, discoveryPrompt, ct);
-                raw = await _router.GetClaudeService(model).GenerateAsync(instructions, content, SegmentDiscoveryMaxTokens, ct);
-            }
-            else
-            {
-                var content = await BuildOpenAiUserContentAsync(currentNode, discoveryPrompt, ct);
-                var input = new object[]
-                {
-                    new { role = "user", content = content.ToArray() }
-                };
+            var request = await BuildAiRequestAsync(
+                currentNode,
+                model,
+                instructions,
+                discoveryPrompt,
+                NodeTaskMode.Translate,
+                useStreaming: false,
+                maxOutputTokens: SegmentDiscoveryMaxTokens,
+                ct);
 
-                raw = await _router.GetOpenAiService(model).GenerateAsync(instructions, input, SegmentDiscoveryMaxTokens, ct);
-            }
+            var provider = _router.GetProvider(model);
+            var response = await provider.GenerateAsync(request, ct);
+            string raw = response.Text;
 
             if (string.IsNullOrWhiteSpace(raw))
                 return new List<SegmentPlanItem>();
@@ -925,12 +734,20 @@ $@"【系統判定任務模式】
                 string instructions = BuildSegmentTranslationInstructions();
 
                 string translated = await GenerateWithContinuationAsync(
-                    model,
-                    instructions,
-                    async followUp => await BuildOpenAiUserContentAsync(currentNode, segmentPrompt + followUp, ct),
-                    async followUp => await BuildClaudeUserContentAsync(currentNode, segmentPrompt + followUp, ct),
-                    SegmentTranslationMaxTokens,
-                    ct);
+    model,
+    taskMode,
+    instructions,
+    async followUp => await BuildAiRequestAsync(
+        currentNode,
+        model,
+        instructions,
+        segmentPrompt + followUp,
+        taskMode,
+        useStreaming: false,
+        maxOutputTokens: SegmentTranslationMaxTokens,
+        ct),
+    SegmentTranslationMaxTokens,
+    ct);
 
                 translated = RemoveRepeatedBlocks(translated.Trim());
 
@@ -997,23 +814,31 @@ $@"【系統判定任務模式】
                 bool segmentStarted = false;
 
                 string translated = await GenerateWithContinuationStreamingAsync(
-                    model,
-                    instructions,
-                    async followUp => await BuildOpenAiUserContentAsync(currentNode, segmentPrompt + followUp, ct),
-                    async followUp => await BuildClaudeUserContentAsync(currentNode, segmentPrompt + followUp, ct),
-                    delta =>
-                    {
-                        if (!segmentStarted)
-                        {
-                            segmentStarted = true;
-                            if (!firstVisibleSegment)
-                                onDelta?.Invoke(Environment.NewLine + Environment.NewLine);
-                        }
+    model,
+    taskMode,
+    instructions,
+    async followUp => await BuildAiRequestAsync(
+        currentNode,
+        model,
+        instructions,
+        segmentPrompt + followUp,
+        taskMode,
+        useStreaming: true,
+        maxOutputTokens: SegmentTranslationMaxTokens,
+        ct),
+    delta =>
+    {
+        if (!segmentStarted)
+        {
+            segmentStarted = true;
+            if (!firstVisibleSegment)
+                onDelta?.Invoke(Environment.NewLine + Environment.NewLine);
+        }
 
-                        onDelta?.Invoke(delta);
-                    },
-                    SegmentTranslationMaxTokens,
-                    ct);
+        onDelta?.Invoke(delta);
+    },
+    SegmentTranslationMaxTokens,
+    ct);
 
                 translated = RemoveRepeatedBlocks(translated.Trim());
 
@@ -1500,103 +1325,9 @@ $@"你正在處理一個節點式研究任務。
             return string.Join("\n\n", list);
         }
 
-        private async Task<List<object>> BuildOpenAiUserContentAsync(
-            NodeControl currentNode,
-            string textPrompt,
-            CancellationToken ct)
-        {
-            var contentList = new List<object>
-            {
-                new { type = "input_text", text = textPrompt }
-            };
+        
 
-            var attachmentsRootDir = _main.GetAttachmentsRootDir();
-
-            foreach (var a in _main.GetAttachmentsForNode(currentNode))
-            {
-                try
-                {
-                    var abs = Path.Combine(attachmentsRootDir, a.RelativePath);
-                    if (!File.Exists(abs)) continue;
-
-                    var bytes = await File.ReadAllBytesAsync(abs, ct).ConfigureAwait(true);
-                    var dataUrl = ToDataUrl(bytes, a.MimeType);
-
-                    if (string.Equals(a.Kind, "image", StringComparison.OrdinalIgnoreCase))
-                    {
-                        contentList.Add(new
-                        {
-                            type = "input_image",
-                            image_url = dataUrl
-                        });
-                    }
-                    else
-                    {
-                        contentList.Add(new
-                        {
-                            type = "input_file",
-                            filename = a.FileName,
-                            file_data = dataUrl
-                        });
-                    }
-                }
-                catch
-                {
-                }
-            }
-
-            return contentList;
-        }
-
-        private async Task<List<object>> BuildClaudeUserContentAsync(
-            NodeControl currentNode,
-            string textPrompt,
-            CancellationToken ct)
-        {
-            var contentList = new List<object>();
-            var attachmentsRootDir = _main.GetAttachmentsRootDir();
-
-            foreach (var a in _main.GetAttachmentsForNode(currentNode))
-            {
-                try
-                {
-                    var abs = Path.Combine(attachmentsRootDir, a.RelativePath);
-                    if (!File.Exists(abs)) continue;
-
-                    var bytes = await File.ReadAllBytesAsync(abs, ct).ConfigureAwait(true);
-
-                    if (string.Equals(a.Kind, "image", StringComparison.OrdinalIgnoreCase))
-                    {
-                        contentList.Add(ClaudeChatService.BuildImageBlock(bytes, a.MimeType));
-                    }
-                    else if (string.Equals(a.MimeType, "application/pdf", StringComparison.OrdinalIgnoreCase))
-                    {
-                        contentList.Add(ClaudeChatService.BuildPdfBlock(bytes));
-                    }
-                    else
-                    {
-                        string text;
-                        try
-                        {
-                            text = Encoding.UTF8.GetString(bytes);
-                        }
-                        catch
-                        {
-                            text = $"[無法以 UTF-8 讀取附件：{a.FileName}]";
-                        }
-
-                        contentList.Add(ClaudeChatService.BuildTextBlock(
-                            $"【附件：{a.FileName}】\n{text}"));
-                    }
-                }
-                catch
-                {
-                }
-            }
-
-            contentList.Add(ClaudeChatService.BuildTextBlock(textPrompt));
-            return contentList;
-        }
+        
 
         private List<NodeControl> CollectUpstream(NodeControl start, int hops)
         {
@@ -1843,6 +1574,50 @@ $@"你正在處理一個節點式研究任務。
             return aTail == bTail;
         }
 
+        private IReadOnlyList<AiAttachment> CollectAiAttachments(NodeControl node)
+        {
+            var root = _main.GetAttachmentsRootDir();
+
+            return _main.GetAttachmentsForNode(node)
+                .Select(a => new AiAttachment
+                {
+                    FileName = a.FileName,
+                    RelativePath = a.RelativePath,
+                    AbsolutePath = Path.Combine(root, a.RelativePath),
+                    MimeType = a.MimeType,
+                    Kind = a.Kind
+                })
+                .Where(a => !string.IsNullOrWhiteSpace(a.AbsolutePath) && File.Exists(a.AbsolutePath))
+                .ToList();
+        }
+
+        private Task<AiRequest> BuildAiRequestAsync(
+            NodeControl currentNode,
+            string model,
+            string systemPrompt,
+            string userPrompt,
+            NodeTaskMode taskMode,
+            bool useStreaming,
+            int maxOutputTokens,
+            CancellationToken ct)
+        {
+            var request = new AiRequest
+            {
+                ModelId = AiModelHelper.NormalizeNodeModel(model),
+                SystemPrompt = systemPrompt ?? "",
+                UserPrompt = userPrompt ?? "",
+                TaskMode = taskMode,
+                Attachments = CollectAiAttachments(currentNode),
+                UseStreaming = useStreaming,
+                MaxOutputTokens = maxOutputTokens,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["task_mode"] = NodeTaskModeHelper.ToStorageValue(taskMode)
+                }
+            };
+
+            return Task.FromResult(request);
+        }
         private AiRouteInfo PrepareRoute(string? selectedModel)
         {
             var route = _router.GetRouteInfo(selectedModel);
