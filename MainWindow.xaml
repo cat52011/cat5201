@@ -426,130 +426,198 @@
             </Grid>
 
             <!-- 右上角決策可視化視窗 -->
-            <Border x:Name="DecisionPanel"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Top"
-                    Margin="0,18,18,0"
-                    Width="320"
-                    Padding="14,12"
-                    CornerRadius="18"
-                    Background="#FAFAFA"
-                    BorderBrush="#DADADA"
-                    BorderThickness="1"
-                    Panel.ZIndex="9999">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="10"
-                                      ShadowDepth="2"
-                                      Opacity="0.16"/>
-                </Border.Effect>
+            
+            <Border
+    Width="340"
+    Height="260"
+    CornerRadius="18"
+    Background="White"
+    BorderBrush="#E6E6E6"
+    BorderThickness="1"
+    Padding="14"
+    SnapsToDevicePixels="True"
+                HorizontalAlignment="Right"
+VerticalAlignment="Top"
+Margin="0,20,20,0">
 
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="10"/>
+                        <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <DockPanel Grid.Row="0" LastChildFill="False">
+                    <!-- 上方固定區：標題 + 狀態 -->
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
                         <TextBlock Text="決策可視化"
-                                   FontSize="13"
-                                   FontWeight="SemiBold"
-                                   Foreground="#202020"
-                                   VerticalAlignment="Center"/>
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="#303030"
+                       VerticalAlignment="Center"/>
 
                         <Border x:Name="DecisionStatusBadge"
-                                DockPanel.Dock="Right"
-                                Background="#EDEDED"
-                                CornerRadius="9"
-                                Padding="8,3"
-                                Margin="10,0,0,0">
+                    Grid.Column="1"
+                    Background="#EEF7EA"
+                    CornerRadius="999"
+                    Padding="10,4">
                             <TextBlock x:Name="DecisionStatusText"
-                                       Text="Idle"
-                                       FontSize="11"
-                                       FontWeight="SemiBold"
-                                       Foreground="#404040"/>
+                           Text="Rule Auto"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="#2E6A2E"/>
                         </Border>
-                    </DockPanel>
+                    </Grid>
 
+                    <!-- 中間分隔 -->
                     <Border Grid.Row="1"
-                            Margin="0,10,0,0"
-                            Height="1"
-                            Background="#E8E8E8"/>
+                Margin="0,8,0,0"
+                Height="1"
+                Background="#ECECEC"/>
 
-                    <Grid Grid.Row="2" Margin="0,10,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="84"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="模式"
-                                   FontSize="12"
-                                   Foreground="#707070"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="DecisionModeText"
-                                   Grid.Column="1"
-                                   Text="Manual"
-                                   FontSize="12.5"
-                                   FontWeight="SemiBold"
-                                   Foreground="#202020"
-                                   TextWrapping="Wrap"/>
-                    </Grid>
+                    <!-- 下方可上下捲動內容區 -->
+                    <ScrollViewer Grid.Row="2"
+                      Margin="0,8,0,0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      CanContentScroll="False"
+                      PanningMode="VerticalOnly">
 
-                    <Grid Grid.Row="3" Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="84"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="策略"
-                                   FontSize="12"
-                                   Foreground="#707070"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="DecisionResolverText"
-                                   Grid.Column="1"
-                                   Text="Manual"
-                                   FontSize="12.5"
-                                   FontWeight="SemiBold"
-                                   Foreground="#202020"
-                                   TextWrapping="Wrap"/>
-                    </Grid>
+                        <Grid Margin="0,0,6,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
 
-                    <Grid Grid.Row="4" Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="84"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="模型"
-                                   FontSize="12"
-                                   Foreground="#707070"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="DecisionModelText"
-                                   Grid.Column="1"
-                                   Text="-"
-                                   FontSize="12.5"
-                                   FontWeight="SemiBold"
-                                   Foreground="#202020"
-                                   TextWrapping="Wrap"/>
-                    </Grid>
+                                <RowDefinition Height="10"/>
 
-                    <Grid Grid.Row="5" Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="84"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="任務 / 信心"
-                                   FontSize="12"
-                                   Foreground="#707070"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="DecisionTaskText"
-                                   Grid.Column="1"
-                                   Text="-"
-                                   FontSize="12.5"
-                                   FontWeight="SemiBold"
-                                   Foreground="#202020"
-                                   TextWrapping="Wrap"/>
-                    </Grid>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+
+                                <RowDefinition Height="10"/>
+
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+
+                                <RowDefinition Height="10"/>
+
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+
+                                <RowDefinition Height="10"/>
+
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+
+                                <RowDefinition Height="10"/>
+
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+
+                                <RowDefinition Height="10"/>
+
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- 模式 -->
+                            <TextBlock Grid.Row="0"
+                           Text="模式"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="1"
+                           x:Name="DecisionModeText"
+                           Text="-"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+
+                            <!-- 策略 -->
+                            <TextBlock Grid.Row="3"
+                           Text="策略"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="4"
+                           x:Name="DecisionResolverText"
+                           Text="-"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+
+                            <!-- 模型 -->
+                            <TextBlock Grid.Row="6"
+                           Text="模型"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="7"
+                           x:Name="DecisionModelText"
+                           Text="-"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+
+                            <!-- 任務 -->
+                            <TextBlock Grid.Row="9"
+                           Text="任務"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="10"
+                           x:Name="DecisionTaskText"
+                           Text="-"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+
+                            <!-- Reason -->
+                            <TextBlock Grid.Row="12"
+                           Text="Reason"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="13"
+                           x:Name="DecisionReasonText"
+                           Text="-"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+
+                            <!-- Keywords -->
+                            <TextBlock Grid.Row="15"
+                           Text="Keywords"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="16"
+                           x:Name="DecisionKeywordsText"
+                           Text="-"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+
+                            <!-- Capability / Trace -->
+                            <TextBlock Grid.Row="18"
+                           Text="Capability / Trace"
+                           FontSize="12"
+                           Foreground="#7A7A7A"
+                           Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="19"
+                           x:Name="DecisionExtraText"
+                           Text="-"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="#2A2A2A"/>
+                        </Grid>
+                    </ScrollViewer>
                 </Grid>
             </Border>
 
@@ -566,40 +634,40 @@
                     Panel.ZIndex="9999">
 
                 <StackPanel Orientation="Horizontal"
-                            VerticalAlignment="Center">
-
-                    <TextBlock Text="Auto"
-                               VerticalAlignment="Center"
-                               Margin="0,0,6,0"
-                               FontSize="12.5"
-                               FontWeight="SemiBold"
-                               Foreground="#222"/>
-
-                    <CheckBox x:Name="AutoModelSwitch"
-                              Style="{StaticResource AppleSwitchStyle}"
-                              VerticalAlignment="Center"
-                              Checked="AutoModelSwitch_Checked"
-                              Unchecked="AutoModelSwitch_Unchecked"/>
-
-                    <Border Margin="8,0,0,0"
-                            Width="1"
-                            Height="16"
-                            Background="#D9D9D9"
-                            VerticalAlignment="Center"/>
+            VerticalAlignment="Center">
 
                     <TextBlock Text="API"
-                               VerticalAlignment="Center"
-                               Margin="8,0,6,0"
-                               FontSize="12.5"
-                               FontWeight="SemiBold"
-                               Foreground="#222"/>
+               VerticalAlignment="Center"
+               Margin="0,0,6,0"
+               FontSize="12.5"
+               FontWeight="SemiBold"
+               Foreground="#222"/>
 
                     <CheckBox x:Name="AdvancedAutoResolverSwitch"
-                              Style="{StaticResource AppleSwitchStyle}"
-                              VerticalAlignment="Center"
-                              Visibility="Collapsed"
-                              Checked="AdvancedAutoResolverSwitch_Checked"
-                              Unchecked="AdvancedAutoResolverSwitch_Unchecked"/>
+              Style="{StaticResource AppleSwitchStyle}"
+              VerticalAlignment="Center"
+              Visibility="Collapsed"
+              Checked="AdvancedAutoResolverSwitch_Checked"
+              Unchecked="AdvancedAutoResolverSwitch_Unchecked"/>
+
+                    <Border Margin="8,0,0,0"
+            Width="1"
+            Height="16"
+            Background="#D9D9D9"
+            VerticalAlignment="Center"/>
+
+                    <TextBlock Text="Auto"
+               VerticalAlignment="Center"
+               Margin="8,0,6,0"
+               FontSize="12.5"
+               FontWeight="SemiBold"
+               Foreground="#222"/>
+
+                    <CheckBox x:Name="AutoModelSwitch"
+              Style="{StaticResource AppleSwitchStyle}"
+              VerticalAlignment="Center"
+              Checked="AutoModelSwitch_Checked"
+              Unchecked="AutoModelSwitch_Unchecked"/>
 
                 </StackPanel>
             </Border>

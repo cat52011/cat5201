@@ -33,7 +33,10 @@ namespace test
             if (requireSearchCapability)
                 requiredCaps |= AiModelCapability.Search;
 
-            if (!SupportsAll(resolved, requiredCaps))
+            var requestedDef = AiModelHelper.GetDefinition(requested);
+            var missingCaps = requiredCaps & ~requestedDef.Capabilities;
+
+            if (missingCaps != AiModelCapability.None)
             {
                 string fallback = FindBestCapabilityMatchedModel(taskMode, requested, requiredCaps);
 
@@ -43,14 +46,14 @@ namespace test
                     modelAdjusted = true;
                 }
 
-                if (hasImageAttachments && !AiModelHelper.GetDefinition(requested).SupportsImages)
-                    reasons.Add("偵測到圖片附件，原模型不支援 Images");
+                if (missingCaps.HasFlag(AiModelCapability.Images))
+                    reasons.Add("Images 不支援");
 
-                if (hasFileAttachments && !AiModelHelper.GetDefinition(requested).SupportsFiles)
-                    reasons.Add("偵測到檔案附件，原模型不支援 Files");
+                if (missingCaps.HasFlag(AiModelCapability.Files))
+                    reasons.Add("Files 不支援");
 
-                if (requireSearchCapability && !AiModelHelper.GetDefinition(requested).SupportsSearch)
-                    reasons.Add("目前任務需要 Search，原模型不支援 Search");
+                if (missingCaps.HasFlag(AiModelCapability.Search))
+                    reasons.Add("Search 不支援");
             }
 
             bool streamingAllowed = wantsStreaming;
@@ -58,8 +61,12 @@ namespace test
             {
                 streamingAllowed = false;
                 streamingAdjusted = true;
-                reasons.Add("目前模型不支援 Streaming，已自動改為非串流模式");
+                reasons.Add("Streaming 不支援，已改為 non-streaming");
             }
+
+            string finalReason = reasons.Count == 0
+                ? ""
+                : string.Join(" / ", reasons);
 
             return new AiCapabilityCheckResult
             {
@@ -68,19 +75,11 @@ namespace test
                 ModelAdjusted = modelAdjusted,
                 StreamingAdjusted = streamingAdjusted,
                 StreamingAllowed = streamingAllowed,
-                Reason = reasons.Count == 0
-                    ? ""
-                    : string.Join("；", reasons)
+                Reason = finalReason,
+                RequiredCapabilities = requiredCaps,
+                MissingCapabilities = missingCaps,
+                ReasonParts = reasons
             };
-        }
-
-        private static bool SupportsAll(string modelId, AiModelCapability requiredCaps)
-        {
-            if (requiredCaps == AiModelCapability.None)
-                return true;
-
-            var def = AiModelHelper.GetDefinition(modelId);
-            return (def.Capabilities & requiredCaps) == requiredCaps;
         }
 
         private static string FindBestCapabilityMatchedModel(
@@ -97,6 +96,15 @@ namespace test
             }
 
             return AiModelRegistry.Default.Id;
+        }
+
+        private static bool SupportsAll(string modelId, AiModelCapability requiredCaps)
+        {
+            if (requiredCaps == AiModelCapability.None)
+                return true;
+
+            var def = AiModelHelper.GetDefinition(modelId);
+            return (def.Capabilities & requiredCaps) == requiredCaps;
         }
 
         private static IReadOnlyList<string> BuildCandidateOrder(

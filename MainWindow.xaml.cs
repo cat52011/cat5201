@@ -121,11 +121,50 @@ namespace test
         private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
 
         private record AttachmentState(
+    string NodeId,
+    string FileName,
+    string RelativePath,
+    string MimeType,
+    string Kind
+);
+
+
+
+        private record ExecutionLogState(
             string NodeId,
-            string FileName,
-            string RelativePath,
-            string MimeType,
-            string Kind
+            DateTime StartedAtUtc,
+            DateTime EndedAtUtc,
+            long DurationMs,
+
+            string SelectionMode,
+            string Resolver,
+
+            string RequestedModelId,
+            string PlannedModelId,
+            string ActualModelId,
+
+            string TaskMode,
+            double Confidence,
+
+            string ResolverReason,
+            List<string> ResolverKeywords,
+
+            bool CapabilityAdjusted,
+            string CapabilityReason,
+
+            string CapabilityRequestedModelId,
+            string CapabilityResolvedModelId,
+            string CapabilityRequired,
+            string CapabilityMissing,
+            bool CapabilityStreamingAdjusted,
+
+            bool RuntimeFallbackUsed,
+            string RuntimeFallbackSummary,
+
+            bool Success,
+            string ErrorMessage,
+
+            List<AiFallbackAttempt> FallbackAttempts
         );
 
         private record AppState(
@@ -134,6 +173,7 @@ namespace test
             List<NodeState> Nodes,
             List<ConnState> Connections,
             List<AttachmentState> Attachments,
+            List<ExecutionLogState>? ExecutionLogs = null,
             bool FileNameLocked = false,
             bool AutoModelSelectionEnabled = false,
             bool AdvancedAutoResolverEnabled = false
@@ -163,6 +203,158 @@ namespace test
             Loaded += MainWindow_Loaded;
         }
 
+        private static string BuildResolverKeywordSummary(AiExecutionLogEntry log)
+        {
+            if (log == null || log.ResolverKeywords == null || log.ResolverKeywords.Count == 0)
+                return "";
+
+            var keywords = log.ResolverKeywords
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (keywords.Count == 0)
+                return "";
+
+            return "keywords: " + string.Join(", ", keywords);
+        }
+
+        private static string BuildFallbackTraceSummary(AiExecutionLogEntry log)
+        {
+            if (log == null || log.FallbackAttempts == null || log.FallbackAttempts.Count == 0)
+                return "";
+
+            var parts = new List<string>();
+
+            foreach (var attempt in log.FallbackAttempts)
+            {
+                if (attempt == null || string.IsNullOrWhiteSpace(attempt.ModelId))
+                    continue;
+
+                string modelLabel = AiModelHelper.GetDefinition(attempt.ModelId).DisplayName;
+                string symbol = attempt.Success ? "✅" : "❌";
+
+                parts.Add($"{attempt.AttemptIndex}.{modelLabel}{symbol}");
+            }
+
+            if (parts.Count == 0)
+                return "";
+
+            return "trace: " + string.Join(" → ", parts);
+        }
+
+        private static string BuildCapabilityDetailSummary(AiExecutionLogEntry log)
+        {
+            if (log == null || !log.CapabilityAdjusted)
+                return "";
+
+            string requestedLabel = AiModelHelper.GetDefinition(log.CapabilityRequestedModelId).DisplayName;
+            string resolvedLabel = AiModelHelper.GetDefinition(log.CapabilityResolvedModelId).DisplayName;
+
+            var parts = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(log.CapabilityMissing))
+                parts.Add($"missing: {log.CapabilityMissing}");
+
+            if (!string.IsNullOrWhiteSpace(log.CapabilityRequired) &&
+                !string.Equals(log.CapabilityRequired, AiModelCapability.None.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"required: {log.CapabilityRequired}");
+            }
+
+            if (!string.Equals(requestedLabel, resolvedLabel, StringComparison.OrdinalIgnoreCase))
+                parts.Add($"{requestedLabel} → {resolvedLabel}");
+
+            if (log.CapabilityStreamingAdjusted)
+                parts.Add("streaming → off");
+
+            if (parts.Count == 0)
+                return "";
+
+            return "capability: " + string.Join(" / ", parts);
+        }
+
+        private static ExecutionLogState ToExecutionLogState(AiExecutionLogEntry entry)
+        {
+            return new ExecutionLogState(
+                NodeId: entry.NodeId ?? "",
+                StartedAtUtc: entry.StartedAtUtc,
+                EndedAtUtc: entry.EndedAtUtc,
+                DurationMs: entry.DurationMs,
+
+                SelectionMode: entry.SelectionMode ?? "",
+                Resolver: entry.Resolver ?? "",
+
+                RequestedModelId: entry.RequestedModelId ?? "",
+                PlannedModelId: entry.PlannedModelId ?? "",
+                ActualModelId: entry.ActualModelId ?? "",
+
+                TaskMode: entry.TaskMode ?? "",
+                Confidence: entry.Confidence,
+
+                ResolverReason: entry.ResolverReason ?? "",
+                ResolverKeywords: entry.ResolverKeywords?.ToList() ?? new List<string>(),
+
+                CapabilityAdjusted: entry.CapabilityAdjusted,
+                CapabilityReason: entry.CapabilityReason ?? "",
+
+                CapabilityRequestedModelId: entry.CapabilityRequestedModelId ?? "",
+                CapabilityResolvedModelId: entry.CapabilityResolvedModelId ?? "",
+                CapabilityRequired: entry.CapabilityRequired ?? "",
+                CapabilityMissing: entry.CapabilityMissing ?? "",
+                CapabilityStreamingAdjusted: entry.CapabilityStreamingAdjusted,
+
+                RuntimeFallbackUsed: entry.RuntimeFallbackUsed,
+                RuntimeFallbackSummary: entry.RuntimeFallbackSummary ?? "",
+
+                Success: entry.Success,
+                ErrorMessage: entry.ErrorMessage ?? "",
+
+                FallbackAttempts: entry.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
+            );
+        }
+
+        private static AiExecutionLogEntry ToExecutionLogEntry(ExecutionLogState state)
+        {
+            return new AiExecutionLogEntry
+            {
+                NodeId = state.NodeId ?? "",
+                StartedAtUtc = state.StartedAtUtc,
+                EndedAtUtc = state.EndedAtUtc,
+                DurationMs = state.DurationMs,
+
+                SelectionMode = state.SelectionMode ?? "",
+                Resolver = state.Resolver ?? "",
+
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(state.RequestedModelId),
+                PlannedModelId = AiModelHelper.NormalizeNodeModel(state.PlannedModelId),
+                ActualModelId = AiModelHelper.NormalizeNodeModel(state.ActualModelId),
+
+                TaskMode = state.TaskMode ?? "",
+                Confidence = state.Confidence,
+
+                ResolverReason = state.ResolverReason ?? "",
+                ResolverKeywords = state.ResolverKeywords?.ToList() ?? new List<string>(),
+
+                CapabilityAdjusted = state.CapabilityAdjusted,
+                CapabilityReason = state.CapabilityReason ?? "",
+
+                CapabilityRequestedModelId = AiModelHelper.NormalizeNodeModel(state.CapabilityRequestedModelId),
+                CapabilityResolvedModelId = AiModelHelper.NormalizeNodeModel(state.CapabilityResolvedModelId),
+                CapabilityRequired = state.CapabilityRequired ?? "",
+                CapabilityMissing = state.CapabilityMissing ?? "",
+                CapabilityStreamingAdjusted = state.CapabilityStreamingAdjusted,
+
+                RuntimeFallbackUsed = state.RuntimeFallbackUsed,
+                RuntimeFallbackSummary = state.RuntimeFallbackSummary ?? "",
+
+                Success = state.Success,
+                ErrorMessage = state.ErrorMessage ?? "",
+
+                FallbackAttempts = state.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
+            };
+        }
+
         private void ShowDecisionForNode(NodeControl node)
         {
             if (node == null)
@@ -183,14 +375,34 @@ namespace test
 
                 string taskSummary = $"{latest.TaskMode} / {latest.Confidence:0.00} / {latest.DurationMs}ms";
 
+                string reasonText = string.IsNullOrWhiteSpace(latest.ResolverReason)
+                    ? "-"
+                    : latest.ResolverReason;
+
+                string keywordText = BuildResolverKeywordSummary(latest);
+                if (string.IsNullOrWhiteSpace(keywordText))
+                    keywordText = "-";
+
+                var extraParts = new List<string>();
+
                 if (!string.IsNullOrWhiteSpace(latest.CapabilityReason))
-                    taskSummary += $" / {latest.CapabilityReason}";
+                    extraParts.Add(latest.CapabilityReason);
+
+                string capabilityDetail = BuildCapabilityDetailSummary(latest);
+                if (!string.IsNullOrWhiteSpace(capabilityDetail))
+                    extraParts.Add(capabilityDetail);
 
                 if (!string.IsNullOrWhiteSpace(latest.RuntimeFallbackSummary))
-                    taskSummary += $" / {latest.RuntimeFallbackSummary}";
+                    extraParts.Add(latest.RuntimeFallbackSummary);
+
+                string traceSummary = BuildFallbackTraceSummary(latest);
+                if (!string.IsNullOrWhiteSpace(traceSummary))
+                    extraParts.Add(traceSummary);
 
                 if (!latest.Success && !string.IsNullOrWhiteSpace(latest.ErrorMessage))
-                    taskSummary += $" / {latest.ErrorMessage}";
+                    extraParts.Add(latest.ErrorMessage);
+
+                string extraText = extraParts.Count == 0 ? "-" : string.Join(" / ", extraParts);
 
                 bool apiFallbackUsed =
                     latest.Resolver?.Contains("fallback", StringComparison.OrdinalIgnoreCase) == true;
@@ -210,6 +422,9 @@ namespace test
                     resolver: string.IsNullOrWhiteSpace(latest.Resolver) ? "-" : latest.Resolver,
                     model: modelLabel,
                     taskSummary: taskSummary,
+                    reason: reasonText,
+                    keywords: keywordText,
+                    extra: extraText,
                     capabilityAdjusted: latest.CapabilityAdjusted,
                     runtimeFallbackUsed: latest.RuntimeFallbackUsed,
                     apiFallbackUsed: apiFallbackUsed);
@@ -218,7 +433,8 @@ namespace test
             }
 
             // 沒有 execution log 時，顯示即時預估資訊
-            NodeTaskMode previewTask = ResolvePreviewTaskModeForNode(node);
+            NodeTaskModeResolution previewResolution = NodeTaskModeResolver.Resolve(node.GetTopText() ?? "");
+            NodeTaskMode previewTask = NodeTaskModeHelper.Normalize(previewResolution.Mode);
             string previewTaskName = NodeTaskModeHelper.ToDisplayName(previewTask);
 
             string requestedModel = GetNodeSelectedModel(node);
@@ -256,12 +472,27 @@ namespace test
 
             string previewSummary = $"{previewTaskName} / 尚未執行";
 
+            string previewReason = string.IsNullOrWhiteSpace(previewResolution.Reason)
+                ? "-"
+                : previewResolution.Reason;
+
+            string previewKeywords = "-";
+            if (previewResolution.MatchedKeywords != null && previewResolution.MatchedKeywords.Count > 0)
+            {
+                previewKeywords = "keywords: " + string.Join(
+                    ", ",
+                    previewResolution.MatchedKeywords.Distinct(StringComparer.OrdinalIgnoreCase));
+            }
+
             ApplyDecisionThemeByMode(
                 status: statusText,
                 mode: modeText,
                 resolver: resolverText,
                 model: previewModel,
                 taskSummary: previewSummary,
+                reason: previewReason,
+                keywords: previewKeywords,
+                extra: "-",
                 capabilityAdjusted: false,
                 runtimeFallbackUsed: false,
                 apiFallbackUsed: false);
@@ -423,6 +654,14 @@ namespace test
             return _executionLogService.GetLatest(node.Id.ToString());
         }
 
+        public void RefreshDecisionForNode(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            ShowDecisionForNode(node);
+        }
+
         public void ClearExecutionLogs(NodeControl node)
         {
             if (node == null)
@@ -504,47 +743,59 @@ namespace test
             if (!_isAutoModelSelectionEnabled)
             {
                 SetDecisionVisualization(
-                    status: "Manual",
-                    mode: "Manual",
-                    resolver: "Manual",
-                    model: "-",
-                    taskSummary: "-",
-                    statusBrushHex: "#EDEDED",
-                    statusTextBrushHex: "#404040");
+    status: "Manual",
+    mode: "Manual",
+    resolver: "Manual",
+    model: "-",
+    taskSummary: "-",
+    reason: "-",
+    keywords: "-",
+    extra: "-",
+    statusBrushHex: "#EDEDED",
+    statusTextBrushHex: "#404040");
                 return;
             }
 
             if (_isAdvancedAutoResolverEnabled)
             {
                 SetDecisionVisualization(
-                    status: "API Auto",
-                    mode: "Auto",
-                    resolver: "Responses API",
-                    model: "等待送出",
-                    taskSummary: "-",
-                    statusBrushHex: "#EAF4FF",
-                    statusTextBrushHex: "#245A9B");
+     status: "API Auto",
+     mode: "Auto",
+     resolver: "Responses API",
+     model: "等待送出",
+     taskSummary: "-",
+     reason: "-",
+     keywords: "-",
+     extra: "-",
+     statusBrushHex: "#EAF4FF",
+     statusTextBrushHex: "#245A9B");
                 return;
             }
 
             SetDecisionVisualization(
-                status: "Rule Auto",
-                mode: "Auto",
-                resolver: "Rules",
-                model: "等待送出",
-                taskSummary: "-",
-                statusBrushHex: "#EEF7EA",
-                statusTextBrushHex: "#2E6A2E");
+     status: "Rule Auto",
+     mode: "Auto",
+     resolver: "Rules",
+     model: "等待送出",
+     taskSummary: "-",
+     reason: "-",
+     keywords: "-",
+     extra: "-",
+     statusBrushHex: "#EEF7EA",
+     statusTextBrushHex: "#2E6A2E");
         }
 
         public void SetDecisionVisualization(
-            string status,
-            string mode,
-            string resolver,
-            string model,
-            string taskSummary,
-            string statusBrushHex = "#EDEDED",
-            string statusTextBrushHex = "#404040")
+    string status,
+    string mode,
+    string resolver,
+    string model,
+    string taskSummary,
+    string reason = "-",
+    string keywords = "-",
+    string extra = "-",
+    string statusBrushHex = "#EDEDED",
+    string statusTextBrushHex = "#404040")
         {
             Dispatcher.Invoke(() =>
             {
@@ -562,6 +813,15 @@ namespace test
 
                 if (DecisionTaskText != null)
                     DecisionTaskText.Text = string.IsNullOrWhiteSpace(taskSummary) ? "-" : taskSummary;
+
+                if (DecisionReasonText != null)
+                    DecisionReasonText.Text = string.IsNullOrWhiteSpace(reason) ? "-" : reason;
+
+                if (DecisionKeywordsText != null)
+                    DecisionKeywordsText.Text = string.IsNullOrWhiteSpace(keywords) ? "-" : keywords;
+
+                if (DecisionExtraText != null)
+                    DecisionExtraText.Text = string.IsNullOrWhiteSpace(extra) ? "-" : extra;
 
                 if (DecisionStatusBadge != null)
                     DecisionStatusBadge.Background = CreateBrush(statusBrushHex, "#EDEDED");
@@ -589,6 +849,9 @@ namespace test
     string resolver,
     string model,
     string taskSummary,
+    string reason,
+    string keywords,
+    string extra,
     bool capabilityAdjusted,
     bool runtimeFallbackUsed,
     bool apiFallbackUsed)
@@ -601,6 +864,9 @@ namespace test
                     resolver: resolver,
                     model: model,
                     taskSummary: taskSummary,
+                    reason: reason,
+                    keywords: keywords,
+                    extra: extra,
                     statusBrushHex: "#FFE9E9",
                     statusTextBrushHex: "#9B2C2C");
                 return;
@@ -614,6 +880,9 @@ namespace test
                     resolver: resolver,
                     model: model,
                     taskSummary: taskSummary,
+                    reason: reason,
+                    keywords: keywords,
+                    extra: extra,
                     statusBrushHex: "#FFF4E8",
                     statusTextBrushHex: "#9A5A00");
                 return;
@@ -628,6 +897,9 @@ namespace test
                     resolver: resolver,
                     model: model,
                     taskSummary: taskSummary,
+                    reason: reason,
+                    keywords: keywords,
+                    extra: extra,
                     statusBrushHex: "#EAF4FF",
                     statusTextBrushHex: "#245A9B");
                 return;
@@ -641,6 +913,9 @@ namespace test
                     resolver: resolver,
                     model: model,
                     taskSummary: taskSummary,
+                    reason: reason,
+                    keywords: keywords,
+                    extra: extra,
                     statusBrushHex: "#EEF7EA",
                     statusTextBrushHex: "#2E6A2E");
                 return;
@@ -652,6 +927,9 @@ namespace test
                 resolver: resolver,
                 model: model,
                 taskSummary: taskSummary,
+                reason: reason,
+                keywords: keywords,
+                extra: extra,
                 statusBrushHex: "#EDEDED",
                 statusTextBrushHex: "#404040");
         }
@@ -1533,16 +1811,28 @@ namespace test
                 }
             }
 
+            var logs = new List<ExecutionLogState>();
+
+            foreach (var child in MainCanvas.Children.OfType<NodeControl>())
+            {
+                var nodeLogs = GetExecutionLogs(child);
+                foreach (var log in nodeLogs)
+                {
+                    logs.Add(ToExecutionLogState(log));
+                }
+            }
+
             var state = new AppState(
-                DateTime.Now,
-                _initialNode?.Id.ToString(),
-                nodes,
-                conns,
-                atts,
-                FileNameLocked: _fileNameLockedByUser,
-                AutoModelSelectionEnabled: _isAutoModelSelectionEnabled,
-                AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled
-            );
+    DateTime.Now,
+    _initialNode?.Id.ToString(),
+    nodes,
+    conns,
+    atts,
+    logs,
+    FileNameLocked: _fileNameLockedByUser,
+    AutoModelSelectionEnabled: _isAutoModelSelectionEnabled,
+    AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled
+);
 
             if (string.IsNullOrEmpty(_currentFilePath))
                 _currentFilePath = System.IO.Path.Combine(SavesDir, DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".json");
@@ -1591,6 +1881,15 @@ namespace test
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
             _nodeTaskModesById.Clear();
+            _executionLogService.ClearAll();
+
+            foreach (var logState in state.ExecutionLogs ?? new List<ExecutionLogState>())
+            {
+                if (string.IsNullOrWhiteSpace(logState.NodeId))
+                    continue;
+
+                AddExecutionLog(ToExecutionLogEntry(logState));
+            }
 
             foreach (var a in state.Attachments ?? new List<AttachmentState>())
             {
@@ -1688,6 +1987,7 @@ namespace test
             _initialNode = null;
             _nodeModelsById.Clear();
             _nodeTaskModesById.Clear();
+            _executionLogService.ClearAll();
 
             _editingNode = null;
             _editingReason = EditReason.None;

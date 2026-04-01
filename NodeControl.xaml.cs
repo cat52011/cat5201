@@ -70,7 +70,7 @@ namespace test
         private static readonly Duration HoverEnterDuration = new Duration(TimeSpan.FromMilliseconds(180));
         private static readonly Duration HoverLeaveDuration = new Duration(TimeSpan.FromMilliseconds(220));
 
-
+        public List<ExecutionLogEntry> ExecutionLogs { get; } = new();
         private sealed class AttachmentVm
         {
             public string FileName { get; set; } = "";

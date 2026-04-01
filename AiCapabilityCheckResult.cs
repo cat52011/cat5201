@@ -1,4 +1,6 @@
-﻿namespace test
+﻿using System.Collections.Generic;
+
+namespace test
 {
     public sealed class AiCapabilityCheckResult
     {
@@ -11,5 +13,10 @@
         public bool StreamingAllowed { get; init; } = true;
 
         public string Reason { get; init; } = "";
+
+        public AiModelCapability RequiredCapabilities { get; init; } = AiModelCapability.None;
+        public AiModelCapability MissingCapabilities { get; init; } = AiModelCapability.None;
+
+        public IReadOnlyList<string> ReasonParts { get; init; } = new List<string>();
     }
 }

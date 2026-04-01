@@ -17,6 +17,13 @@ namespace test
         private readonly MainWindow _main;
         private readonly AiAutoModelResolverService _autoResolver;
 
+        public NodeService(AiServiceRouter router, MainWindow main)
+        {
+            _router = router;
+            _main = main;
+            _autoResolver = new AiAutoModelResolverService(router);
+        }
+
         private const int MainReplyMaxOutputTokens = 8000;
         private const int ContinuationMaxRounds = 5;
         private const int SegmentDiscoveryMaxTokens = 1200;
@@ -65,6 +72,9 @@ namespace test
 
             public double Confidence { get; set; }
 
+            public string ResolverReason { get; set; } = "";
+            public IReadOnlyList<string> ResolverKeywords { get; set; } = Array.Empty<string>();
+
             public bool UsedApiResolver { get; set; }
             public bool UsedFallbackToRules { get; set; }
 
@@ -73,23 +83,17 @@ namespace test
             public bool CapabilityAdjusted { get; set; }
             public string CapabilityReason { get; set; } = "";
 
+            public string CapabilityRequestedModelId { get; set; } = "";
+            public string CapabilityResolvedModelId { get; set; } = "";
+            public AiModelCapability CapabilityRequired { get; set; } = AiModelCapability.None;
+            public AiModelCapability CapabilityMissing { get; set; } = AiModelCapability.None;
+            public bool CapabilityStreamingAdjusted { get; set; }
+
             public bool RuntimeFallbackUsed { get; set; }
             public string RuntimeFallbackSummary { get; set; } = "";
 
-            public string SelectionModeLabel =>
-                UsedApiResolver || _mainRefHack == null
-                    ? ""
-                    : "";
-
-            // 不用這個，下面會用方法算，保留空白避免你誤用
-            private MainWindow? _mainRefHack;
-        }
-
-        public NodeService(AiServiceRouter router, MainWindow main)
-        {
-            _router = router;
-            _main = main;
-            _autoResolver = new AiAutoModelResolverService(router);
+            public IReadOnlyList<AiFallbackAttempt> RuntimeFallbackAttempts { get; set; }
+                = Array.Empty<AiFallbackAttempt>();
         }
 
         private static string GetRuntimeModelLabel(string model)
@@ -475,6 +479,8 @@ $@"
                     ResolverLabel = "Manual",
                     StatusLabel = "Manual",
                     Confidence = 1.0,
+                    ResolverReason = manualTask.Reason,
+                    ResolverKeywords = manualTask.MatchedKeywords ?? Array.Empty<string>(),
                     UsedApiResolver = false,
                     UsedFallbackToRules = false,
                     UseStreaming = true
@@ -505,6 +511,8 @@ $@"
                         ResolverLabel = "Responses API",
                         StatusLabel = "API Auto",
                         Confidence = resolution.Confidence,
+                        ResolverReason = "由 API resolver 根據輸入內容判定模型與任務模式",
+                        ResolverKeywords = Array.Empty<string>(),
                         UsedApiResolver = true,
                         UsedFallbackToRules = false,
                         UseStreaming = true
@@ -525,6 +533,8 @@ $@"
                         ResolverLabel = "Rules (fallback)",
                         StatusLabel = "API Auto",
                         Confidence = 0.30,
+                        ResolverReason = fallbackTask.Reason,
+                        ResolverKeywords = fallbackTask.MatchedKeywords ?? Array.Empty<string>(),
                         UsedApiResolver = true,
                         UsedFallbackToRules = true,
                         UseStreaming = true
@@ -544,7 +554,9 @@ $@"
                 TaskMode = ruleTask.Mode,
                 ResolverLabel = "Rules",
                 StatusLabel = "Rule Auto",
-                Confidence = 0.80,
+                Confidence = ruleTask.Confidence,
+                ResolverReason = ruleTask.Reason,
+                ResolverKeywords = ruleTask.MatchedKeywords ?? Array.Empty<string>(),
                 UsedApiResolver = false,
                 UsedFallbackToRules = false,
                 UseStreaming = true
@@ -580,8 +592,15 @@ $@"
             decision.RequestedModelId = check.RequestedModelId;
             decision.ModelId = check.ResolvedModelId;
             decision.UseStreaming = check.StreamingAllowed;
+
             decision.CapabilityAdjusted = check.ModelAdjusted || check.StreamingAdjusted;
             decision.CapabilityReason = check.Reason ?? "";
+
+            decision.CapabilityRequestedModelId = check.RequestedModelId;
+            decision.CapabilityResolvedModelId = check.ResolvedModelId;
+            decision.CapabilityRequired = check.RequiredCapabilities;
+            decision.CapabilityMissing = check.MissingCapabilities;
+            decision.CapabilityStreamingAdjusted = check.StreamingAdjusted;
 
             if (decision.CapabilityAdjusted)
             {
@@ -609,6 +628,7 @@ $@"
 
             decision.RuntimeFallbackUsed = execution.UsedFallback;
             decision.RuntimeFallbackSummary = execution.Summary ?? "";
+            decision.RuntimeFallbackAttempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>();
 
             return decision;
         }
@@ -1909,13 +1929,9 @@ $@"你正在處理一個節點式研究任務。
     NodeControl node,
     string topText)
         {
-            // 1. 用 resolver 判斷任務模式
             var resolution = NodeTaskModeResolver.Resolve(topText);
-
-            // 2. 正規化（保險）
             var normalized = NodeTaskModeHelper.Normalize(resolution.Mode);
 
-            // 3. 寫回 node（這很重要，不然 UI 不會同步）
             _main.SetNodeTaskMode(node, normalized);
 
             return new NodeTaskModeResolution
@@ -1926,6 +1942,7 @@ $@"你正在處理一個節點式研究任務。
                 MatchedKeywords = resolution.MatchedKeywords
             };
         }
+
         private Task<AiRequest> BuildAiRequestAsync(
             NodeControl currentNode,
             string model,
@@ -1969,12 +1986,12 @@ $@"你正在處理一個節點式研究任務。
         }
 
         private AiExecutionLogEntry BuildExecutionLogEntry(
-            NodeControl node,
-            ExecutionDecision decision,
-            DateTime startedAtUtc,
-            DateTime endedAtUtc,
-            bool success,
-            string errorMessage = "")
+    NodeControl node,
+    ExecutionDecision decision,
+    DateTime startedAtUtc,
+    DateTime endedAtUtc,
+    bool success,
+    string errorMessage = "")
         {
             string requestedModel = string.IsNullOrWhiteSpace(decision.RequestedModelId)
                 ? decision.ModelId
@@ -2007,11 +2024,29 @@ $@"你正在處理一個節點式研究任務。
                 TaskMode = NodeTaskModeHelper.ToStorageValue(decision.TaskMode),
                 Confidence = decision.Confidence,
 
+                ResolverReason = decision.ResolverReason ?? "",
+                ResolverKeywords = decision.ResolverKeywords ?? Array.Empty<string>(),
+
                 CapabilityAdjusted = decision.CapabilityAdjusted,
                 CapabilityReason = decision.CapabilityReason ?? "",
 
+                CapabilityRequestedModelId = AiModelHelper.NormalizeNodeModel(
+                    string.IsNullOrWhiteSpace(decision.CapabilityRequestedModelId)
+                        ? requestedModel
+                        : decision.CapabilityRequestedModelId),
+
+                CapabilityResolvedModelId = AiModelHelper.NormalizeNodeModel(
+                    string.IsNullOrWhiteSpace(decision.CapabilityResolvedModelId)
+                        ? plannedModel
+                        : decision.CapabilityResolvedModelId),
+
+                CapabilityRequired = decision.CapabilityRequired.ToString(),
+                CapabilityMissing = decision.CapabilityMissing.ToString(),
+                CapabilityStreamingAdjusted = decision.CapabilityStreamingAdjusted,
+
                 RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
                 RuntimeFallbackSummary = decision.RuntimeFallbackSummary ?? "",
+                FallbackAttempts = decision.RuntimeFallbackAttempts ?? Array.Empty<AiFallbackAttempt>(),
 
                 Success = success,
                 ErrorMessage = errorMessage ?? ""
@@ -2019,11 +2054,11 @@ $@"你正在處理一個節點式研究任務。
         }
 
         private void CommitExecutionLog(
-            NodeControl node,
-            ExecutionDecision decision,
-            DateTime startedAtUtc,
-            bool success,
-            string errorMessage = "")
+    NodeControl node,
+    ExecutionDecision decision,
+    DateTime startedAtUtc,
+    bool success,
+    string errorMessage = "")
         {
             var endedAtUtc = DateTime.UtcNow;
 
@@ -2036,7 +2071,11 @@ $@"你正在處理一個節點式研究任務。
                 errorMessage);
 
             _main.AddExecutionLog(entry);
+
+            // 重要：log 寫入後，立刻改用 log 版本重新刷新右上角決策窗
+            _main.RefreshDecisionForNode(node);
         }
+
         private AiRouteInfo PrepareRoute(string? selectedModel)
         {
             var route = _router.GetRouteInfo(selectedModel);
