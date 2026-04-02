@@ -41,6 +41,8 @@ namespace test
         private NodeControl? _hoveredDecisionNode;
         private NodeControl? _lastDecisionNode;
 
+        private readonly NodeModelSelectionService _nodeModelSelection = new();
+
         public enum EditReason
         {
             None = 0,
@@ -58,6 +60,28 @@ namespace test
             public string StartThumb = "ThumbTL";
             public NodeControl EndNode = null!;
             public string EndThumb = "ThumbTR";
+        }
+
+        public sealed class ContextConnectionInfo
+        {
+            public NodeControl StartNode { get; init; } = null!;
+            public string StartThumb { get; init; } = "ThumbTL";
+            public NodeControl EndNode { get; init; } = null!;
+            public string EndThumb { get; init; } = "ThumbTR";
+        }
+
+        public IReadOnlyList<ContextConnectionInfo> GetConnectionsForContext()
+        {
+            return _connections
+                .Where(c => c.StartNode != null && c.EndNode != null)
+                .Select(c => new ContextConnectionInfo
+                {
+                    StartNode = c.StartNode,
+                    StartThumb = c.StartThumb,
+                    EndNode = c.EndNode,
+                    EndThumb = c.EndThumb
+                })
+                .ToList();
         }
 
         private readonly List<Connection> _connections = new();
@@ -944,11 +968,9 @@ namespace test
             string text = topText ?? node?.GetTopText() ?? "";
             var resolution = NodeTaskModeResolver.Resolve(text);
 
-            string recommended = NodeTaskRoutingRegistry.RecommendModel(
-                resolution.Mode,
+            return _nodeModelSelection.ResolveRuleAutoModel(
+                NodeTaskModeHelper.Normalize(resolution.Mode),
                 manualModel);
-
-            return AiModelHelper.NormalizeNodeModel(recommended);
         }
 
         public bool CanUserManuallySelectModel()
