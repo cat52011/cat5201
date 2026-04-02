@@ -399,21 +399,26 @@ namespace test
                 return;
             }
 
-            bool committedMissing = string.IsNullOrWhiteSpace(_committedModelId) ||
-                                    string.Equals(_committedModelId, AiModels.DefaultNodeModel, StringComparison.OrdinalIgnoreCase);
-
-            bool editingMissing = string.IsNullOrWhiteSpace(_editingModelId) ||
-                                  string.Equals(_editingModelId, AiModels.DefaultNodeModel, StringComparison.OrdinalIgnoreCase);
+            bool committedMissing = string.IsNullOrWhiteSpace(_committedModelId);
+            bool editingMissing = string.IsNullOrWhiteSpace(_editingModelId);
 
             if (committedMissing)
             {
-                string effective = _parent.GetEffectiveNodeModel(this, TopEditor?.Text ?? "");
-                _committedModelId = NormalizeSafeModelId(effective);
+                string stored = _parent.GetNodeSelectedModel(this);
+                _committedModelId = NormalizeSafeModelId(stored);
+            }
+            else
+            {
+                _committedModelId = NormalizeSafeModelId(_committedModelId);
             }
 
             if (editingMissing)
             {
                 _editingModelId = _committedModelId;
+            }
+            else
+            {
+                _editingModelId = NormalizeSafeModelId(_editingModelId);
             }
         }
 

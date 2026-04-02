@@ -1883,32 +1883,8 @@ namespace test
             _nodeTaskModesById.Clear();
             _executionLogService.ClearAll();
 
-            foreach (var logState in state.ExecutionLogs ?? new List<ExecutionLogState>())
-            {
-                if (string.IsNullOrWhiteSpace(logState.NodeId))
-                    continue;
-
-                AddExecutionLog(ToExecutionLogEntry(logState));
-            }
-
-            foreach (var a in state.Attachments ?? new List<AttachmentState>())
-            {
-                if (!Guid.TryParse(a.NodeId, out var gid)) continue;
-
-                if (!_attachmentsByNode.TryGetValue(gid, out var list))
-                {
-                    list = new List<AttachmentInfo>();
-                    _attachmentsByNode[gid] = list;
-                }
-
-                list.Add(new AttachmentInfo
-                {
-                    FileName = a.FileName ?? "",
-                    RelativePath = a.RelativePath ?? "",
-                    MimeType = string.IsNullOrWhiteSpace(a.MimeType) ? "application/octet-stream" : a.MimeType,
-                    Kind = string.IsNullOrWhiteSpace(a.Kind) ? "file" : a.Kind
-                });
-            }
+            _hoveredDecisionNode = null;
+            _lastDecisionNode = null;
 
             _editingNode = null;
             _editingReason = EditReason.None;
@@ -1917,6 +1893,33 @@ namespace test
             try
             {
                 ClearAll();
+
+                foreach (var a in state.Attachments ?? new List<AttachmentState>())
+                {
+                    if (!Guid.TryParse(a.NodeId, out var gid)) continue;
+
+                    if (!_attachmentsByNode.TryGetValue(gid, out var list))
+                    {
+                        list = new List<AttachmentInfo>();
+                        _attachmentsByNode[gid] = list;
+                    }
+
+                    list.Add(new AttachmentInfo
+                    {
+                        FileName = a.FileName ?? "",
+                        RelativePath = a.RelativePath ?? "",
+                        MimeType = string.IsNullOrWhiteSpace(a.MimeType) ? "application/octet-stream" : a.MimeType,
+                        Kind = string.IsNullOrWhiteSpace(a.Kind) ? "file" : a.Kind
+                    });
+                }
+
+                foreach (var logState in state.ExecutionLogs ?? new List<ExecutionLogState>())
+                {
+                    if (string.IsNullOrWhiteSpace(logState.NodeId))
+                        continue;
+
+                    AddExecutionLog(ToExecutionLogEntry(logState));
+                }
 
                 var idMap = new Dictionary<string, NodeControl>();
 
@@ -1931,8 +1934,11 @@ namespace test
                     MainCanvas.Children.Add(node);
                     HookNode(node);
 
-                    _nodeModelsById[node.Id] = _aiRouter.NormalizeNodeModel(n.NodeModel);
+                    string loadedModel = _aiRouter.NormalizeNodeModel(n.NodeModel);
+                    _nodeModelsById[node.Id] = loadedModel;
                     _nodeTaskModesById[node.Id] = ParseNodeTaskMode(n.TaskMode);
+
+                    node.SetCommittedModelId(loadedModel, syncEditingModel: true);
 
                     node.SetTopText(n.TopText ?? "");
                     node.SetBottomText(n.BottomText ?? "");
@@ -1976,7 +1982,13 @@ namespace test
                 RefreshFileList();
                 SelectFileInList(path);
                 RefreshAllNodeModelSelectionUIs();
+
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    RestoreDecisionPanelAfterLoad();
+                }), DispatcherPriority.Loaded);
             }
+            
         }
 
         private void ClearAll()
@@ -2481,6 +2493,36 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         {
             foreach (var c in _connections)
                 yield return (c.StartNode, c.StartThumb, c.EndNode, c.EndThumb);
+        }
+
+        private void RestoreDecisionPanelAfterLoad()
+        {
+            NodeControl? target = null;
+
+            if (_lastDecisionNode != null && MainCanvas.Children.Contains(_lastDecisionNode))
+            {
+                target = _lastDecisionNode;
+            }
+            else if (_hoveredDecisionNode != null && MainCanvas.Children.Contains(_hoveredDecisionNode))
+            {
+                target = _hoveredDecisionNode;
+            }
+            else if (_initialNode != null && MainCanvas.Children.Contains(_initialNode))
+            {
+                target = _initialNode;
+            }
+            else
+            {
+                target = MainCanvas.Children.OfType<NodeControl>().FirstOrDefault();
+            }
+
+            _hoveredDecisionNode = null;
+            _lastDecisionNode = target;
+
+            if (target != null)
+                ShowDecisionForNode(target);
+            else
+                UpdateDecisionPanelForCurrentMode();
         }
 
         private class SimpleInputDialog : Window

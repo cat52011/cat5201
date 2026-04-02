@@ -1,0 +1,199 @@
+{
+  "CreatedAt": "2026-04-02T11:16:36.7120839+11:00",
+  "InitialNodeId": "49887c5a-99d9-4455-b20f-0ac9526ca5f4",
+  "Nodes": [
+    {
+      "Id": "49887c5a-99d9-4455-b20f-0ac9526ca5f4",
+      "X": 262.79999999999995,
+      "Y": 343.6000000000001,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4F60\u662F\u4EC0\u9EBC\u6A21\u578B",
+      "BottomText": "\u6211\u662F Claude Sonnet 4.6\uFF0C\u7531 Anthropic \u958B\u767C\u7684\u8A9E\u8A00\u6A21\u578B\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "claude-sonnet-4-6",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "07488738-3783-4625-8669-58ec2b8b83f4",
+      "X": 749.6,
+      "Y": 57.60000000000002,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u7528\u4E00\u53E5\u8A71\u5206\u6790\u6628\u5929\u7F8E\u80A1\u6F32\u7684\u539F\u56E0\r\n",
+      "BottomText": "\u6628\u5929\u7F8E\u80A1\u4E09\u5927\u6307\u6578\u5168\u7DDA\u62C9\u5347\uFF0C\u4E3B\u8981\u539F\u56E0\u662F\u5E02\u5834\u60C5\u7DD2\u63D0\u632F\uFF0C\u9053\u74CA\u6F32\u903E600-700\u9EDE\u3001\u7D0D\u6307\u5927\u6F322%\u3001\u6A19\u666E500\u6F321.64%\uFF0C\u53D7\u73FE\u8CA8\u9EC3\u91D1\u91CD\u56DE4600\u7F8E\u5143/\u76CE\u53F8\u7B49\u5927\u5B97\u5546\u54C1\u4E0A\u6F32\u53CA\u7F8E\u5143\u6307\u6578\u4E0B\u632B\u5F71\u97FF\u3002[1][3]\n\u79D1\u6280\u80A1\u8CB7\u6C23\u5F37\u52C1\u5E36\u52D5\u6A19\u666E500\u6307\u6578\u4E0A\u6F32\uFF0C\u4E3B\u8981\u53D7\u6295\u8CC7\u4EBA\u62BC\u6CE8\u4EBA\u5DE5\u667A\u6167\u6210\u9577\u53CA\u806F\u6E96\u6703\u6301\u7E8C\u964D\u606F\u9810\u671F\u5F71\u97FF\uFF0C\u5118\u7BA1\u9762\u81E8\u653F\u5E9C\u505C\u64FA\u53CA\u9DF9\u6D3E\u8A00\u8AD6\u7591\u616E\u3002[1]",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "pplx-sonar",
+      "TaskMode": "Research"
+    },
+    {
+      "Id": "7d94e64a-b6b9-451d-ad46-177ccf18a330",
+      "X": 711.2,
+      "Y": 539.2,
+      "Width": 748.8772002494375,
+      "Height": 600.7740481296992,
+      "TopText": "\u5206\u6790\u9019\u5F35\u5716\u7247",
+      "BottomText": "\u9019\u662F\u4E00\u5F35\u300A\u751F\u6B7B\u72D9\u64CA\u300B\u904A\u6232\u5927\u5EF3\uFF0F\u623F\u9593\u5217\u8868\u7684\u622A\u5716\uFF0C\u7248\u672C\u986F\u793A\u70BA **V1.0.1.475**\uFF0C\u4F3A\u670D\u5668\u5728\u5DE6\u4E0A\u89D2\u6A19\u793A\u70BA **\u300Ccat5201 \u806F\u901A\u4E00\u5340\u300D**\uFF0C\u76EE\u524D\u767B\u5165\u89D2\u8272\u540D\u7A31\u4E5F\u662F **cat5201**\uFF0C\u7B49\u7D1A **Lv.141**\uFF0C\u8ECD\u929C\u986F\u793A\u70BA **\u300C\u528D\u768741\u7D1A\u300D**\u3002\n\n\u756B\u9762\u76EE\u524D\u505C\u7559\u5728\u4E0A\u65B9\u5C0E\u89BD\u5217\u7684 **\u300C\u7CBE\u5F69\u6D3B\u52D5\u300D** \u5206\u9801\uFF0C\u4F46\u4E2D\u592E\u5BE6\u969B\u986F\u793A\u7684\u662F\u53EF\u52A0\u5165\u7684\u5C0D\u6230\u623F\u9593\u6E05\u55AE\u3002\u53F3\u5074\u9078\u4E2D\u7684\u623F\u9593\u5730\u5716\u662F **\u300C\u6C99\u6F20II\u300D**\uFF0C\u6A21\u5F0F\u70BA **\u300C\u7206\u7834\u6230\u300D**\uFF0C\u623F\u9593\u4EBA\u6578 **16/16**\uFF0C\u4E5F\u5C31\u662F\u5DF2\u6EFF\u623F\u3002\u5176\u9918\u8A2D\u5B9A\u53EF\u8FA8\u8B58\u70BA\uFF1A\n- \u500B\u4EBA\u6230\uFF1A\u95DC\u9589\uFF0F\u672A\u555F\u7528\n- \u5B50\u6A21\u5F0F\uFF1A\u666E\u901A\n- \u958B\u653E\u6578\uFF1A40\u4EBA\n- \u5730\u5716\u9078\u64C7\uFF1A\u6C99\u6F20II\n\n\u53F3\u4E0B\u89D2\u52FE\u9078\u9805\u76EE\u53EF\u770B\u5230\uFF1A\n- **\u624B\u96F7\u4E0D\u50B7\u5BB3\u968A\u53CB**\n- **\u5141\u8A31\u5FEB\u901F\u958B\u59CB**\n- **\u958B\u555F\u89C0\u6230\u6A21\u5F0F**\n\n\u4E2D\u592E\u623F\u9593\u5217\u8868\u662F\u5178\u578B\u7684\u7D05\u85CD\u96D9\u65B9\u5C0D\u6230\u623F\u914D\u7F6E\uFF0C\u5DE6\u5074\u7D05\u968A\u3001\u53F3\u5074\u85CD\u968A\uFF0C\u5404\u81EA\u5217\u51FA\u73A9\u5BB6\u540D\u7A31\u8207\u6BB5\u4F4D\uFF0F\u5FBD\u7AE0\u3002\u756B\u9762\u4E2D\u53EF\u898B\u85CD\u968A\u6709 **\u300Ccat5201\u300D**\uFF0C\u8868\u793A\u9019\u500B\u5E33\u865F\u5DF2\u5728\u623F\u5167\u85CD\u65B9\u5F85\u547D\u3002\u4E0B\u65B9\u6309\u9215\u6709 **\u300C\u8E22\u51FA\u300D**\u3001**\u300C\u62DB\u52DF\u300D**\u3001**\u300C\u52A0\u5165\u6E38\u6232\u300D**\uFF0C\u5176\u4E2D\u300C\u52A0\u5165\u6E38\u6232\u300D\u662F\u6700\u9192\u76EE\u7684\u4E3B\u64CD\u4F5C\u9375\u3002\n\n\u5DE6\u5074\u662F\u89D2\u8272\u5C55\u793A\u5340\uFF0C\u4F7F\u7528\u7684\u662F\u4E00\u540D\u504F\u79D1\u5E7B\u98A8\u683C\u7684\u5973\u6027\u89D2\u8272\uFF0C\u642D\u914D\u7DA0\u9ED1\u8272\u6A5F\u68B0\u7FFC\uFF0F\u88DD\u7F6E\u3002\u89D2\u8272\u4E0B\u65B9\u6709 **\u300C\u89D2\u8272\u9078\u64C7\u300D** \u6309\u9215\u3002\u518D\u5F80\u4E0B\u662F\u80CC\u5305\u5FEB\u6377\u6B04\uFF0C\u53EF\u770B\u5230\u76EE\u524D\u88DD\u5099\u4E2D\u81F3\u5C11\u6709\uFF1A\n- \u4E00\u628A\u7D2B\u9ED1\u914D\u8272\u4E3B\u6B66\u5668\n- \u4E00\u628A\u8FD1\u6230\u6B66\u5668\n- \u4E00\u500B\u6295\u64F2\uFF0F\u9053\u5177\u6B04\u4F4D  \n\u5176\u4E2D\u591A\u500B\u88DD\u5099\u89D2\u843D\u6A19\u793A **\u300C\u6C38\u4E45\u300D**\uFF0C\u4EE3\u8868\u4E0D\u662F\u9650\u6642\u9053\u5177\u3002\n\n\u5DE6\u4E0B\u804A\u5929\u5340\u53EF\u770B\u5230\u7CFB\u7D71\u8207\u623F\u9593\u8A0A\u606F\uFF0C\u6642\u9593\u5927\u7D04\u662F **2026/3/28 19:32\u201319:33**\u3002\u8A0A\u606F\u5167\u5BB9\u5305\u542B\uFF1A\n- \u7CFB\u7D71\u516C\u544A\u985E\u8A0A\u606F\n- \u73A9\u5BB6 **[vip9][\u6211]** \u767C\u8A00\uFF1A\u300C\u6210\u529F\u6642\u904B\u56DB\u5468\u5E74\u300D\n- \u540C\u5E33\u865F\u518D\u6B21\u767C\u8A00\uFF1A\u300C\u6210\u5C31\u7FA4\u56DB\u5468\u5E74\u300D\n\n\u53F3\u5074\u5782\u76F4\u529F\u80FD\u5217\u5247\u5305\u542B\u591A\u500B\u5165\u53E3\uFF0C\u4F8B\u5982\uFF1A\n- **\u50B3\u8AAA\u88DD\u9020**\n- **\u7389\u77F3\u8ECD\u9700**\n- **\u9644\u9B54\u5DE5\u5EE0**\n- **\u85AA\u706B\u76F8\u50B3**\n- **\u804A\u5929**\n- **\u6700\u65B0\u8CC7\u8A0A**\n- **\u6BCF\u65E5\u798F\u5229**\n- **\u7D81\u5B9A\u624B\u6A5F**\n- **\u8D85\u7D1A\u7528\u6236**\n- **\u8C46\u5A03\u52F3\u7AE0**\n\n\u6574\u9AD4\u4F86\u770B\uFF0C\u9019\u5F35\u5716\u53CD\u6620\u7684\u662F\u4E00\u500B\u9AD8\u7B49\u7D1A\u73A9\u5BB6\u5E33\u865F\u5728\u300A\u751F\u6B7B\u72D9\u64CA\u300B\u623F\u9593\u5927\u5EF3\u4E2D\u7684\u5F85\u6A5F\u756B\u9762\uFF0C\u91CD\u9EDE\u8CC7\u8A0A\u662F\uFF1A**\u5E33\u865F\u7B49\u7D1A\u9AD8\u3001\u5DF2\u9032\u5165\u7206\u7834\u6A21\u5F0F\u623F\u9593\u3001\u5730\u5716\u70BA\u6C99\u6F20II\u3001\u623F\u9593\u5DF2\u6EFF\u54E1\u3001\u88DD\u5099\u4E2D\u6709\u591A\u4EF6\u6C38\u4E45\u6B66\u5668\uFF0F\u9053\u5177**\u3002\u5982\u679C\u4F60\u7684\u76EE\u7684\u662F\u8FA8\u8B58\u5E33\u865F\u72C0\u614B\u6216\u904A\u6232\u60C5\u5883\uFF0C\u9019\u5F35\u5716\u6700\u6838\u5FC3\u7684\u8A0A\u606F\u5C31\u662F\u300C\u73A9\u5BB6 cat5201 \u6B63\u5728\u806F\u901A\u4E00\u5340\u3001\u4EE5\u9AD8\u7B49\u7D1A\u5E33\u865F\u53C3\u8207\u4E00\u5834\u6EFF\u54E1\u7684\u7206\u7834\u623F\u300D\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Research"
+    },
+    {
+      "Id": "e126ce51-3361-4caa-82ad-0e96ef28b67e",
+      "X": 1544.8699244557606,
+      "Y": 422.21568811488015,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "",
+      "BottomText": "",
+      "TopLocked": false,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Chat"
+    }
+  ],
+  "Connections": [
+    {
+      "StartId": "49887c5a-99d9-4455-b20f-0ac9526ca5f4",
+      "EndId": "07488738-3783-4625-8669-58ec2b8b83f4",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "49887c5a-99d9-4455-b20f-0ac9526ca5f4",
+      "EndId": "7d94e64a-b6b9-451d-ad46-177ccf18a330",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "7d94e64a-b6b9-451d-ad46-177ccf18a330",
+      "EndId": "e126ce51-3361-4caa-82ad-0e96ef28b67e",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    }
+  ],
+  "Attachments": [
+    {
+      "NodeId": "7d94e64a-b6b9-451d-ad46-177ccf18a330",
+      "FileName": "\u87A2\u5E55\u64F7\u53D6\u756B\u9762 2026-03-28 223333.png",
+      "RelativePath": "\u8A62\u554FAI\u6A21\u578B\u8EAB\u4EFD\\fe7ec0bb4ca344a8ba680cddb29edb24_\u87A2\u5E55\u64F7\u53D6\u756B\u9762 2026-03-28 223333.png",
+      "MimeType": "image/png",
+      "Kind": "image"
+    }
+  ],
+  "ExecutionLogs": [
+    {
+      "NodeId": "49887c5a-99d9-4455-b20f-0ac9526ca5f4",
+      "StartedAtUtc": "2026-04-02T00:14:32.1157385Z",
+      "EndedAtUtc": "2026-04-02T00:14:34.490323Z",
+      "DurationMs": 2374,
+      "SelectionMode": "Manual",
+      "Resolver": "Manual",
+      "RequestedModelId": "claude-sonnet-4-6",
+      "PlannedModelId": "claude-sonnet-4-6",
+      "ActualModelId": "claude-sonnet-4-6",
+      "TaskMode": "Chat",
+      "Confidence": 1,
+      "ResolverReason": "\u672A\u547D\u4E2D\u7279\u5B9A\u4EFB\u52D9\u898F\u5247\uFF0C\u4F7F\u7528\u9810\u8A2D Chat",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "claude-sonnet-4-6",
+      "CapabilityResolvedModelId": "claude-sonnet-4-6",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "claude-sonnet-4-6",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "07488738-3783-4625-8669-58ec2b8b83f4",
+      "StartedAtUtc": "2026-04-02T00:14:53.7388222Z",
+      "EndedAtUtc": "2026-04-02T00:14:58.4880837Z",
+      "DurationMs": 4749,
+      "SelectionMode": "Auto",
+      "Resolver": "Rules",
+      "RequestedModelId": "pplx-sonar",
+      "PlannedModelId": "pplx-sonar",
+      "ActualModelId": "pplx-sonar",
+      "TaskMode": "Research",
+      "Confidence": 0.9,
+      "ResolverReason": "\u5075\u6E2C\u5230\u67E5\u8B49/\u641C\u5C0B/\u6700\u65B0\u8CC7\u8A0A\u9700\u6C42",
+      "ResolverKeywords": [
+        "\u5206\u6790"
+      ],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "pplx-sonar",
+      "CapabilityResolvedModelId": "pplx-sonar",
+      "CapabilityRequired": "Search",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "pplx-sonar",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "7d94e64a-b6b9-451d-ad46-177ccf18a330",
+      "StartedAtUtc": "2026-04-02T00:15:36.8941111Z",
+      "EndedAtUtc": "2026-04-02T00:15:57.0328211Z",
+      "DurationMs": 20138,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API \u002B Capability Guard",
+      "RequestedModelId": "pplx-sonar",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Research",
+      "Confidence": 0.72,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": true,
+      "CapabilityReason": "Images \u4E0D\u652F\u63F4",
+      "CapabilityRequestedModelId": "pplx-sonar",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "Images, Search",
+      "CapabilityMissing": "Images",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    }
+  ],
+  "FileNameLocked": false,
+  "AutoModelSelectionEnabled": true,
+  "AdvancedAutoResolverEnabled": true
+}
