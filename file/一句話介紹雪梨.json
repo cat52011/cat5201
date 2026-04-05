@@ -1,0 +1,275 @@
+{
+  "CreatedAt": "2026-04-05T12:58:06.9866237+10:00",
+  "InitialNodeId": "af384972-e7d9-4494-9c6f-79ff4af6c0b8",
+  "Nodes": [
+    {
+      "Id": "af384972-e7d9-4494-9c6f-79ff4af6c0b8",
+      "X": 618,
+      "Y": 220.40000000000003,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u8ACB\u7528\u4E00\u53E5\u4E2D\u6587\u4ECB\u7D39\u96EA\u68A8",
+      "BottomText": "\u96EA\u68A8\u662F\u4E00\u5EA7\u5145\u6EFF\u6D3B\u529B\u7684\u6D77\u6E2F\u57CE\u5E02\uFF0C\u4EE5\u58EF\u9E97\u5730\u6A19\u3001\u591A\u5143\u6587\u5316\u8207\u8FF7\u4EBA\u6D77\u5CB8\u98A8\u60C5\u4EE4\u4EBA\u6D41\u9023\u5FD8\u8FD4\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "fd10b256-1344-45fe-9dca-d87947c3157d",
+      "X": 980.6596618168924,
+      "Y": 248.734472,
+      "Width": 448.47902418970784,
+      "Height": 515.5494132462327,
+      "TopText": "\u8ACB\u628A\u4EE5\u4E0B\u5167\u5BB9\u7FFB\u8B6F\u6210\u82F1\u6587\uFF1A\r\n\u96EA\u68A8\u662F\u4E00\u5EA7\u5145\u6EFF\u6D3B\u529B\u7684\u6D77\u6E2F\u57CE\u5E02\uFF0C\u4EE5\u58EF\u9E97\u5730\u6A19\u3001\u591A\u5143\u6587\u5316\u8207\u8FF7\u4EBA\u6D77\u5CB8\u98A8\u60C5\u4EE4\u4EBA\u6D41\u9023\u5FD8\u8FD4\u3002  \n[[END_OF_RESPONSE]]",
+      "BottomText": "Sydney is a vibrant harbour city, captivating visitors with its stunning landmarks, diverse culture, and charming coastal appeal.\n[[END_OF_RESPONSE]]",
+      "TopLocked": false,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Translate"
+    },
+    {
+      "Id": "2fc8de5c-3a67-487e-811d-ee868d21f836",
+      "X": 1496.5678880000003,
+      "Y": 319.445816,
+      "Width": 646.5000748116772,
+      "Height": 670.3559731175246,
+      "TopText": "\u8ACB\u628A\u4EE5\u4E0B\u82F1\u6587\u6539\u5BEB\u6210\u66F4\u81EA\u7136\u7684\u65C5\u904A\u5BA3\u50B3\u8A9E\u6C23\uFF1A\r\nSydney is a vibrant harbour city, captivating visitors with its stunning landmarks, diverse culture, and charming coastal appeal.\n[[END_OF_RESPONSE]]",
+      "BottomText": "Escape to Sydney \u2014 a dazzling harbour city where iconic landmarks meet vibrant cultures and sun-kissed shores. Whether you\u0027re chasing adventure or simply soaking in the view, Sydney promises an unforgettable experience at every turn.\n\n[[END_OF_RESPONSE]]",
+      "TopLocked": false,
+      "FontSize": 20,
+      "NodeModel": "claude-sonnet-4-6",
+      "TaskMode": "Rewrite"
+    }
+  ],
+  "Connections": [
+    {
+      "StartId": "af384972-e7d9-4494-9c6f-79ff4af6c0b8",
+      "EndId": "fd10b256-1344-45fe-9dca-d87947c3157d",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    },
+    {
+      "StartId": "fd10b256-1344-45fe-9dca-d87947c3157d",
+      "EndId": "2fc8de5c-3a67-487e-811d-ee868d21f836",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    }
+  ],
+  "Attachments": [],
+  "ExecutionLogs": [
+    {
+      "NodeId": "af384972-e7d9-4494-9c6f-79ff4af6c0b8",
+      "StartedAtUtc": "2026-04-05T02:57:24.1378523Z",
+      "EndedAtUtc": "2026-04-05T02:57:27.7371294Z",
+      "DurationMs": 3599,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "gpt-5.4",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Chat",
+      "Confidence": 0.93,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "gpt-5.4",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "af384972-e7d9-4494-9c6f-79ff4af6c0b8",
+      "StartedAtUtc": "2026-04-05T02:57:56.2144608Z",
+      "EndedAtUtc": "2026-04-05T02:57:59.7128375Z",
+      "DurationMs": 3498,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "gpt-5.4",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Chat",
+      "Confidence": 0.95,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "gpt-5.4",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "fd10b256-1344-45fe-9dca-d87947c3157d",
+      "StartedAtUtc": "2026-04-05T02:57:27.7539818Z",
+      "EndedAtUtc": "2026-04-05T02:57:30.4901831Z",
+      "DurationMs": 2736,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "gpt-5.4",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Translate",
+      "Confidence": 0.99,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "gpt-5.4",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "fd10b256-1344-45fe-9dca-d87947c3157d",
+      "StartedAtUtc": "2026-04-05T02:57:59.7418776Z",
+      "EndedAtUtc": "2026-04-05T02:58:02.2265899Z",
+      "DurationMs": 2484,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "gpt-5.4",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Translate",
+      "Confidence": 0.99,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "gpt-5.4",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "2fc8de5c-3a67-487e-811d-ee868d21f836",
+      "StartedAtUtc": "2026-04-05T02:57:30.5040212Z",
+      "EndedAtUtc": "2026-04-05T02:57:33.5864099Z",
+      "DurationMs": 3082,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "claude-sonnet-4-6",
+      "PlannedModelId": "claude-sonnet-4-6",
+      "ActualModelId": "claude-sonnet-4-6",
+      "TaskMode": "Rewrite",
+      "Confidence": 0.97,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "claude-sonnet-4-6",
+      "CapabilityResolvedModelId": "claude-sonnet-4-6",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "claude-sonnet-4-6",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "2fc8de5c-3a67-487e-811d-ee868d21f836",
+      "StartedAtUtc": "2026-04-05T02:58:02.2422925Z",
+      "EndedAtUtc": "2026-04-05T02:58:06.0869926Z",
+      "DurationMs": 3844,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "claude-sonnet-4-6",
+      "PlannedModelId": "claude-sonnet-4-6",
+      "ActualModelId": "claude-sonnet-4-6",
+      "TaskMode": "Rewrite",
+      "Confidence": 0.98,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "claude-sonnet-4-6",
+      "CapabilityResolvedModelId": "claude-sonnet-4-6",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "claude-sonnet-4-6",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    }
+  ],
+  "FileNameLocked": false,
+  "AutoModelSelectionEnabled": true,
+  "AdvancedAutoResolverEnabled": true
+}

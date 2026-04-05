@@ -32,6 +32,7 @@ namespace test
         private readonly NodeRequestFactory _requestFactory;
         private readonly NodeDecisionPresenter _decisionPresenter;
         private readonly NodeExecutionFinalizer _executionFinalizer;
+        private const int AutoFlowMaxSteps = 12;
 
         public NodeService(AiServiceRouter router, MainWindow main)
         {
@@ -121,7 +122,7 @@ namespace test
 
             return AiModelRegistry.Default.DisplayName;
         }
-        
+
         public async Task<string> GenerateAsync(NodeControl node, string topText, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(topText))
@@ -129,6 +130,8 @@ namespace test
 
             var startedAtUtc = DateTime.UtcNow;
             var decision = await _decisionResolver.ResolveAsync(node, topText, ct);
+            _main.SetLiveDecisionResolving(node, decision);
+
             try
             {
                 var execution = await ExecuteWithFallbackAsync(
@@ -143,6 +146,8 @@ namespace test
                 {
                     FinalizeDecisionAfterExecution(decision, execution);
                     ApplyDecisionVisualization(decision);
+                    _main.SetLiveDecisionFailed(node, decision, execution.ErrorMessage);
+                    _main.ClearLiveDecisionState(node);
                     CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: execution.ErrorMessage);
                     throw new InvalidOperationException(execution.ErrorMessage);
                 }
@@ -150,12 +155,21 @@ namespace test
                 FinalizeDecisionAfterExecution(decision, execution);
                 ApplyDecisionVisualization(decision);
                 SyncActualModelToNode(node, decision);
+                _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                var flowContext = new AutoFlowRunContext();
+                flowContext.VisitedNodeIds.Add(node.Id);
+                flowContext.StepCount = 1;
+
+                await TryAutoFlowToNextNodeAsync(node, flowContext, ct);
 
                 return execution.Text;
             }
             catch (Exception ex)
             {
+                _main.SetLiveDecisionFailed(node, decision, ex.Message);
+                _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: ex.Message);
                 throw;
             }
@@ -172,6 +186,8 @@ namespace test
 
             var startedAtUtc = DateTime.UtcNow;
             var decision = await _decisionResolver.ResolveAsync(node, topText, ct);
+            _main.SetLiveDecisionResolving(node, decision);
+
             try
             {
                 if (!decision.UseStreaming)
@@ -188,6 +204,8 @@ namespace test
                     {
                         FinalizeDecisionAfterExecution(decision, nonStreamingExecution);
                         ApplyDecisionVisualization(decision);
+                        _main.SetLiveDecisionFailed(node, decision, nonStreamingExecution.ErrorMessage);
+                        _main.ClearLiveDecisionState(node);
                         CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: nonStreamingExecution.ErrorMessage);
                         throw new InvalidOperationException(nonStreamingExecution.ErrorMessage);
                     }
@@ -195,6 +213,7 @@ namespace test
                     FinalizeDecisionAfterExecution(decision, nonStreamingExecution);
                     ApplyDecisionVisualization(decision);
                     SyncActualModelToNode(node, decision);
+                    _main.ClearLiveDecisionState(node);
                     CommitExecutionLog(node, decision, startedAtUtc, success: true);
 
                     if (!string.IsNullOrWhiteSpace(nonStreamingExecution.Text))
@@ -215,6 +234,8 @@ namespace test
                 {
                     FinalizeDecisionAfterExecution(decision, streamingExecution);
                     ApplyDecisionVisualization(decision);
+                    _main.SetLiveDecisionFailed(node, decision, streamingExecution.ErrorMessage);
+                    _main.ClearLiveDecisionState(node);
                     CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: streamingExecution.ErrorMessage);
                     throw new InvalidOperationException(streamingExecution.ErrorMessage);
                 }
@@ -222,12 +243,21 @@ namespace test
                 FinalizeDecisionAfterExecution(decision, streamingExecution);
                 ApplyDecisionVisualization(decision);
                 SyncActualModelToNode(node, decision);
+                _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                var flowContext = new AutoFlowRunContext();
+                flowContext.VisitedNodeIds.Add(node.Id);
+                flowContext.StepCount = 1;
+
+                await TryAutoFlowToNextNodeAsync(node, flowContext, ct);
 
                 return streamingExecution.Text;
             }
             catch (Exception ex)
             {
+                _main.SetLiveDecisionFailed(node, decision, ex.Message);
+                _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: ex.Message);
                 throw;
             }
@@ -264,7 +294,16 @@ namespace test
 
                 var candidate = candidates[i];
                 string candidateModel = AiModelHelper.NormalizeNodeModel(candidate.ModelId);
+                bool isFallbackAttempt = i > 0 ||
+    !string.Equals(candidateModel, decision.ModelId, StringComparison.OrdinalIgnoreCase);
 
+                _main.SetLiveDecisionExecuting(
+                    node,
+                    decision,
+                    candidateModel,
+                    isFallbackAttempt,
+                    i + 1,
+                    candidate.Reason);
                 try
                 {
                     string text = await TryExecuteOnceAsync(
@@ -402,7 +441,7 @@ namespace test
                 ct);
         }
 
-  
+
 
         private async Task<string> GenerateSinglePassOrContinuedAsync_Core(
     NodeControl currentNode,
@@ -412,6 +451,12 @@ namespace test
     CancellationToken ct)
         {
             _currentExecutionNode = currentNode;
+
+            var route = _router.GetRouteInfo(model);
+            _currentExecutionInstructions = route.Provider == AiProviderKind.PerplexitySonar
+                ? _instructionBuilder.BuildPerplexityInstructions(model, route.IsDeepResearch, taskMode)
+                : _instructionBuilder.BuildGeneralNodeInstructions(model, taskMode);
+
             try
             {
                 return await _executionCoreService.ExecuteAsync(
@@ -427,16 +472,21 @@ namespace test
                 _currentExecutionInstructions = null;
             }
         }
-
         private async Task<string> GenerateSinglePassOrContinuedStreamAsync_Core(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            Action<string> onDelta,
-            CancellationToken ct)
+    NodeControl currentNode,
+    string topText,
+    string model,
+    NodeTaskMode taskMode,
+    Action<string> onDelta,
+    CancellationToken ct)
         {
             _currentExecutionNode = currentNode;
+
+            var route = _router.GetRouteInfo(model);
+            _currentExecutionInstructions = route.Provider == AiProviderKind.PerplexitySonar
+                ? _instructionBuilder.BuildPerplexityInstructions(model, route.IsDeepResearch, taskMode)
+                : _instructionBuilder.BuildGeneralNodeInstructions(model, taskMode);
+
             try
             {
                 return await _executionCoreService.ExecuteStreamAsync(
@@ -576,6 +626,7 @@ namespace test
             return s;
         }
 
+
         private IReadOnlyList<AiAttachment> CollectAiAttachments(NodeControl node)
         {
             var root = _main.GetAttachmentsRootDir();
@@ -659,7 +710,69 @@ namespace test
             _router.EnsureServiceReady(route);
             return route;
         }
+        private async Task TryAutoFlowToNextNodeAsync(
+    NodeControl currentNode,
+    AutoFlowRunContext flowContext,
+    CancellationToken ct)
+        {
+            if (currentNode == null || flowContext == null)
+                return;
 
+            if (flowContext.StepCount >= AutoFlowMaxSteps)
+                return;
+
+            var nextNode = _main.GetFirstDownstreamNode(currentNode);
+            if (nextNode == null)
+                return;
+
+            // 防自己連自己
+            if (ReferenceEquals(nextNode, currentNode))
+                return;
+
+            // 防循環 / 同輪重複執行
+            if (flowContext.VisitedNodeIds.Contains(nextNode.Id))
+                return;
+
+            if (!_main.NodeAcceptsAutoFlowInput(nextNode))
+                return;
+
+            bool prepared = _main.TryPrepareAutoFlowInput(currentNode, nextNode);
+            if (!prepared)
+                return;
+
+            _main.FocusDecisionNode(nextNode);
+
+            string nextTopText = nextNode.GetTopText() ?? "";
+            if (string.IsNullOrWhiteSpace(nextTopText))
+                return;
+
+            nextNode.ClearBottomText();
+            nextNode.EndEditBecauseSent();
+
+            flowContext.VisitedNodeIds.Add(nextNode.Id);
+            flowContext.StepCount++;
+
+            string finalText = await GenerateStreamAsync(
+                nextNode,
+                nextTopText,
+                delta =>
+                {
+                    nextNode.Dispatcher.Invoke(() =>
+                    {
+                        nextNode.AppendBottomText(delta);
+                    });
+                },
+                ct);
+
+            if (string.IsNullOrWhiteSpace(finalText))
+                return;
+        }
+
+        private sealed class AutoFlowRunContext
+        {
+            public HashSet<Guid> VisitedNodeIds { get; } = new();
+            public int StepCount { get; set; }
+        }
         private static string Truncate(string s, int maxChars)
         {
             if (string.IsNullOrEmpty(s)) return "";

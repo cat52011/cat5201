@@ -12,6 +12,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using PathShape = System.Windows.Shapes.Path;
 
@@ -42,6 +43,10 @@ namespace test
         private NodeControl? _lastDecisionNode;
 
         private readonly NodeModelSelectionService _nodeModelSelection = new();
+        private readonly HashSet<string> _expandedDecisionStepKeys = new();
+        private readonly Dictionary<Guid, NodeDecisionViewData> _liveDecisionViewsByNode = new();
+
+        private readonly Dictionary<Guid, string> _autoFlowTemplatesByNode = new();
 
         public enum EditReason
         {
@@ -108,6 +113,131 @@ namespace test
 
         private readonly AiExecutionLogService _executionLogService = new();
 
+        private void ApplyActiveTimelineVisual(
+    Border cardBorder,
+    Border dotOuter,
+    Border dotInner,
+    NodeDecisionStepState state)
+        {
+            if (cardBorder == null || dotOuter == null || dotInner == null)
+                return;
+
+            var pulseBrush = GetStepBrush(state);
+
+            cardBorder.BorderThickness = new Thickness(1.6);
+
+            var shadow = cardBorder.Effect as DropShadowEffect;
+            if (shadow == null)
+            {
+                shadow = new DropShadowEffect
+                {
+                    BlurRadius = 16,
+                    ShadowDepth = 0,
+                    Opacity = 0.18,
+                    Color = Colors.Black
+                };
+                cardBorder.Effect = shadow;
+            }
+
+            shadow.Color = pulseBrush.Color;
+            shadow.BlurRadius = 22;
+            shadow.Opacity = 0.22;
+
+            var borderAnim = new ThicknessAnimation
+            {
+                From = new Thickness(1.6),
+                To = new Thickness(2.4),
+                Duration = TimeSpan.FromMilliseconds(900),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+            cardBorder.BeginAnimation(Border.BorderThicknessProperty, borderAnim);
+
+            var shadowBlurAnim = new DoubleAnimation
+            {
+                From = 18,
+                To = 28,
+                Duration = TimeSpan.FromMilliseconds(900),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+            shadow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, shadowBlurAnim);
+
+            var shadowOpacityAnim = new DoubleAnimation
+            {
+                From = 0.14,
+                To = 0.28,
+                Duration = TimeSpan.FromMilliseconds(900),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+            shadow.BeginAnimation(DropShadowEffect.OpacityProperty, shadowOpacityAnim);
+
+            var dotScale = new ScaleTransform(1.0, 1.0);
+            dotOuter.RenderTransformOrigin = new Point(0.5, 0.5);
+            dotOuter.RenderTransform = dotScale;
+
+            var dotScaleAnim = new DoubleAnimation
+            {
+                From = 1.0,
+                To = 1.18,
+                Duration = TimeSpan.FromMilliseconds(700),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+            dotScale.BeginAnimation(ScaleTransform.ScaleXProperty, dotScaleAnim);
+            dotScale.BeginAnimation(ScaleTransform.ScaleYProperty, dotScaleAnim);
+
+            var innerOpacityAnim = new DoubleAnimation
+            {
+                From = 0.65,
+                To = 1.0,
+                Duration = TimeSpan.FromMilliseconds(700),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+            dotInner.BeginAnimation(UIElement.OpacityProperty, innerOpacityAnim);
+        }
+
+        public bool NodeAcceptsAutoFlowInput(NodeControl node)
+        {
+            if (node == null)
+                return false;
+
+            string template = GetAutoFlowTemplate(node);
+            if (string.IsNullOrWhiteSpace(template))
+                return false;
+
+            return template.Contains("{{input}}", StringComparison.Ordinal);
+        }
+
+        private void ClearTimelineAnimations(Border cardBorder, Border dotOuter, Border dotInner)
+        {
+            if (cardBorder != null)
+            {
+                cardBorder.BeginAnimation(Border.BorderThicknessProperty, null);
+
+                if (cardBorder.Effect is DropShadowEffect shadow)
+                {
+                    shadow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, null);
+                    shadow.BeginAnimation(DropShadowEffect.OpacityProperty, null);
+                }
+            }
+
+            if (dotOuter?.RenderTransform is ScaleTransform scale)
+            {
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                scale.ScaleX = 1.0;
+                scale.ScaleY = 1.0;
+            }
+
+            if (dotInner != null)
+            {
+                dotInner.BeginAnimation(UIElement.OpacityProperty, null);
+                dotInner.Opacity = 1.0;
+            }
+        }
         public sealed class AttachmentInfo
         {
             public string FileName { get; set; } = "";
@@ -386,73 +516,17 @@ namespace test
 
             _lastDecisionNode = node;
 
+            if (_liveDecisionViewsByNode.TryGetValue(node.Id, out var liveView))
+            {
+                ApplyDecisionViewData(liveView);
+                return;
+            }
+
             var latest = GetLatestExecutionLog(node);
             if (latest != null)
             {
-                string requestedLabel = AiModelHelper.GetDefinition(latest.RequestedModelId).DisplayName;
-                string actualLabel = AiModelHelper.GetDefinition(latest.ActualModelId).DisplayName;
-
-                string modelLabel =
-                    string.Equals(requestedLabel, actualLabel, StringComparison.OrdinalIgnoreCase)
-                        ? actualLabel
-                        : $"{actualLabel} ← {requestedLabel}";
-
-                string taskSummary = $"{latest.TaskMode} / {latest.Confidence:0.00} / {latest.DurationMs}ms";
-
-                string reasonText = string.IsNullOrWhiteSpace(latest.ResolverReason)
-                    ? "-"
-                    : latest.ResolverReason;
-
-                string keywordText = BuildResolverKeywordSummary(latest);
-                if (string.IsNullOrWhiteSpace(keywordText))
-                    keywordText = "-";
-
-                var extraParts = new List<string>();
-
-                if (!string.IsNullOrWhiteSpace(latest.CapabilityReason))
-                    extraParts.Add(latest.CapabilityReason);
-
-                string capabilityDetail = BuildCapabilityDetailSummary(latest);
-                if (!string.IsNullOrWhiteSpace(capabilityDetail))
-                    extraParts.Add(capabilityDetail);
-
-                if (!string.IsNullOrWhiteSpace(latest.RuntimeFallbackSummary))
-                    extraParts.Add(latest.RuntimeFallbackSummary);
-
-                string traceSummary = BuildFallbackTraceSummary(latest);
-                if (!string.IsNullOrWhiteSpace(traceSummary))
-                    extraParts.Add(traceSummary);
-
-                if (!latest.Success && !string.IsNullOrWhiteSpace(latest.ErrorMessage))
-                    extraParts.Add(latest.ErrorMessage);
-
-                string extraText = extraParts.Count == 0 ? "-" : string.Join(" / ", extraParts);
-
-                bool apiFallbackUsed =
-                    latest.Resolver?.Contains("fallback", StringComparison.OrdinalIgnoreCase) == true;
-
-                ApplyDecisionThemeByMode(
-                    status: latest.SelectionMode switch
-                    {
-                        "API Auto" => "API Auto",
-                        "Auto" => "Rule Auto",
-                        _ => "Manual"
-                    },
-                    mode: latest.SelectionMode switch
-                    {
-                        "Manual" => "Manual",
-                        _ => "Auto"
-                    },
-                    resolver: string.IsNullOrWhiteSpace(latest.Resolver) ? "-" : latest.Resolver,
-                    model: modelLabel,
-                    taskSummary: taskSummary,
-                    reason: reasonText,
-                    keywords: keywordText,
-                    extra: extraText,
-                    capabilityAdjusted: latest.CapabilityAdjusted,
-                    runtimeFallbackUsed: latest.RuntimeFallbackUsed,
-                    apiFallbackUsed: apiFallbackUsed);
-
+                var viewData = NodeDecisionViewBuilder.BuildFromLog(latest);
+                ApplyDecisionViewData(viewData);
                 return;
             }
 
@@ -508,18 +582,45 @@ namespace test
                     previewResolution.MatchedKeywords.Distinct(StringComparer.OrdinalIgnoreCase));
             }
 
-            ApplyDecisionThemeByMode(
-                status: statusText,
-                mode: modeText,
-                resolver: resolverText,
-                model: previewModel,
-                taskSummary: previewSummary,
-                reason: previewReason,
-                keywords: previewKeywords,
-                extra: "-",
-                capabilityAdjusted: false,
-                runtimeFallbackUsed: false,
-                apiFallbackUsed: false);
+            var previewViewData = new NodeDecisionViewData
+            {
+                Status = statusText,
+                Mode = modeText,
+                Resolver = resolverText,
+                Model = previewModel,
+                TaskSummary = previewSummary,
+                Reason = previewReason,
+                Keywords = previewKeywords,
+                Extra = "-",
+                CapabilityAdjusted = false,
+                RuntimeFallbackUsed = false,
+                ApiFallbackUsed = false,
+                Steps = new[]
+                {
+            new NodeDecisionStepViewData
+            {
+                Title = "Task Mode",
+                Detail = $"{previewTaskName} / 預估",
+                State = NodeDecisionStepState.Info,
+                Highlight = true
+            },
+            new NodeDecisionStepViewData
+            {
+                Title = "Model Selection",
+                Detail = previewModel,
+                State = NodeDecisionStepState.Info,
+                Highlight = true
+            },
+            new NodeDecisionStepViewData
+            {
+                Title = "Execution",
+                Detail = "尚未執行",
+                State = NodeDecisionStepState.Info
+            }
+        }
+            };
+
+            ApplyDecisionViewData(previewViewData);
         }
 
         public void NotifyNodeHoverEntered(NodeControl node)
@@ -867,6 +968,420 @@ namespace test
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(fallbackHex)!);
         }
 
+        private void ApplyDecisionViewData(NodeDecisionViewData viewData)
+        {
+            if (viewData == null)
+                return;
+
+            ApplyDecisionThemeByMode(
+                status: viewData.Status,
+                mode: viewData.Mode,
+                resolver: viewData.Resolver,
+                model: viewData.Model,
+                taskSummary: viewData.TaskSummary,
+                reason: viewData.Reason,
+                keywords: viewData.Keywords,
+                extra: viewData.Extra,
+                capabilityAdjusted: viewData.CapabilityAdjusted,
+                runtimeFallbackUsed: viewData.RuntimeFallbackUsed,
+                apiFallbackUsed: viewData.ApiFallbackUsed);
+
+            RenderDecisionTimeline(viewData.Steps);
+        }
+
+        private void RenderDecisionTimeline(IReadOnlyList<NodeDecisionStepViewData> steps)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (DecisionTimelineHost == null)
+                    return;
+
+                DecisionTimelineHost.Children.Clear();
+
+                if (steps == null || steps.Count == 0)
+                {
+                    var emptyBorder = new Border
+                    {
+                        Background = CreateBrush("#FAFAFA", "#FAFAFA"),
+                        BorderBrush = CreateBrush("#E9E9E9", "#E9E9E9"),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(12),
+                        Padding = new Thickness(12),
+                        Child = new TextBlock
+                        {
+                            Text = "尚無 Decision Timeline",
+                            FontSize = 12,
+                            Foreground = CreateBrush("#7A7A7A", "#7A7A7A")
+                        }
+                    };
+
+                    DecisionTimelineHost.Children.Add(emptyBorder);
+                    return;
+                }
+
+                for (int i = 0; i < steps.Count; i++)
+                {
+                    var item = CreateDecisionTimelineItem(
+                        step: steps[i],
+                        index: i,
+                        isLast: i == steps.Count - 1,
+                        isFirst: i == 0);
+
+                    DecisionTimelineHost.Children.Add(item);
+                }
+            });
+        }
+
+        private FrameworkElement CreateDecisionTimelineItem(
+    NodeDecisionStepViewData step,
+    int index,
+    bool isLast,
+    bool isFirst)
+        {
+            string safeTitle = step?.Title ?? "";
+            string safeDetail = step?.Detail ?? "";
+            string stepKey = $"{index}:{safeTitle}:{safeDetail}";
+            bool isExpanded = _expandedDecisionStepKeys.Contains(stepKey);
+
+            var root = new Grid
+            {
+                Margin = new Thickness(0, 0, 0, isLast ? 0 : 12)
+            };
+
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            // ===== 左側 timeline 區 =====
+            var timelineGrid = new Grid
+            {
+                Width = 20
+            };
+            timelineGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            timelineGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            if (!isFirst)
+            {
+                var topLine = new Border
+                {
+                    Width = 2,
+                    Height = 10,
+                    Background = CreateBrush("#D9DDE4", "#D9DDE4"),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Top
+                };
+                Grid.SetRow(topLine, 0);
+                timelineGrid.Children.Add(topLine);
+            }
+
+            var dotOuter = new Border
+            {
+                Width = 14,
+                Height = 14,
+                CornerRadius = new CornerRadius(999),
+                Background = CreateBrush("#FFFFFF", "#FFFFFF"),
+                BorderBrush = GetStepBrush(step.State),
+                BorderThickness = new Thickness(2),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
+            var dotInner = new Border
+            {
+                Width = 6,
+                Height = 6,
+                CornerRadius = new CornerRadius(999),
+                Background = GetStepBrush(step.State),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            dotOuter.Child = dotInner;
+            Grid.SetRow(dotOuter, 0);
+            timelineGrid.Children.Add(dotOuter);
+
+            if (!isLast)
+            {
+                var bottomLine = new Border
+                {
+                    Width = 2,
+                    Background = CreateBrush("#D9DDE4", "#D9DDE4"),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 8, 0, 0)
+                };
+                Grid.SetRow(bottomLine, 1);
+                timelineGrid.Children.Add(bottomLine);
+            }
+
+            Grid.SetColumn(timelineGrid, 0);
+            root.Children.Add(timelineGrid);
+
+            // ===== 右側卡片 =====
+            var cardBorder = new Border
+            {
+                Background = step.Highlight
+                    ? CreateBrush("#F6FAFF", "#F6FAFF")
+                    : CreateBrush("#FFFFFF", "#FFFFFF"),
+                BorderBrush = GetStepBorderBrush(step.State, step.Highlight || step.IsActive),
+                BorderThickness = new Thickness(step.IsActive ? 1.6 : 1),
+                CornerRadius = new CornerRadius(14),
+                Padding = new Thickness(12, 10, 12, 10),
+                Cursor = step.IsExpandable ? Cursors.Hand : Cursors.Arrow
+            };
+
+            var shadow = new DropShadowEffect
+            {
+                BlurRadius = step.IsActive ? 20 : (step.Highlight ? 14 : 10),
+                ShadowDepth = 0,
+                Opacity = step.IsActive ? 0.18 : (step.Highlight ? 0.14 : 0.08),
+                Color = step.IsActive ? GetStepBrush(step.State).Color : Colors.Black
+            };
+            cardBorder.Effect = shadow;
+
+            var contentPanel = new StackPanel();
+
+            var headerGrid = new Grid();
+            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var titleStack = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var indexBadge = new Border
+            {
+                Background = GetStepSoftBrush(step.State),
+                CornerRadius = new CornerRadius(999),
+                Padding = new Thickness(7, 2, 7, 2),
+                Margin = new Thickness(0, 0, 8, 0),
+                Child = new TextBlock
+                {
+                    Text = (index + 1).ToString(),
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = GetStepBrush(step.State),
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+
+            var titleText = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(step.Title) ? "-" : step.Title,
+                FontSize = 12.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = CreateBrush("#232323", "#232323"),
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            titleStack.Children.Add(indexBadge);
+            titleStack.Children.Add(titleText);
+
+            Grid.SetColumn(titleStack, 0);
+            headerGrid.Children.Add(titleStack);
+
+            var stateBadge = new Border
+            {
+                Background = GetStepSoftBrush(step.State),
+                CornerRadius = new CornerRadius(999),
+                Padding = new Thickness(8, 3, 8, 3),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = step.IsActive ? "Running" : GetStepStateLabel(step.State),
+                    FontSize = 11,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = GetStepBrush(step.State)
+                }
+            };
+
+            Grid.SetColumn(stateBadge, 1);
+            headerGrid.Children.Add(stateBadge);
+
+            contentPanel.Children.Add(headerGrid);
+
+            var detailText = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(step.Detail) ? "-" : step.Detail,
+                FontSize = 12,
+                Margin = new Thickness(0, 8, 0, 0),
+                Foreground = CreateBrush("#5D5D5D", "#5D5D5D"),
+                TextWrapping = TextWrapping.Wrap
+            };
+            contentPanel.Children.Add(detailText);
+
+            if (step.IsExpandable)
+            {
+                var actionRow = new DockPanel
+                {
+                    Margin = new Thickness(0, 8, 0, 0),
+                    LastChildFill = false
+                };
+
+                var expandHint = new TextBlock
+                {
+                    Text = isExpanded ? "收合詳細資訊 ▲" : "展開詳細資訊 ▼",
+                    FontSize = 11.5,
+                    Foreground = CreateBrush("#6F6F6F", "#6F6F6F"),
+                    FontWeight = FontWeights.Medium
+                };
+
+                DockPanel.SetDock(expandHint, Dock.Right);
+                actionRow.Children.Add(expandHint);
+                contentPanel.Children.Add(actionRow);
+            }
+
+            if (isExpanded && step.DetailLines != null && step.DetailLines.Count > 0)
+            {
+                var detailHost = new StackPanel
+                {
+                    Margin = new Thickness(0, 10, 0, 0)
+                };
+
+                var separator = new Border
+                {
+                    Height = 1,
+                    Background = CreateBrush("#ECEFF4", "#ECEFF4"),
+                    Margin = new Thickness(0, 0, 0, 10)
+                };
+                detailHost.Children.Add(separator);
+
+                foreach (var line in step.DetailLines)
+                {
+                    detailHost.Children.Add(new Border
+                    {
+                        Background = CreateBrush("#FAFBFD", "#FAFBFD"),
+                        BorderBrush = CreateBrush("#EEF1F4", "#EEF1F4"),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(8, 6, 8, 6),
+                        Margin = new Thickness(0, 0, 0, 6),
+                        Child = new TextBlock
+                        {
+                            Text = string.IsNullOrWhiteSpace(line) ? "-" : line,
+                            FontSize = 11.5,
+                            Foreground = CreateBrush("#666666", "#666666"),
+                            TextWrapping = TextWrapping.Wrap
+                        }
+                    });
+                }
+
+                contentPanel.Children.Add(detailHost);
+            }
+
+            cardBorder.Child = contentPanel;
+
+            if (step.IsExpandable)
+            {
+                cardBorder.MouseLeftButtonUp += (_, __) =>
+                {
+                    if (_expandedDecisionStepKeys.Contains(stepKey))
+                        _expandedDecisionStepKeys.Remove(stepKey);
+                    else
+                        _expandedDecisionStepKeys.Add(stepKey);
+
+                    var target = _lastDecisionNode ?? _hoveredDecisionNode;
+                    if (target != null)
+                        ShowDecisionForNode(target);
+                };
+
+                cardBorder.MouseEnter += (_, __) =>
+                {
+                    if (!step.IsActive)
+                    {
+                        cardBorder.Background = step.Highlight
+                            ? CreateBrush("#F0F7FF", "#F0F7FF")
+                            : CreateBrush("#FAFAFA", "#FAFAFA");
+                    }
+                };
+
+                cardBorder.MouseLeave += (_, __) =>
+                {
+                    if (!step.IsActive)
+                    {
+                        cardBorder.Background = step.Highlight
+                            ? CreateBrush("#F6FAFF", "#F6FAFF")
+                            : CreateBrush("#FFFFFF", "#FFFFFF");
+                    }
+                };
+            }
+
+            if (step.IsActive)
+            {
+                ApplyActiveTimelineVisual(cardBorder, dotOuter, dotInner, step.State);
+
+                cardBorder.Background = step.Highlight
+                    ? CreateBrush("#EEF6FF", "#EEF6FF")
+                    : CreateBrush("#F8FBFF", "#F8FBFF");
+            }
+            else
+            {
+                ClearTimelineAnimations(cardBorder, dotOuter, dotInner);
+            }
+
+            Grid.SetColumn(cardBorder, 2);
+            root.Children.Add(cardBorder);
+
+            return root;
+        }
+
+        private SolidColorBrush GetStepBrush(NodeDecisionStepState state)
+        {
+            return state switch
+            {
+                NodeDecisionStepState.Success => CreateBrush("#2E9B52", "#2E9B52"),
+                NodeDecisionStepState.Warning => CreateBrush("#D48A00", "#D48A00"),
+                NodeDecisionStepState.Error => CreateBrush("#C93C3C", "#C93C3C"),
+                _ => CreateBrush("#4F7EF7", "#4F7EF7")
+            };
+        }
+
+        private SolidColorBrush GetStepSoftBrush(NodeDecisionStepState state)
+        {
+            return state switch
+            {
+                NodeDecisionStepState.Success => CreateBrush("#EAF7EF", "#EAF7EF"),
+                NodeDecisionStepState.Warning => CreateBrush("#FFF5E7", "#FFF5E7"),
+                NodeDecisionStepState.Error => CreateBrush("#FDECEC", "#FDECEC"),
+                _ => CreateBrush("#EDF3FF", "#EDF3FF")
+            };
+        }
+
+        private SolidColorBrush GetStepBorderBrush(NodeDecisionStepState state, bool highlight)
+        {
+            if (highlight)
+            {
+                return state switch
+                {
+                    NodeDecisionStepState.Success => CreateBrush("#BFE3CB", "#BFE3CB"),
+                    NodeDecisionStepState.Warning => CreateBrush("#F1D39B", "#F1D39B"),
+                    NodeDecisionStepState.Error => CreateBrush("#E9B0B0", "#E9B0B0"),
+                    _ => CreateBrush("#C9D9FF", "#C9D9FF")
+                };
+            }
+
+            return state switch
+            {
+                NodeDecisionStepState.Success => CreateBrush("#D7EBDD", "#D7EBDD"),
+                NodeDecisionStepState.Warning => CreateBrush("#F3E2BA", "#F3E2BA"),
+                NodeDecisionStepState.Error => CreateBrush("#F0CCCC", "#F0CCCC"),
+                _ => CreateBrush("#E8ECF3", "#E8ECF3")
+            };
+        }
+
+        private static string GetStepStateLabel(NodeDecisionStepState state)
+        {
+            return state switch
+            {
+                NodeDecisionStepState.Success => "Success",
+                NodeDecisionStepState.Warning => "Warning",
+                NodeDecisionStepState.Error => "Error",
+                _ => "Info"
+            };
+        }
         private void ApplyDecisionThemeByMode(
     string status,
     string mode,
@@ -1483,8 +1998,10 @@ namespace test
 
         private Point GetThumbCenterOnCanvas(NodeControl node, string thumbName)
         {
-            var fe = (FrameworkElement)node.FindName(thumbName)!;
-            return fe.TranslatePoint(new Point(fe.RenderSize.Width / 2, fe.RenderSize.Height / 2), MainCanvas);
+            if (node == null)
+                return new Point(0, 0);
+
+            return node.GetThumbCenterIgnoringHoverTransform(thumbName);
         }
 
         public void AddNode(double x, double y)
@@ -1964,6 +2481,7 @@ namespace test
 
                     node.SetTopText(n.TopText ?? "");
                     node.SetBottomText(n.BottomText ?? "");
+                    SyncAutoFlowTemplate(node, n.TopText ?? "");
                     node.SetTopLocked(n.TopLocked);
                     node.SetFontSize(SafePositiveFinite(n.FontSize, 20));
 
@@ -2022,6 +2540,7 @@ namespace test
             _nodeModelsById.Clear();
             _nodeTaskModesById.Clear();
             _executionLogService.ClearAll();
+            _autoFlowTemplatesByNode.Clear();
 
             _editingNode = null;
             _editingReason = EditReason.None;
@@ -2488,13 +3007,14 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             }
             _connections.RemoveAll(c => connsToDelete.Contains(c));
 
-            foreach (var n in nodesToDelete)
-            {
+            foreach(var n in nodesToDelete)
+{
                 ClearEditingIfDeleted(n);
                 MainCanvas.Children.Remove(n);
                 _attachmentsByNode.Remove(n.Id);
                 _nodeModelsById.Remove(n.Id);
                 _nodeTaskModesById.Remove(n.Id);
+                _autoFlowTemplatesByNode.Remove(n.Id);
                 ClearExecutionLogs(n);
             }
 
@@ -2515,6 +3035,442 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         {
             foreach (var c in _connections)
                 yield return (c.StartNode, c.StartThumb, c.EndNode, c.EndThumb);
+        }
+
+        public void SetLiveDecisionResolving(NodeControl node, NodeExecutionDecision decision)
+        {
+            if (node == null || decision == null)
+                return;
+
+            string requestedLabel = GetDecisionModelLabel(
+                string.IsNullOrWhiteSpace(decision.RequestedModelId) ? decision.ModelId : decision.RequestedModelId);
+
+            string plannedLabel = GetDecisionModelLabel(decision.ModelId);
+
+            string modelText = string.Equals(requestedLabel, plannedLabel, StringComparison.OrdinalIgnoreCase)
+                ? plannedLabel
+                : $"{plannedLabel} ← {requestedLabel}";
+
+            var steps = new List<NodeDecisionStepViewData>
+    {
+        new NodeDecisionStepViewData
+        {
+            Title = "Task Mode",
+            Detail = $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / confidence {decision.Confidence:0.00}",
+            State = NodeDecisionStepState.Info,
+            Highlight = true,
+            DetailLines = BuildTaskModeLines(decision)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Model Selection",
+            Detail = modelText,
+            State = NodeDecisionStepState.Info,
+            Highlight = true,
+            DetailLines = BuildModelLines(decision, actualModelId: null)
+        },
+         new NodeDecisionStepViewData
+{
+    Title = "Resolver",
+    Detail = string.IsNullOrWhiteSpace(decision.ResolverLabel) ? "-" : decision.ResolverLabel,
+    State = NodeDecisionStepState.Info,
+    Highlight = true,
+    IsActive = true,
+    DetailLines = BuildResolverLines(decision, extra: "正在建立執行決策")
+},
+        new NodeDecisionStepViewData
+{
+    Title = "Capability Guard",
+    Detail = decision.CapabilityAdjusted ? "已調整" : "檢查中",
+    State = decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Info,
+    IsActive = !decision.CapabilityAdjusted,
+    DetailLines = BuildCapabilityLines(decision, forcePendingText: !decision.CapabilityAdjusted)
+},
+        new NodeDecisionStepViewData
+        {
+            Title = "Fallback",
+            Detail = "尚未觸發",
+            State = NodeDecisionStepState.Info,
+            DetailLines = new[]
+            {
+                "目前尚未進入 runtime fallback"
+            }
+        },
+       new NodeDecisionStepViewData
+{
+    Title = "Execution",
+    Detail = "等待執行",
+    State = NodeDecisionStepState.Info,
+    DetailLines = new[]
+    {
+        "執行尚未開始"
+    }
+}
+    };
+
+            var view = BuildLiveDecisionViewData(
+                decision,
+                modelText,
+                $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / {decision.Confidence:0.00}",
+                extra: decision.CapabilityAdjusted
+                    ? (string.IsNullOrWhiteSpace(decision.CapabilityReason) ? "-" : decision.CapabilityReason)
+                    : "-",
+                steps: steps);
+
+            _liveDecisionViewsByNode[node.Id] = view;
+            RefreshDecisionForNode(node);
+        }
+
+        public void SetLiveDecisionExecuting(NodeControl node, NodeExecutionDecision decision, string modelId, bool isFallbackAttempt, int attemptIndex, string reason)
+        {
+            if (node == null || decision == null)
+                return;
+
+            string requestedLabel = GetDecisionModelLabel(
+                string.IsNullOrWhiteSpace(decision.RequestedModelId) ? decision.ModelId : decision.RequestedModelId);
+
+            string plannedLabel = GetDecisionModelLabel(modelId);
+            string modelText = string.Equals(requestedLabel, plannedLabel, StringComparison.OrdinalIgnoreCase)
+                ? plannedLabel
+                : $"{plannedLabel} ← {requestedLabel}";
+
+            var fallbackLines = new List<string>();
+
+            if (isFallbackAttempt)
+            {
+                fallbackLines.Add($"目前為第 {attemptIndex} 次嘗試");
+                fallbackLines.Add($"候選模型：{plannedLabel}");
+                fallbackLines.Add($"原因：{(string.IsNullOrWhiteSpace(reason) ? "-" : reason)}");
+            }
+            else
+            {
+                fallbackLines.Add("目前使用 primary candidate 執行");
+                fallbackLines.Add($"模型：{plannedLabel}");
+            }
+
+            var executionLines = new List<string>
+    {
+        "Execution 狀態：執行中",
+        $"Model：{plannedLabel}",
+        $"Streaming：{decision.UseStreaming}"
+    };
+
+            var steps = new List<NodeDecisionStepViewData>
+    {
+        new NodeDecisionStepViewData
+        {
+            Title = "Task Mode",
+            Detail = $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / confidence {decision.Confidence:0.00}",
+            State = NodeDecisionStepState.Success,
+            DetailLines = BuildTaskModeLines(decision)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Model Selection",
+            Detail = modelText,
+            State = decision.CapabilityAdjusted || isFallbackAttempt
+                ? NodeDecisionStepState.Warning
+                : NodeDecisionStepState.Success,
+            DetailLines = BuildModelLines(decision, actualModelId: modelId)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Resolver",
+            Detail = string.IsNullOrWhiteSpace(decision.ResolverLabel) ? "-" : decision.ResolverLabel,
+            State = NodeDecisionStepState.Success,
+            DetailLines = BuildResolverLines(decision)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Capability Guard",
+            Detail = decision.CapabilityAdjusted ? "已調整" : "OK",
+            State = decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
+            DetailLines = BuildCapabilityLines(decision, forcePendingText: false)
+        },
+        new NodeDecisionStepViewData
+{
+    Title = "Fallback",
+    Detail = isFallbackAttempt ? $"已進入第 {attemptIndex} 次嘗試" : "尚未觸發",
+    State = isFallbackAttempt ? NodeDecisionStepState.Warning : NodeDecisionStepState.Info,
+    Highlight = isFallbackAttempt,
+    IsActive = isFallbackAttempt,
+    DetailLines = fallbackLines
+},
+        new NodeDecisionStepViewData
+{
+    Title = "Execution",
+    Detail = "執行中",
+    State = NodeDecisionStepState.Info,
+    Highlight = true,
+    IsActive = true,
+    DetailLines = executionLines
+}
+    };
+
+            var extraParts = new List<string>();
+            if (decision.CapabilityAdjusted && !string.IsNullOrWhiteSpace(decision.CapabilityReason))
+                extraParts.Add(decision.CapabilityReason);
+
+            if (isFallbackAttempt)
+                extraParts.Add($"fallback attempt {attemptIndex}");
+
+            var view = BuildLiveDecisionViewData(
+                decision,
+                modelText,
+                $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / 執行中",
+                extra: extraParts.Count == 0 ? "-" : string.Join(" / ", extraParts),
+                steps: steps);
+
+            _liveDecisionViewsByNode[node.Id] = view;
+            RefreshDecisionForNode(node);
+        }
+
+        public void SetLiveDecisionFailed(NodeControl node, NodeExecutionDecision decision, string errorMessage)
+        {
+            if (node == null || decision == null)
+                return;
+
+            string requestedLabel = GetDecisionModelLabel(
+                string.IsNullOrWhiteSpace(decision.RequestedModelId) ? decision.ModelId : decision.RequestedModelId);
+
+            string actualLabel = GetDecisionModelLabel(
+                string.IsNullOrWhiteSpace(decision.ActualModelId) ? decision.ModelId : decision.ActualModelId);
+
+            string modelText = string.Equals(requestedLabel, actualLabel, StringComparison.OrdinalIgnoreCase)
+                ? actualLabel
+                : $"{actualLabel} ← {requestedLabel}";
+
+            var steps = new List<NodeDecisionStepViewData>
+    {
+        new NodeDecisionStepViewData
+        {
+            Title = "Task Mode",
+            Detail = $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / confidence {decision.Confidence:0.00}",
+            State = NodeDecisionStepState.Success,
+            DetailLines = BuildTaskModeLines(decision)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Model Selection",
+            Detail = modelText,
+            State = decision.CapabilityAdjusted || decision.RuntimeFallbackUsed
+                ? NodeDecisionStepState.Warning
+                : NodeDecisionStepState.Success,
+            DetailLines = BuildModelLines(decision, decision.ActualModelId)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Resolver",
+            Detail = string.IsNullOrWhiteSpace(decision.ResolverLabel) ? "-" : decision.ResolverLabel,
+            State = NodeDecisionStepState.Success,
+            DetailLines = BuildResolverLines(decision)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Capability Guard",
+            Detail = decision.CapabilityAdjusted ? "已調整" : "OK",
+            State = decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
+            DetailLines = BuildCapabilityLines(decision, forcePendingText: false)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Fallback",
+            Detail = decision.RuntimeFallbackUsed ? "已觸發" : "無",
+            State = decision.RuntimeFallbackUsed ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
+            DetailLines = BuildFallbackLines(decision)
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Execution",
+            Detail = "失敗",
+            State = NodeDecisionStepState.Error,
+            Highlight = true,
+            DetailLines = new[]
+            {
+                $"Error: {errorMessage}"
+            }
+        }
+    };
+
+            var view = BuildLiveDecisionViewData(
+                decision,
+                modelText,
+                $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / 失敗",
+                extra: string.IsNullOrWhiteSpace(errorMessage) ? "-" : errorMessage,
+                steps: steps);
+
+            _liveDecisionViewsByNode[node.Id] = view;
+            RefreshDecisionForNode(node);
+        }
+
+        public void ClearLiveDecisionState(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            if (_liveDecisionViewsByNode.Remove(node.Id))
+                RefreshDecisionForNode(node);
+        }
+
+        private NodeDecisionViewData BuildLiveDecisionViewData(
+            NodeExecutionDecision decision,
+            string modelText,
+            string taskSummary,
+            string extra,
+            IReadOnlyList<NodeDecisionStepViewData> steps)
+        {
+            string status = decision.StatusLabel;
+            if (string.IsNullOrWhiteSpace(status))
+                status = _isAutoModelSelectionEnabled ? "Auto" : "Manual";
+
+            string mode = _isAutoModelSelectionEnabled ? "Auto" : "Manual";
+            string resolver = string.IsNullOrWhiteSpace(decision.ResolverLabel) ? "-" : decision.ResolverLabel;
+
+            string reason = string.IsNullOrWhiteSpace(decision.ResolverReason)
+                ? "-"
+                : decision.ResolverReason;
+
+            string keywords = "-";
+            if (decision.ResolverKeywords != null && decision.ResolverKeywords.Count > 0)
+            {
+                keywords = "keywords: " + string.Join(
+                    ", ",
+                    decision.ResolverKeywords
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase));
+            }
+
+            return new NodeDecisionViewData
+            {
+                Status = status,
+                Mode = mode,
+                Resolver = resolver,
+                Model = modelText,
+                TaskSummary = taskSummary,
+                Reason = reason,
+                Keywords = keywords,
+                Extra = string.IsNullOrWhiteSpace(extra) ? "-" : extra,
+                CapabilityAdjusted = decision.CapabilityAdjusted,
+                RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
+                ApiFallbackUsed = decision.UsedFallbackToRules,
+                Steps = steps
+            };
+        }
+
+
+        private static IReadOnlyList<string> BuildTaskModeLines(NodeExecutionDecision decision)
+        {
+            var lines = new List<string>
+    {
+        $"Task Mode: {NodeTaskModeHelper.ToDisplayName(decision.TaskMode)}",
+        $"Confidence: {decision.Confidence:0.00}"
+    };
+
+            if (!string.IsNullOrWhiteSpace(decision.ResolverReason))
+                lines.Add($"Reason: {decision.ResolverReason}");
+
+            if (decision.ResolverKeywords != null && decision.ResolverKeywords.Count > 0)
+            {
+                lines.Add("Keywords: " + string.Join(
+                    ", ",
+                    decision.ResolverKeywords
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)));
+            }
+
+            return lines;
+        }
+
+        private static IReadOnlyList<string> BuildModelLines(NodeExecutionDecision decision, string? actualModelId)
+        {
+            var lines = new List<string>
+    {
+        $"Requested Model: {GetDecisionModelLabel(string.IsNullOrWhiteSpace(decision.RequestedModelId) ? decision.ModelId : decision.RequestedModelId)}",
+        $"Planned Model: {GetDecisionModelLabel(decision.ModelId)}"
+    };
+
+            if (!string.IsNullOrWhiteSpace(actualModelId))
+                lines.Add($"Current/Actual Model: {GetDecisionModelLabel(actualModelId)}");
+
+            return lines;
+        }
+
+        private static IReadOnlyList<string> BuildResolverLines(NodeExecutionDecision decision, string? extra = null)
+        {
+            var lines = new List<string>
+    {
+        $"Resolver: {(string.IsNullOrWhiteSpace(decision.ResolverLabel) ? "-" : decision.ResolverLabel)}",
+        $"UsedApiResolver: {decision.UsedApiResolver}",
+        $"UsedFallbackToRules: {decision.UsedFallbackToRules}"
+    };
+
+            if (!string.IsNullOrWhiteSpace(extra))
+                lines.Add(extra);
+
+            return lines;
+        }
+
+        private static IReadOnlyList<string> BuildCapabilityLines(NodeExecutionDecision decision, bool forcePendingText)
+        {
+            var lines = new List<string>();
+
+            if (forcePendingText && !decision.CapabilityAdjusted)
+            {
+                lines.Add("Capability Guard: waiting / checking");
+                return lines;
+            }
+
+            lines.Add($"Requested: {GetDecisionModelLabel(decision.CapabilityRequestedModelId)}");
+            lines.Add($"Resolved: {GetDecisionModelLabel(decision.CapabilityResolvedModelId)}");
+            lines.Add($"Required: {decision.CapabilityRequired}");
+            lines.Add($"Missing: {decision.CapabilityMissing}");
+            lines.Add($"StreamingAdjusted: {decision.CapabilityStreamingAdjusted}");
+
+            if (!string.IsNullOrWhiteSpace(decision.CapabilityReason))
+                lines.Add($"Reason: {decision.CapabilityReason}");
+
+            return lines;
+        }
+
+        private static IReadOnlyList<string> BuildFallbackLines(NodeExecutionDecision decision)
+        {
+            var lines = new List<string>();
+
+            if (decision.RuntimeFallbackUsed && !string.IsNullOrWhiteSpace(decision.RuntimeFallbackSummary))
+                lines.Add($"Summary: {decision.RuntimeFallbackSummary}");
+
+            if (decision.RuntimeFallbackAttempts != null && decision.RuntimeFallbackAttempts.Count > 0)
+            {
+                foreach (var attempt in decision.RuntimeFallbackAttempts)
+                {
+                    if (attempt == null)
+                        continue;
+
+                    string modelLabel = GetDecisionModelLabel(attempt.ModelId);
+                    string state = attempt.Success ? "Success" : "Failed";
+
+                    lines.Add($"{attempt.AttemptIndex}. {modelLabel} / {state} / {attempt.Reason} / {attempt.ErrorMessage}");
+                }
+            }
+
+            if (lines.Count == 0)
+                lines.Add("No fallback used.");
+
+            return lines;
+        }
+
+        
+        private static string GetDecisionModelLabel(string? modelId)
+        {
+            var def = AiModelHelper.GetDefinition(modelId);
+
+            if (!string.IsNullOrWhiteSpace(def.DisplayName))
+                return def.DisplayName;
+
+            if (!string.IsNullOrWhiteSpace(def.Id))
+                return def.Id;
+
+            return AiModelRegistry.Default.DisplayName;
         }
 
         private void RestoreDecisionPanelAfterLoad()
@@ -2629,6 +3585,100 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             }
         }
 
+        public void SyncAutoFlowTemplate(NodeControl node, string? currentTopText)
+        {
+            if (node == null)
+                return;
+
+            string text = currentTopText ?? "";
+            const string placeholder = "{{input}}";
+
+            if (text.Contains(placeholder, StringComparison.Ordinal))
+            {
+                _autoFlowTemplatesByNode[node.Id] = text;
+            }
+        }
+
+        public string GetAutoFlowTemplate(NodeControl node)
+        {
+            if (node == null)
+                return "";
+
+            if (_autoFlowTemplatesByNode.TryGetValue(node.Id, out var stored) &&
+                !string.IsNullOrWhiteSpace(stored))
+            {
+                return stored;
+            }
+
+            string current = node.GetTopText() ?? "";
+            if (current.Contains("{{input}}", StringComparison.Ordinal))
+            {
+                _autoFlowTemplatesByNode[node.Id] = current;
+                return current;
+            }
+
+            return "";
+        }
+
+        public void ClearAutoFlowTemplate(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            _autoFlowTemplatesByNode.Remove(node.Id);
+        }
+        public NodeControl? GetFirstDownstreamNode(NodeControl node)
+        {
+            if (node == null)
+                return null;
+
+            var hit = GetConnectionsForContext()
+                .FirstOrDefault(c => ReferenceEquals(c.StartNode, node));
+
+            return hit?.EndNode;
+        }
+
+        public bool TryPrepareAutoFlowInput(NodeControl fromNode, NodeControl toNode)
+        {
+            if (fromNode == null || toNode == null)
+                return false;
+
+            string sourceText = (fromNode.GetBottomText() ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(sourceText))
+                return false;
+
+            if (toNode.GetTopLocked())
+                return false;
+
+            string template = GetAutoFlowTemplate(toNode);
+            if (string.IsNullOrWhiteSpace(template))
+                return false;
+
+            const string placeholder = "{{input}}";
+
+            if (!template.Contains(placeholder, StringComparison.Ordinal))
+                return false;
+
+            string injected = template.Replace(placeholder, sourceText, StringComparison.Ordinal);
+
+            if (string.IsNullOrWhiteSpace(injected))
+                return false;
+
+            toNode.SetTopText(injected);
+            toNode.RefreshModelSelectionUI();
+            RefreshDecisionForNode(toNode);
+            return true;
+        }
+
+        public void FocusDecisionNode(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            _lastDecisionNode = node;
+            _hoveredDecisionNode = node;
+            ShowDecisionForNode(node);
+        }
         internal static class MenuConfirmDialog
         {
             public static bool ShowDeleteConfirm(Window owner, string title, string message, FrameworkElement resourceHost)
@@ -2769,6 +3819,20 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                     return btn;
                 }
 
+                public bool NodeAcceptsAutoFlowInput(NodeControl node)
+                {
+                    if (node == null)
+                        return false;
+
+                    if (node.GetTopLocked())
+                        return false;
+
+                    string template = node.GetTopText() ?? "";
+                    if (string.IsNullOrWhiteSpace(template))
+                        return false;
+
+                    return template.Contains("{{input}}", StringComparison.Ordinal);
+                }
                 private static Brush TryGetBrush(FrameworkElement host, string key1, string key2, Color fallback)
                 {
                     try

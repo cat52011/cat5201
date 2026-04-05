@@ -1,0 +1,151 @@
+{
+  "CreatedAt": "2026-04-05T13:19:34.2867805+10:00",
+  "InitialNodeId": "b2300779-abec-4fc4-baea-e149214c60c5",
+  "Nodes": [
+    {
+      "Id": "b2300779-abec-4fc4-baea-e149214c60c5",
+      "X": 618,
+      "Y": 220.40000000000003,
+      "Width": 300,
+      "Height": 400,
+      "TopText": "\u4E00\u53E5\u8A71\u4ECB\u7D39\u96EA\u68A8",
+      "BottomText": "\u96EA\u68A8\u662F\u4E00\u5EA7\u878D\u5408\u58EF\u9E97\u6D77\u6E2F\u3001\u8FF7\u4EBA\u6D77\u7058\u8207\u591A\u5143\u6587\u5316\u9B45\u529B\u7684\u57CE\u5E02\uFF0C\u8B93\u6BCF\u4E00\u4F4D\u65C5\u4EBA\u90FD\u80FD\u5728\u967D\u5149\u8207\u6D3B\u529B\u4E2D\u611B\u4E0A\u6FB3\u6D32\u3002",
+      "TopLocked": true,
+      "FontSize": 20,
+      "NodeModel": "gpt-5.4",
+      "TaskMode": "Chat"
+    },
+    {
+      "Id": "b4cd9cf4-5a5d-4406-8692-9c501149f22a",
+      "X": 1149.998376,
+      "Y": 361.70262720000005,
+      "Width": 453.4581280398122,
+      "Height": 504.89359124480166,
+      "TopText": "\u6539\u5BEB\u6210\u66F4\u6709\u65C5\u904A\u5BA3\u50B3\u53E3\u543B\r\n\u96EA\u68A8\u662F\u4E00\u5EA7\u878D\u5408\u58EF\u9E97\u6D77\u6E2F\u3001\u8FF7\u4EBA\u6D77\u7058\u8207\u591A\u5143\u6587\u5316\u9B45\u529B\u7684\u57CE\u5E02\uFF0C\u8B93\u6BCF\u4E00\u4F4D\u65C5\u4EBA\u90FD\u80FD\u5728\u967D\u5149\u8207\u6D3B\u529B\u4E2D\u611B\u4E0A\u6FB3\u6D32\u3002  \n[[END_OF_RESPONSE]]",
+      "BottomText": "\u967D\u5149\u3001\u6D77\u6D6A\u3001\u7480\u74A8\u6E2F\u7063\u2014\u2014\u96EA\u68A8\uFF0C\u4E00\u5EA7\u8B93\u4F60\u4E00\u773C\u5FC3\u52D5\u3001\u4E00\u8A2A\u96E3\u5FD8\u7684\u9B45\u529B\u4E4B\u57CE\uFF0C\u6B63\u7B49\u8457\u4F60\u4F86\u611F\u53D7\u6FB3\u6D32\u6700\u52D5\u4EBA\u7684\u98A8\u666F\u8207\u6545\u4E8B\u3002\n\n[[END_OF_RESPONSE]]",
+      "TopLocked": false,
+      "FontSize": 20,
+      "NodeModel": "claude-sonnet-4-6",
+      "TaskMode": "Rewrite"
+    }
+  ],
+  "Connections": [
+    {
+      "StartId": "b2300779-abec-4fc4-baea-e149214c60c5",
+      "EndId": "b4cd9cf4-5a5d-4406-8692-9c501149f22a",
+      "StartThumb": "ThumbTR",
+      "EndThumb": "ThumbTL"
+    }
+  ],
+  "Attachments": [],
+  "ExecutionLogs": [
+    {
+      "NodeId": "b2300779-abec-4fc4-baea-e149214c60c5",
+      "StartedAtUtc": "2026-04-05T03:18:09.9683064Z",
+      "EndedAtUtc": "2026-04-05T03:18:13.572274Z",
+      "DurationMs": 3603,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "gpt-5.4",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Chat",
+      "Confidence": 0.93,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "gpt-5.4",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "b2300779-abec-4fc4-baea-e149214c60c5",
+      "StartedAtUtc": "2026-04-05T03:19:25.0823565Z",
+      "EndedAtUtc": "2026-04-05T03:19:29.8192387Z",
+      "DurationMs": 4736,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "gpt-5.4",
+      "PlannedModelId": "gpt-5.4",
+      "ActualModelId": "gpt-5.4",
+      "TaskMode": "Chat",
+      "Confidence": 0.94,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "gpt-5.4",
+      "CapabilityResolvedModelId": "gpt-5.4",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "gpt-5.4",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    },
+    {
+      "NodeId": "b4cd9cf4-5a5d-4406-8692-9c501149f22a",
+      "StartedAtUtc": "2026-04-05T03:19:29.8356774Z",
+      "EndedAtUtc": "2026-04-05T03:19:34.2837637Z",
+      "DurationMs": 4448,
+      "SelectionMode": "API Auto",
+      "Resolver": "Responses API",
+      "RequestedModelId": "claude-sonnet-4-6",
+      "PlannedModelId": "claude-sonnet-4-6",
+      "ActualModelId": "claude-sonnet-4-6",
+      "TaskMode": "Rewrite",
+      "Confidence": 0.98,
+      "ResolverReason": "\u7531 API resolver \u6839\u64DA\u8F38\u5165\u5167\u5BB9\u5224\u5B9A\u6A21\u578B\u8207\u4EFB\u52D9\u6A21\u5F0F",
+      "ResolverKeywords": [],
+      "CapabilityAdjusted": false,
+      "CapabilityReason": "",
+      "CapabilityRequestedModelId": "claude-sonnet-4-6",
+      "CapabilityResolvedModelId": "claude-sonnet-4-6",
+      "CapabilityRequired": "None",
+      "CapabilityMissing": "None",
+      "CapabilityStreamingAdjusted": false,
+      "RuntimeFallbackUsed": false,
+      "RuntimeFallbackSummary": "",
+      "Success": true,
+      "ErrorMessage": "",
+      "FallbackAttempts": [
+        {
+          "AttemptIndex": 1,
+          "ModelId": "claude-sonnet-4-6",
+          "Reason": "primary",
+          "Success": true,
+          "ErrorMessage": ""
+        }
+      ]
+    }
+  ],
+  "FileNameLocked": false,
+  "AutoModelSelectionEnabled": true,
+  "AdvancedAutoResolverEnabled": true
+}

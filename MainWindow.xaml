@@ -481,142 +481,113 @@ Margin="0,20,20,0">
 
                     <!-- 下方可上下捲動內容區 -->
                     <ScrollViewer Grid.Row="2"
-                      Margin="0,8,0,0"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled"
-                      CanContentScroll="False"
-                      PanningMode="VerticalOnly">
+              Margin="0,8,0,0"
+              VerticalScrollBarVisibility="Auto"
+              HorizontalScrollBarVisibility="Disabled"
+              CanContentScroll="False"
+              PanningMode="VerticalOnly">
 
-                        <Grid Margin="0,0,6,0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-
-                                <RowDefinition Height="10"/>
-
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-
-                                <RowDefinition Height="10"/>
-
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-
-                                <RowDefinition Height="10"/>
-
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-
-                                <RowDefinition Height="10"/>
-
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-
-                                <RowDefinition Height="10"/>
-
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-
-                                <RowDefinition Height="10"/>
-
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
+                        <StackPanel Margin="0,0,6,0">
 
                             <!-- 模式 -->
-                            <TextBlock Grid.Row="0"
-                           Text="模式"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="1"
-                           x:Name="DecisionModeText"
-                           Text="-"
-                           FontSize="13"
-                           FontWeight="SemiBold"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
+                            <TextBlock Text="模式"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionModeText"
+                   Text="-"
+                   FontSize="13"
+                   FontWeight="SemiBold"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,10"/>
 
                             <!-- 策略 -->
-                            <TextBlock Grid.Row="3"
-                           Text="策略"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="4"
-                           x:Name="DecisionResolverText"
-                           Text="-"
-                           FontSize="13"
-                           FontWeight="SemiBold"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
+                            <TextBlock Text="策略"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionResolverText"
+                   Text="-"
+                   FontSize="13"
+                   FontWeight="SemiBold"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,10"/>
 
                             <!-- 模型 -->
-                            <TextBlock Grid.Row="6"
-                           Text="模型"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="7"
-                           x:Name="DecisionModelText"
-                           Text="-"
-                           FontSize="13"
-                           FontWeight="SemiBold"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
+                            <TextBlock Text="模型"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionModelText"
+                   Text="-"
+                   FontSize="13"
+                   FontWeight="SemiBold"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,10"/>
 
                             <!-- 任務 -->
-                            <TextBlock Grid.Row="9"
-                           Text="任務"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="10"
-                           x:Name="DecisionTaskText"
-                           Text="-"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
+                            <TextBlock Text="任務"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionTaskText"
+                   Text="-"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,10"/>
 
                             <!-- Reason -->
-                            <TextBlock Grid.Row="12"
-                           Text="Reason"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="13"
-                           x:Name="DecisionReasonText"
-                           Text="-"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
+                            <TextBlock Text="Reason"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionReasonText"
+                   Text="-"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,10"/>
 
                             <!-- Keywords -->
-                            <TextBlock Grid.Row="15"
-                           Text="Keywords"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="16"
-                           x:Name="DecisionKeywordsText"
-                           Text="-"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
+                            <TextBlock Text="Keywords"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionKeywordsText"
+                   Text="-"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,10"/>
 
                             <!-- Capability / Trace -->
-                            <TextBlock Grid.Row="18"
-                           Text="Capability / Trace"
-                           FontSize="12"
-                           Foreground="#7A7A7A"
-                           Margin="0,0,0,2"/>
-                            <TextBlock Grid.Row="19"
-                           x:Name="DecisionExtraText"
-                           Text="-"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Foreground="#2A2A2A"/>
-                        </Grid>
+                            <TextBlock Text="Capability / Trace"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,2"/>
+                            <TextBlock x:Name="DecisionExtraText"
+                   Text="-"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="#2A2A2A"
+                   Margin="0,0,0,14"/>
+
+                            <!-- Timeline -->
+                            <Border Height="1"
+                Background="#ECECEC"
+                Margin="0,0,0,12"/>
+
+                            <TextBlock Text="Decision Timeline"
+                   FontSize="12"
+                   Foreground="#7A7A7A"
+                   Margin="0,0,0,8"/>
+
+                            <StackPanel x:Name="DecisionTimelineHost"/>
+                        </StackPanel>
                     </ScrollViewer>
                 </Grid>
             </Border>
