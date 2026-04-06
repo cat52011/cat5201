@@ -16,13 +16,14 @@ namespace test
 
         private readonly int _continuationMaxRounds;
         private readonly int _mainReplyMaxOutputTokens;
-
+        private readonly NodeMemoryService _memoryService;
         public NodeExecutionCoreService(
     AiServiceRouter router,
     NodeContextStrategyResolver contextStrategyResolver,
     NodePromptBuilder promptBuilder,
     NodeInstructionBuilder instructionBuilder,
     NodeTextProcessingService textProcessing,
+    NodeMemoryService memoryService,
     Func<string, string, int, bool, int, CancellationToken, Task<AiRequest>> buildRequestFactory,
     int continuationMaxRounds,
     int mainReplyMaxOutputTokens)
@@ -32,6 +33,7 @@ namespace test
             _promptBuilder = promptBuilder;
             _instructionBuilder = instructionBuilder;
             _textProcessing = textProcessing;
+            _memoryService = memoryService;
             _buildRequestFactory = buildRequestFactory;
             _continuationMaxRounds = continuationMaxRounds;
             _mainReplyMaxOutputTokens = mainReplyMaxOutputTokens;
@@ -43,23 +45,19 @@ namespace test
             NodeTaskMode taskMode,
             CancellationToken ct)
         {
-            var route = _router.GetRouteInfo(model);
-
-            string instructions = route.Provider == AiProviderKind.PerplexitySonar
-                ? _instructionBuilder.BuildPerplexityInstructions(model, route.IsDeepResearch, taskMode)
-                : _instructionBuilder.BuildGeneralNodeInstructions(model, taskMode);
+            var memory = _memoryService.RecallRelevant(currentNode, topText, taskMode);
 
             string prompt = _promptBuilder.BuildPrompt(new NodePromptBuildRequest
             {
                 CurrentNode = currentNode,
                 TopText = topText,
                 TaskMode = taskMode,
-                Strategy = _contextStrategyResolver.Resolve(model, taskMode)
+                Strategy = _contextStrategyResolver.Resolve(model, taskMode),
+                MemoryBlock = memory.PromptBlock
             });
 
             return await GenerateWithContinuationAsync(
                 model,
-                instructions,
                 async followUp => await _buildRequestFactory(
                     model,
                     prompt + followUp,
@@ -69,32 +67,27 @@ namespace test
                     ct),
                 ct);
         }
-
         public async Task<string> ExecuteStreamAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            Action<string> onDelta,
-            CancellationToken ct)
+    NodeControl currentNode,
+    string topText,
+    string model,
+    NodeTaskMode taskMode,
+    Action<string> onDelta,
+    CancellationToken ct)
         {
-            var route = _router.GetRouteInfo(model);
-
-            string instructions = route.Provider == AiProviderKind.PerplexitySonar
-                ? _instructionBuilder.BuildPerplexityInstructions(model, route.IsDeepResearch, taskMode)
-                : _instructionBuilder.BuildGeneralNodeInstructions(model, taskMode);
+            var memory = _memoryService.RecallRelevant(currentNode, topText, taskMode);
 
             string prompt = _promptBuilder.BuildPrompt(new NodePromptBuildRequest
             {
                 CurrentNode = currentNode,
                 TopText = topText,
                 TaskMode = taskMode,
-                Strategy = _contextStrategyResolver.Resolve(model, taskMode)
+                Strategy = _contextStrategyResolver.Resolve(model, taskMode),
+                MemoryBlock = memory.PromptBlock
             });
 
             return await GenerateWithContinuationStreamingAsync(
                 model,
-                instructions,
                 async followUp => await _buildRequestFactory(
                     model,
                     prompt + followUp,
@@ -107,10 +100,9 @@ namespace test
         }
 
         private async Task<string> GenerateWithContinuationAsync(
-            string model,
-            string instructions,
-            Func<string, Task<AiRequest>> buildRequestFactory,
-            CancellationToken ct)
+    string model,
+    Func<string, Task<AiRequest>> buildRequestFactory,
+    CancellationToken ct)
         {
             var finalText = new StringBuilder();
             var provider = _router.GetProvider(model);
@@ -167,11 +159,10 @@ namespace test
         }
 
         private async Task<string> GenerateWithContinuationStreamingAsync(
-            string model,
-            string instructions,
-            Func<string, Task<AiRequest>> buildRequestFactory,
-            Action<string> onDelta,
-            CancellationToken ct)
+    string model,
+    Func<string, Task<AiRequest>> buildRequestFactory,
+    Action<string> onDelta,
+    CancellationToken ct)
         {
             var finalText = new StringBuilder();
             var provider = _router.GetProvider(model);

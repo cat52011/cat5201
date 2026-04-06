@@ -6,5 +6,7 @@
         public string TopText { get; init; } = "";
         public NodeTaskMode TaskMode { get; init; } = NodeTaskMode.Chat;
         public NodeContextStrategy Strategy { get; init; } = NodeContextStrategy.Full;
+
+        public string MemoryBlock { get; init; } = "";
     }
 }

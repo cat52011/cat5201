@@ -61,7 +61,7 @@ namespace test
             if (string.IsNullOrWhiteSpace(relativePath))
                 return "";
 
-            string savesDir = @"D:\desk\college\final\cat5201\file";
+            string savesDir = @"D:\desk\college\final\file";
             string attachmentsRootDir = Path.Combine(savesDir, "_attachments");
 
             return Path.Combine(attachmentsRootDir, relativePath);

@@ -47,6 +47,7 @@ namespace test
         private readonly Dictionary<Guid, NodeDecisionViewData> _liveDecisionViewsByNode = new();
 
         private readonly Dictionary<Guid, string> _autoFlowTemplatesByNode = new();
+        private readonly Dictionary<Guid, NodeAutoFlowPolicy> _autoFlowPoliciesByNode = new();
 
         public enum EditReason
         {
@@ -97,7 +98,7 @@ namespace test
 
         private static readonly Random _random = new();
 
-        private string SavesDir => @"D:\desk\college\final\cat5201\file";
+        private string SavesDir => @"D:\desk\college\final\file";
         private string AttachmentsRootDir => System.IO.Path.Combine(SavesDir, "_attachments");
 
         private string? _currentFilePath;
@@ -1976,6 +1977,8 @@ namespace test
             if (!_nodeTaskModesById.ContainsKey(node.Id))
                 _nodeTaskModesById[node.Id] = GetDefaultNodeTaskMode();
 
+            if (!_autoFlowPoliciesByNode.ContainsKey(node.Id))
+                _autoFlowPoliciesByNode[node.Id] = NodeAutoFlowPolicy.Default;
             node.Moved -= Node_Moved;
             node.Moved += Node_Moved;
 
@@ -2541,7 +2544,7 @@ namespace test
             _nodeTaskModesById.Clear();
             _executionLogService.ClearAll();
             _autoFlowTemplatesByNode.Clear();
-
+            _autoFlowPoliciesByNode.Clear();
             _editingNode = null;
             _editingReason = EditReason.None;
         }
@@ -3008,13 +3011,14 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             _connections.RemoveAll(c => connsToDelete.Contains(c));
 
             foreach(var n in nodesToDelete)
-{
+            {
                 ClearEditingIfDeleted(n);
                 MainCanvas.Children.Remove(n);
                 _attachmentsByNode.Remove(n.Id);
                 _nodeModelsById.Remove(n.Id);
                 _nodeTaskModesById.Remove(n.Id);
                 _autoFlowTemplatesByNode.Remove(n.Id);
+                _autoFlowPoliciesByNode.Remove(n.Id);
                 ClearExecutionLogs(n);
             }
 
@@ -3620,6 +3624,21 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             return "";
         }
 
+        public string CurrentFileDisplayKey()
+        {
+            if (string.IsNullOrWhiteSpace(_currentFilePath))
+                return "default";
+
+            try
+            {
+                return System.IO.Path.GetFileNameWithoutExtension(_currentFilePath);
+            }
+            catch
+            {
+                return "default";
+            }
+        }
+
         public void ClearAutoFlowTemplate(NodeControl node)
         {
             if (node == null)
@@ -3627,15 +3646,10 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
             _autoFlowTemplatesByNode.Remove(node.Id);
         }
+
         public NodeControl? GetFirstDownstreamNode(NodeControl node)
         {
-            if (node == null)
-                return null;
-
-            var hit = GetConnectionsForContext()
-                .FirstOrDefault(c => ReferenceEquals(c.StartNode, node));
-
-            return hit?.EndNode;
+            return GetDownstreamNodes(node).FirstOrDefault();
         }
 
         public bool TryPrepareAutoFlowInput(NodeControl fromNode, NodeControl toNode)
@@ -3678,6 +3692,45 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             _lastDecisionNode = node;
             _hoveredDecisionNode = node;
             ShowDecisionForNode(node);
+        }
+
+        public NodeAutoFlowPolicy GetNodeAutoFlowPolicy(NodeControl node)
+        {
+            if (node == null)
+                return NodeAutoFlowPolicy.Default;
+
+            if (_autoFlowPoliciesByNode.TryGetValue(node.Id, out var policy))
+                return policy ?? NodeAutoFlowPolicy.Default;
+
+            _autoFlowPoliciesByNode[node.Id] = NodeAutoFlowPolicy.Default;
+            return NodeAutoFlowPolicy.Default;
+        }
+
+        public void SetNodeAutoFlowPolicy(NodeControl node, NodeAutoFlowPolicy policy)
+        {
+            if (node == null)
+                return;
+
+            _autoFlowPoliciesByNode[node.Id] = policy ?? NodeAutoFlowPolicy.Default;
+            SaveState();
+        }
+
+        public bool IsNodeAutoRunEnabled(NodeControl node)
+        {
+            return GetNodeAutoFlowPolicy(node).AutoRunEnabled;
+        }
+
+        public IReadOnlyList<NodeControl> GetDownstreamNodes(NodeControl node)
+        {
+            if (node == null)
+                return Array.Empty<NodeControl>();
+
+            return GetConnectionsForContext()
+                .Where(c => ReferenceEquals(c.StartNode, node))
+                .Select(c => c.EndNode)
+                .Where(n => n != null)
+                .Distinct()
+                .ToList();
         }
         internal static class MenuConfirmDialog
         {

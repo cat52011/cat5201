@@ -43,6 +43,8 @@ namespace test
             _modelSelection = new NodeModelSelectionService();
             _contextStrategyResolver = new NodeContextStrategyResolver(router);
             _contextService = new NodeContextService(main);
+            _memoryStore = new MemoryStore(@"D:\desk\college\final\file");
+            _memoryService = new NodeMemoryService(main, _memoryStore);
             _promptBuilder = new NodePromptBuilder(_contextService);
             _executionHeuristics = new NodeExecutionHeuristicsService(main);
 
@@ -60,14 +62,15 @@ namespace test
                 _modelSelection);
 
             _executionCoreService = new NodeExecutionCoreService(
-                _router,
-                _contextStrategyResolver,
-                _promptBuilder,
-                _instructionBuilder,
-                _textProcessing,
-                BuildExecutionRequestAsync,
-                ContinuationMaxRounds,
-                MainReplyMaxOutputTokens);
+    _router,
+    _contextStrategyResolver,
+    _promptBuilder,
+    _instructionBuilder,
+    _textProcessing,
+    _memoryService,
+    BuildExecutionRequestAsync,
+    ContinuationMaxRounds,
+    MainReplyMaxOutputTokens);
 
             _translationExecutionService = new NodeTranslationExecutionService(
                 _router,
@@ -85,6 +88,8 @@ namespace test
         private const int SegmentTranslationMaxTokens = 8000;
         private NodeControl? _currentExecutionNode;
         private string? _currentExecutionInstructions;
+        private readonly MemoryStore _memoryStore;
+        private readonly NodeMemoryService _memoryService;
 
         private sealed class SegmentPlanItem
         {
@@ -157,6 +162,14 @@ namespace test
                 SyncActualModelToNode(node, decision);
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                await _memoryService.RememberExecutionResultAsync(
+                    node,
+                    topText,
+                    execution.Text,
+                    decision.TaskMode,
+                    decision.ActualModelId,
+                    ct);
 
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
@@ -246,7 +259,15 @@ namespace test
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
 
-                var flowContext = new AutoFlowRunContext();
+await _memoryService.RememberExecutionResultAsync(
+    node,
+    topText,
+    streamingExecution.Text,
+    decision.TaskMode,
+    decision.ActualModelId,
+    ct);
+
+var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
 
@@ -710,10 +731,11 @@ namespace test
             _router.EnsureServiceReady(route);
             return route;
         }
+
         private async Task TryAutoFlowToNextNodeAsync(
-    NodeControl currentNode,
-    AutoFlowRunContext flowContext,
-    CancellationToken ct)
+        NodeControl currentNode,
+        AutoFlowRunContext flowContext,
+        CancellationToken ct)
         {
             if (currentNode == null || flowContext == null)
                 return;
@@ -721,58 +743,87 @@ namespace test
             if (flowContext.StepCount >= AutoFlowMaxSteps)
                 return;
 
-            var nextNode = _main.GetFirstDownstreamNode(currentNode);
-            if (nextNode == null)
+            var downstreamNodes = _main.GetDownstreamNodes(currentNode);
+            if (downstreamNodes == null || downstreamNodes.Count == 0)
                 return;
 
-            // 防自己連自己
-            if (ReferenceEquals(nextNode, currentNode))
-                return;
+            foreach (var nextNode in downstreamNodes)
+            {
+                ct.ThrowIfCancellationRequested();
 
-            // 防循環 / 同輪重複執行
-            if (flowContext.VisitedNodeIds.Contains(nextNode.Id))
-                return;
+                if (nextNode == null)
+                    continue;
 
-            if (!_main.NodeAcceptsAutoFlowInput(nextNode))
-                return;
+                if (flowContext.StepCount >= AutoFlowMaxSteps)
+                    return;
 
-            bool prepared = _main.TryPrepareAutoFlowInput(currentNode, nextNode);
-            if (!prepared)
-                return;
+                // 防自己連自己
+                if (ReferenceEquals(nextNode, currentNode))
+                    continue;
 
-            _main.FocusDecisionNode(nextNode);
+                // 防循環 / 同輪重複執行
+                if (flowContext.VisitedNodeIds.Contains(nextNode.Id))
+                    continue;
 
-            string nextTopText = nextNode.GetTopText() ?? "";
-            if (string.IsNullOrWhiteSpace(nextTopText))
-                return;
+                // 節點 policy：未啟用 auto run 就跳過
+                if (!_main.IsNodeAutoRunEnabled(nextNode))
+                    continue;
 
-            nextNode.ClearBottomText();
-            nextNode.EndEditBecauseSent();
+                if (!_main.NodeAcceptsAutoFlowInput(nextNode))
+                    continue;
 
-            flowContext.VisitedNodeIds.Add(nextNode.Id);
-            flowContext.StepCount++;
+                bool prepared = _main.TryPrepareAutoFlowInput(currentNode, nextNode);
+                if (!prepared)
+                    continue;
 
-            string finalText = await GenerateStreamAsync(
-                nextNode,
-                nextTopText,
-                delta =>
+                _main.FocusDecisionNode(nextNode);
+
+                string nextTopText = nextNode.GetTopText() ?? "";
+                if (string.IsNullOrWhiteSpace(nextTopText))
+                    continue;
+
+                nextNode.ClearBottomText();
+                nextNode.EndEditBecauseSent();
+
+                flowContext.VisitedNodeIds.Add(nextNode.Id);
+                flowContext.StepCount++;
+
+                try
                 {
-                    nextNode.Dispatcher.Invoke(() =>
-                    {
-                        nextNode.AppendBottomText(delta);
-                    });
-                },
-                ct);
+                    string finalText = await GenerateStreamAsync(
+                        nextNode,
+                        nextTopText,
+                        delta =>
+                        {
+                            nextNode.Dispatcher.Invoke(() =>
+                            {
+                                nextNode.AppendBottomText(delta);
+                            });
+                        },
+                        ct);
 
-            if (string.IsNullOrWhiteSpace(finalText))
-                return;
+                    if (string.IsNullOrWhiteSpace(finalText))
+                        continue;
+                }
+                catch
+                {
+                    var policy = _main.GetNodeAutoFlowPolicy(nextNode);
+                    if (policy.StopFlowOnError)
+                        return;
+                }
+            }
         }
 
         private sealed class AutoFlowRunContext
         {
             public HashSet<Guid> VisitedNodeIds { get; } = new();
             public int StepCount { get; set; }
+
+            public Guid RunId { get; } = Guid.NewGuid();
+
+            public List<string> Trace { get; } = new();
         }
+
         private static string Truncate(string s, int maxChars)
         {
             if (string.IsNullOrEmpty(s)) return "";
