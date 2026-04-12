@@ -7,6 +7,7 @@ namespace test
 {
     public sealed class NodeExecutionDecisionResolver
     {
+        private readonly AgentRuntimeProfileResolver _agentProfileResolver = new();
         private readonly AiServiceRouter _router;
         private readonly MainWindow _main;
         private readonly AiAutoModelResolverService _autoResolver;
@@ -29,16 +30,26 @@ namespace test
             string topText,
             CancellationToken ct)
         {
-            string selectedModel = _main.GetNodeSelectedModel(node);
+            string selectedAgentId = _main.GetNodeSelectedAgent(node);
+            var agent = AgentRegistry.Get(selectedAgentId);
 
+            string selectedModel = _main.GetNodeSelectedModel(node);
+            var agentProfile = _agentProfileResolver.Resolve(
+                agent,
+                preferredModelId: selectedModel,
+                preferredTaskMode: _main.GetNodeTaskMode(node));
             if (!_main.IsAutoModelSelectionEnabled())
             {
                 var manualTask = ResolveAndPersistTaskMode(node, topText);
 
                 var manualDecision = new NodeExecutionDecision
                 {
-                    RequestedModelId = AiModelHelper.NormalizeNodeModel(selectedModel),
-                    ModelId = AiModelHelper.NormalizeNodeModel(selectedModel),
+                    RequestedAgentId = agent.Id,
+                    ActualAgentId = agent.Id,
+
+                    RequestedModelId = AiModelHelper.NormalizeNodeModel(agentProfile.RuntimeModelId),
+                    ModelId = AiModelHelper.NormalizeNodeModel(agentProfile.RuntimeModelId),
+
                     TaskMode = manualTask.Mode,
                     ResolverLabel = "Manual",
                     StatusLabel = "Manual",
@@ -69,8 +80,12 @@ namespace test
 
                     var apiDecision = new NodeExecutionDecision
                     {
+                        RequestedAgentId = agent.Id,
+                        ActualAgentId = agent.Id,
+
                         RequestedModelId = resolvedModel,
                         ModelId = resolvedModel,
+
                         TaskMode = resolvedMode,
                         ResolverLabel = "Responses API",
                         StatusLabel = "API Auto",
@@ -93,8 +108,12 @@ namespace test
 
                     var fallbackDecision = new NodeExecutionDecision
                     {
+                        RequestedAgentId = agent.Id,
+                        ActualAgentId = agent.Id,
+
                         RequestedModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
                         ModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
+
                         TaskMode = fallbackTask.Mode,
                         ResolverLabel = "Rules (fallback)",
                         StatusLabel = "API Auto",
@@ -117,8 +136,12 @@ namespace test
 
             var ruleDecision = new NodeExecutionDecision
             {
+                RequestedAgentId = agent.Id,
+                ActualAgentId = agent.Id,
+
                 RequestedModelId = AiModelHelper.NormalizeNodeModel(autoModel),
                 ModelId = AiModelHelper.NormalizeNodeModel(autoModel),
+
                 TaskMode = ruleTask.Mode,
                 ResolverLabel = "Rules",
                 StatusLabel = "Rule Auto",

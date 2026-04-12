@@ -307,6 +307,17 @@
                       Foreground="#D32F2F"
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="DeleteMenuItem_Click"/>
+            <MenuItem Header="Agent → General"
+          Click="AgentGeneralMenuItem_Click"/>
+
+            <MenuItem Header="Agent → Research"
+          Click="AgentResearchMenuItem_Click"/>
+
+            <MenuItem Header="Agent → Translation"
+          Click="AgentTranslationMenuItem_Click"/>
+
+            <MenuItem Header="Agent → Code"
+          Click="AgentCodeMenuItem_Click"/>
         </ContextMenu>
     </UserControl.ContextMenu>
 

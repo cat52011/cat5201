@@ -19,6 +19,7 @@ namespace test
 
         public Task RememberExecutionResultAsync(
             NodeControl node,
+            string agentId,
             string topText,
             string bottomText,
             NodeTaskMode taskMode,
@@ -30,6 +31,7 @@ namespace test
 
             topText ??= "";
             bottomText ??= "";
+            agentId ??= "";
 
             if (string.IsNullOrWhiteSpace(bottomText))
                 return Task.CompletedTask;
@@ -39,36 +41,59 @@ namespace test
 
             var items = new List<MemoryItem>();
 
-            // 1. 節點結果記憶
+            // 1. Agent 專屬 execution memory
             items.Add(new MemoryItem
             {
                 Scope = MemoryScope.Node,
                 Category = "execution_result",
                 FileKey = fileKey,
                 SourceNodeId = node.Id.ToString(),
+                AgentId = agentId,
+                IsSharedMemory = false,
                 Title = title,
                 Content = TrimText(bottomText, 1800),
                 Tags = BuildTags(topText, taskMode),
                 TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
                 ModelId = AiModelHelper.NormalizeNodeModel(modelId),
-                Importance = 0.60,
+                Importance = 0.68,
                 CreatedAtUtc = DateTime.UtcNow,
                 UpdatedAtUtc = DateTime.UtcNow
             });
 
-            // 2. 檔案級摘要記憶
+            // 2. Agent 專屬 file summary memory
             items.Add(new MemoryItem
             {
                 Scope = MemoryScope.File,
-                Category = "summary",
+                Category = "agent_summary",
                 FileKey = fileKey,
                 SourceNodeId = node.Id.ToString(),
-                Title = $"檔案脈絡摘要：{title}",
+                AgentId = agentId,
+                IsSharedMemory = false,
+                Title = $"Agent 摘要：{title}",
                 Content = BuildFileLevelSummary(topText, bottomText),
                 Tags = BuildTags(topText, taskMode),
                 TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
                 ModelId = AiModelHelper.NormalizeNodeModel(modelId),
-                Importance = 0.72,
+                Importance = 0.74,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+
+            // 3. Shared memory
+            items.Add(new MemoryItem
+            {
+                Scope = MemoryScope.File,
+                Category = "shared_summary",
+                FileKey = fileKey,
+                SourceNodeId = node.Id.ToString(),
+                AgentId = "",
+                IsSharedMemory = true,
+                Title = $"共享摘要：{title}",
+                Content = BuildFileLevelSummary(topText, bottomText),
+                Tags = BuildTags(topText, taskMode),
+                TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
+                ModelId = AiModelHelper.NormalizeNodeModel(modelId),
+                Importance = 0.70,
                 CreatedAtUtc = DateTime.UtcNow,
                 UpdatedAtUtc = DateTime.UtcNow
             });
@@ -76,52 +101,96 @@ namespace test
             _store.AddRange(items);
             return Task.CompletedTask;
         }
-
         public MemoryQueryResult RecallRelevant(
             NodeControl currentNode,
+            string agentId,
             string topText,
             NodeTaskMode taskMode,
             int maxCount = 6)
         {
             string fileKey = GetCurrentFileKey();
-            var items = _store.Query(fileKey, topText, maxCount);
 
-            string block = BuildPromptBlock(items, taskMode);
+            var all = _store.Query(fileKey, agentId, topText, maxCount * 2);
+
+            var agentItems = all
+                .Where(x => string.Equals(x.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+                .Take(maxCount)
+                .ToList();
+
+            var sharedItems = all
+                .Where(x => x.IsSharedMemory)
+                .Take(3)
+                .ToList();
+
+            var merged = agentItems
+    .Concat(sharedItems)
+    .GroupBy(x => x.Id)
+    .Select(g => g.First())
+    .Take(maxCount)
+    .ToList();
+
+            string block = BuildPromptBlock(agentId, merged, agentItems, sharedItems, taskMode);
+
             return new MemoryQueryResult
             {
-                Items = items,
+                Items = merged,
+                AgentItems = agentItems,
+                SharedItems = sharedItems,
                 PromptBlock = block
             };
         }
-
         private string BuildPromptBlock(
+            string agentId,
             IReadOnlyList<MemoryItem> items,
+            IReadOnlyList<MemoryItem> agentItems,
+            IReadOnlyList<MemoryItem> sharedItems,
             NodeTaskMode taskMode)
         {
-            if (items == null || items.Count == 0)
+            if ((items == null || items.Count == 0) &&
+                (agentItems == null || agentItems.Count == 0) &&
+                (sharedItems == null || sharedItems.Count == 0))
+            {
                 return "";
-
-            var lines = new List<string>
-            {
-                "【相關記憶（中高權重，僅供延續脈絡，不可蓋過目前節點）】"
-            };
-
-            int index = 1;
-            foreach (var item in items)
-            {
-                lines.Add($"- 記憶 {index}");
-                lines.Add($"  Scope: {item.Scope}");
-                lines.Add($"  Category: {item.Category}");
-                lines.Add($"  Title: {item.Title}");
-                lines.Add($"  Content: {TrimText(item.Content, 320)}");
-                index++;
             }
 
-            lines.Add("要求：若相關記憶與目前節點衝突，以目前節點內容為準。");
+            var lines = new List<string>
+    {
+        "【相關記憶（Agent-aware）】"
+    };
+
+            if (agentItems != null && agentItems.Count > 0)
+            {
+                lines.Add($"【Agent 專屬記憶：{agentId}】");
+                int index = 1;
+                foreach (var item in agentItems)
+                {
+                    lines.Add($"- Agent Memory {index}");
+                    lines.Add($"  Category: {item.Category}");
+                    lines.Add($"  Title: {item.Title}");
+                    lines.Add($"  Content: {TrimText(item.Content, 320)}");
+                    index++;
+                }
+            }
+
+            if (sharedItems != null && sharedItems.Count > 0)
+            {
+                lines.Add("【共享記憶】");
+                int index = 1;
+                foreach (var item in sharedItems)
+                {
+                    lines.Add($"- Shared Memory {index}");
+                    lines.Add($"  Category: {item.Category}");
+                    lines.Add($"  Title: {item.Title}");
+                    lines.Add($"  Content: {TrimText(item.Content, 280)}");
+                    index++;
+                }
+            }
+
+            lines.Add("要求：若記憶與目前節點衝突，以目前節點內容為準。");
+            lines.Add("要求：Agent 專屬記憶優先於共享記憶。");
 
             return string.Join(Environment.NewLine, lines);
         }
-
         private string BuildFileLevelSummary(string topText, string bottomText)
         {
             return

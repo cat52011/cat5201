@@ -33,6 +33,7 @@ namespace test
         private readonly NodeDecisionPresenter _decisionPresenter;
         private readonly NodeExecutionFinalizer _executionFinalizer;
         private const int AutoFlowMaxSteps = 12;
+        private readonly AgentRuntimeFactory _agentRuntimeFactory;
 
         public NodeService(AiServiceRouter router, MainWindow main)
         {
@@ -60,6 +61,11 @@ namespace test
                 main,
                 _autoResolver,
                 _modelSelection);
+            _agentRuntimeFactory = new AgentRuntimeFactory(
+    main,
+    _decisionResolver,
+    _executionFinalizer,
+    ExecuteWithFallbackAsync);
 
             _executionCoreService = new NodeExecutionCoreService(
     _router,
@@ -134,22 +140,26 @@ namespace test
                 return "";
 
             var startedAtUtc = DateTime.UtcNow;
-            var decision = await _decisionResolver.ResolveAsync(node, topText, ct);
-            _main.SetLiveDecisionResolving(node, decision);
+            var agent = AgentRegistry.Get(_main.GetNodeSelectedAgent(node));
+            var runtime = _agentRuntimeFactory.Create();
 
             try
             {
-                var execution = await ExecuteWithFallbackAsync(
-                    node,
-                    topText,
-                    decision,
-                    onDelta: null,
-                    useStreaming: false,
-                    ct);
+                var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
+                {
+                    Node = node,
+                    Agent = agent,
+                    TopText = topText,
+                    UseStreaming = false,
+                    OnDelta = null,
+                    CancellationToken = ct
+                });
+
+                var decision = agentResult.Decision;
+                var execution = agentResult.Execution;
 
                 if (!execution.IsSuccess)
                 {
-                    FinalizeDecisionAfterExecution(decision, execution);
                     ApplyDecisionVisualization(decision);
                     _main.SetLiveDecisionFailed(node, decision, execution.ErrorMessage);
                     _main.ClearLiveDecisionState(node);
@@ -157,19 +167,19 @@ namespace test
                     throw new InvalidOperationException(execution.ErrorMessage);
                 }
 
-                FinalizeDecisionAfterExecution(decision, execution);
                 ApplyDecisionVisualization(decision);
                 SyncActualModelToNode(node, decision);
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
 
                 await _memoryService.RememberExecutionResultAsync(
-                    node,
-                    topText,
-                    execution.Text,
-                    decision.TaskMode,
-                    decision.ActualModelId,
-                    ct);
+    node,
+    decision.ActualAgentId,
+    topText,
+    execution.Text,
+    decision.TaskMode,
+    decision.ActualModelId,
+    ct);
 
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
@@ -181,109 +191,96 @@ namespace test
             }
             catch (Exception ex)
             {
-                _main.SetLiveDecisionFailed(node, decision, ex.Message);
+                var failedDecision = new NodeExecutionDecision
+                {
+                    RequestedAgentId = agent.Id,
+                    ActualAgentId = agent.Id,
+                    ResolverLabel = "AgentRuntime",
+                    StatusLabel = _main.IsAutoModelSelectionEnabled() ? "Auto" : "Manual"
+                };
+
+                _main.SetLiveDecisionFailed(node, failedDecision, ex.Message);
                 _main.ClearLiveDecisionState(node);
-                CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: ex.Message);
+                CommitExecutionLog(node, failedDecision, startedAtUtc, success: false, errorMessage: ex.Message);
                 throw;
             }
         }
 
         public async Task<string> GenerateStreamAsync(
-    NodeControl node,
-    string topText,
-    Action<string> onDelta,
-    CancellationToken ct)
+            NodeControl node,
+            string topText,
+            Action<string> onDelta,
+            CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
             var startedAtUtc = DateTime.UtcNow;
-            var decision = await _decisionResolver.ResolveAsync(node, topText, ct);
-            _main.SetLiveDecisionResolving(node, decision);
+            var agent = AgentRegistry.Get(_main.GetNodeSelectedAgent(node));
+            var runtime = _agentRuntimeFactory.Create();
 
             try
             {
-                if (!decision.UseStreaming)
+                var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
                 {
-                    var nonStreamingExecution = await ExecuteWithFallbackAsync(
-                        node,
-                        topText,
-                        decision,
-                        onDelta: null,
-                        useStreaming: false,
-                        ct);
+                    Node = node,
+                    Agent = agent,
+                    TopText = topText,
+                    UseStreaming = true,
+                    OnDelta = onDelta,
+                    CancellationToken = ct
+                });
 
-                    if (!nonStreamingExecution.IsSuccess)
-                    {
-                        FinalizeDecisionAfterExecution(decision, nonStreamingExecution);
-                        ApplyDecisionVisualization(decision);
-                        _main.SetLiveDecisionFailed(node, decision, nonStreamingExecution.ErrorMessage);
-                        _main.ClearLiveDecisionState(node);
-                        CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: nonStreamingExecution.ErrorMessage);
-                        throw new InvalidOperationException(nonStreamingExecution.ErrorMessage);
-                    }
+                var decision = agentResult.Decision;
+                var execution = agentResult.Execution;
 
-                    FinalizeDecisionAfterExecution(decision, nonStreamingExecution);
+                if (!execution.IsSuccess)
+                {
                     ApplyDecisionVisualization(decision);
-                    SyncActualModelToNode(node, decision);
+                    _main.SetLiveDecisionFailed(node, decision, execution.ErrorMessage);
                     _main.ClearLiveDecisionState(node);
-                    CommitExecutionLog(node, decision, startedAtUtc, success: true);
-
-                    if (!string.IsNullOrWhiteSpace(nonStreamingExecution.Text))
-                        onDelta?.Invoke(nonStreamingExecution.Text);
-
-                    return nonStreamingExecution.Text;
+                    CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: execution.ErrorMessage);
+                    throw new InvalidOperationException(execution.ErrorMessage);
                 }
 
-                var streamingExecution = await ExecuteWithFallbackAsync(
-                    node,
-                    topText,
-                    decision,
-                    onDelta,
-                    useStreaming: true,
-                    ct);
-
-                if (!streamingExecution.IsSuccess)
-                {
-                    FinalizeDecisionAfterExecution(decision, streamingExecution);
-                    ApplyDecisionVisualization(decision);
-                    _main.SetLiveDecisionFailed(node, decision, streamingExecution.ErrorMessage);
-                    _main.ClearLiveDecisionState(node);
-                    CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: streamingExecution.ErrorMessage);
-                    throw new InvalidOperationException(streamingExecution.ErrorMessage);
-                }
-
-                FinalizeDecisionAfterExecution(decision, streamingExecution);
                 ApplyDecisionVisualization(decision);
                 SyncActualModelToNode(node, decision);
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
 
-await _memoryService.RememberExecutionResultAsync(
+                await _memoryService.RememberExecutionResultAsync(
     node,
+    decision.ActualAgentId,
     topText,
-    streamingExecution.Text,
+    execution.Text,
     decision.TaskMode,
     decision.ActualModelId,
     ct);
 
-var flowContext = new AutoFlowRunContext();
+                var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
 
                 await TryAutoFlowToNextNodeAsync(node, flowContext, ct);
 
-                return streamingExecution.Text;
+                return execution.Text;
             }
             catch (Exception ex)
             {
-                _main.SetLiveDecisionFailed(node, decision, ex.Message);
+                var failedDecision = new NodeExecutionDecision
+                {
+                    RequestedAgentId = agent.Id,
+                    ActualAgentId = agent.Id,
+                    ResolverLabel = "AgentRuntime",
+                    StatusLabel = _main.IsAutoModelSelectionEnabled() ? "Auto" : "Manual"
+                };
+
+                _main.SetLiveDecisionFailed(node, failedDecision, ex.Message);
                 _main.ClearLiveDecisionState(node);
-                CommitExecutionLog(node, decision, startedAtUtc, success: false, errorMessage: ex.Message);
+                CommitExecutionLog(node, failedDecision, startedAtUtc, success: false, errorMessage: ex.Message);
                 throw;
             }
         }
-
         private async Task<AiFallbackExecutionResult> ExecuteWithFallbackAsync(
     NodeControl node,
     string topText,
@@ -480,8 +477,11 @@ var flowContext = new AutoFlowRunContext();
 
             try
             {
+                string agentId = _main.GetNodeSelectedAgent(currentNode);
+
                 return await _executionCoreService.ExecuteAsync(
                     currentNode,
+                    agentId,
                     topText,
                     model,
                     taskMode,
@@ -510,8 +510,11 @@ var flowContext = new AutoFlowRunContext();
 
             try
             {
+                string agentId = _main.GetNodeSelectedAgent(currentNode);
+
                 return await _executionCoreService.ExecuteStreamAsync(
                     currentNode,
+                    agentId,
                     topText,
                     model,
                     taskMode,

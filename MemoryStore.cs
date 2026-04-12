@@ -65,12 +65,14 @@ namespace test
         }
 
         public IReadOnlyList<MemoryItem> Query(
-            string fileKey,
-            string text,
-            int maxCount = 6)
+    string fileKey,
+    string agentId,
+    string text,
+    int maxCount = 6)
         {
             text ??= "";
             fileKey ??= "";
+            agentId ??= "";
 
             string normalizedQuery = Normalize(text);
 
@@ -80,7 +82,7 @@ namespace test
                     .Select(x => new
                     {
                         Item = x,
-                        Score = Score(x, fileKey, normalizedQuery)
+                        Score = Score(x, fileKey, agentId, normalizedQuery)
                     })
                     .Where(x => x.Score > 0)
                     .OrderByDescending(x => x.Score)
@@ -142,7 +144,7 @@ namespace test
                 .ToList();
         }
 
-        private static double Score(MemoryItem item, string fileKey, string normalizedQuery)
+        private static double Score(MemoryItem item, string fileKey, string agentId, string normalizedQuery)
         {
             double score = 0;
 
@@ -151,6 +153,15 @@ namespace test
             {
                 score += 3.0;
             }
+
+            if (!string.IsNullOrWhiteSpace(agentId) &&
+                string.Equals(item.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 3.5;
+            }
+
+            if (item.IsSharedMemory)
+                score += 1.2;
 
             if (item.Scope == MemoryScope.Node)
                 score += 0.5;

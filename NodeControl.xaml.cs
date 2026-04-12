@@ -1475,6 +1475,33 @@ namespace test
             }
         }
 
+        private void AgentGeneralMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.SetNodeSelectedAgent(this, "general-agent");
+            RefreshModelSelectionUI();
+            _parent?.RefreshDecisionForNode(this);
+        }
+
+        private void AgentResearchMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.SetNodeSelectedAgent(this, "research-agent");
+            RefreshModelSelectionUI();
+            _parent?.RefreshDecisionForNode(this);
+        }
+
+        private void AgentTranslationMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.SetNodeSelectedAgent(this, "translation-agent");
+            RefreshModelSelectionUI();
+            _parent?.RefreshDecisionForNode(this);
+        }
+
+        private void AgentCodeMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.SetNodeSelectedAgent(this, "code-agent");
+            RefreshModelSelectionUI();
+            _parent?.RefreshDecisionForNode(this);
+        }
         private void ThumbBL_DragDelta(object sender, DragDeltaEventArgs e)
         {
             double newWidth = Width - e.HorizontalChange;

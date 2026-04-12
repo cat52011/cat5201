@@ -5,6 +5,9 @@ namespace test
 {
     public sealed class NodeExecutionDecision
     {
+        public string RequestedAgentId { get; set; } = "";
+        public string ActualAgentId { get; set; } = "";
+
         public string RequestedModelId { get; set; } = "";
         public string ModelId { get; set; } = "";
         public string ActualModelId { get; set; } = "";
@@ -35,7 +38,8 @@ namespace test
 
         public bool RuntimeFallbackUsed { get; set; }
         public string RuntimeFallbackSummary { get; set; } = "";
-
+        public IReadOnlyList<AgentDelegationTraceItem> DelegationTrace { get; set; }
+    = System.Array.Empty<AgentDelegationTraceItem>();
         public IReadOnlyList<AiFallbackAttempt> RuntimeFallbackAttempts { get; set; }
             = Array.Empty<AiFallbackAttempt>();
     }

@@ -106,6 +106,7 @@ namespace test
         private bool _suppressSave = false;
 
         private readonly Dictionary<Guid, List<AttachmentInfo>> _attachmentsByNode = new();
+        private readonly Dictionary<Guid, string> _nodeAgentsById = new();
         private readonly Dictionary<Guid, string> _nodeModelsById = new();
         private readonly Dictionary<Guid, NodeTaskMode> _nodeTaskModesById = new();
 
@@ -260,18 +261,19 @@ namespace test
         }
 
         private record NodeState(
-            string Id,
-            double X,
-            double Y,
-            double Width,
-            double Height,
-            string? TopText,
-            string? BottomText,
-            bool TopLocked,
-            double FontSize,
-            string? NodeModel = null,
-            string? TaskMode = null
-        );
+    string Id,
+    double X,
+    double Y,
+    double Width,
+    double Height,
+    string? TopText,
+    string? BottomText,
+    bool TopLocked,
+    double FontSize,
+    string? AgentId = null,
+    string? NodeModel = null,
+    string? TaskMode = null
+); 
 
         private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
 
@@ -536,6 +538,8 @@ namespace test
             NodeTaskMode previewTask = NodeTaskModeHelper.Normalize(previewResolution.Mode);
             string previewTaskName = NodeTaskModeHelper.ToDisplayName(previewTask);
 
+            string previewAgent = GetNodeSelectedAgent(node);
+
             string requestedModel = GetNodeSelectedModel(node);
             string effectiveModel = GetEffectiveNodeModel(node, node.GetTopText());
             string requestedLabel2 = AiModelHelper.GetDefinition(requestedModel).DisplayName;
@@ -588,11 +592,14 @@ namespace test
                 Status = statusText,
                 Mode = modeText,
                 Resolver = resolverText,
+                Agent = previewAgent,
                 Model = previewModel,
                 TaskSummary = previewSummary,
                 Reason = previewReason,
                 Keywords = previewKeywords,
                 Extra = "-",
+                DelegationSummary = "-",
+                DelegationDetails = new List<string>(),
                 CapabilityAdjusted = false,
                 RuntimeFallbackUsed = false,
                 ApiFallbackUsed = false,
@@ -614,6 +621,16 @@ namespace test
             },
             new NodeDecisionStepViewData
             {
+                Title = "Delegation",
+                Detail = "尚未觸發",
+                State = NodeDecisionStepState.Info,
+                DetailLines = new[]
+                {
+                    "Preview 階段尚未實際執行 agent delegation"
+                }
+            },
+            new NodeDecisionStepViewData
+            {
                 Title = "Execution",
                 Detail = "尚未執行",
                 State = NodeDecisionStepState.Info
@@ -623,7 +640,6 @@ namespace test
 
             ApplyDecisionViewData(previewViewData);
         }
-
         public void NotifyNodeHoverEntered(NodeControl node)
         {
             if (node == null)
@@ -673,6 +689,53 @@ namespace test
         private string GetDefaultNodeModelId()
         {
             return AiModelRegistry.Default.Id;
+        }
+
+        private string GetDefaultAgentId()
+        {
+            return AgentRegistry.Default.Id;
+        }
+
+        private string NormalizeOrDefaultAgentId(string? agentId)
+        {
+            return AgentRegistry.IsKnown(agentId)
+                ? AgentRegistry.Get(agentId).Id
+                : GetDefaultAgentId();
+        }
+
+        public string GetNodeSelectedAgent(NodeControl node)
+        {
+            if (node == null)
+                return GetDefaultAgentId();
+
+            if (_nodeAgentsById.TryGetValue(node.Id, out var agentId))
+                return NormalizeOrDefaultAgentId(agentId);
+
+            var fallback = GetDefaultAgentId();
+            _nodeAgentsById[node.Id] = fallback;
+            return fallback;
+        }
+
+        public AgentDefinition GetNodeAgentDefinition(NodeControl node)
+        {
+            return AgentRegistry.Get(GetNodeSelectedAgent(node));
+        }
+
+        public void SetNodeSelectedAgent(NodeControl node, string agentId)
+        {
+            if (node == null)
+                return;
+
+            string normalized = NormalizeOrDefaultAgentId(agentId);
+            _nodeAgentsById[node.Id] = normalized;
+
+            var agent = AgentRegistry.Get(normalized);
+
+            // Phase 1 相容模式：agent 改變時，同步預設 model/task
+            _nodeModelsById[node.Id] = AiModelHelper.NormalizeNodeModel(agent.DefaultModelId);
+            _nodeTaskModesById[node.Id] = NodeTaskModeHelper.Normalize(agent.DefaultTaskMode);
+
+            SaveState();
         }
 
         private string NormalizeOrDefaultNodeModel(string? model)
@@ -920,6 +983,7 @@ namespace test
     string reason = "-",
     string keywords = "-",
     string extra = "-",
+    string agent = "-",
     string statusBrushHex = "#EDEDED",
     string statusTextBrushHex = "#404040")
         {
@@ -933,6 +997,9 @@ namespace test
 
                 if (DecisionResolverText != null)
                     DecisionResolverText.Text = string.IsNullOrWhiteSpace(resolver) ? "-" : resolver;
+
+                if (DecisionAgentText != null)
+                    DecisionAgentText.Text = string.IsNullOrWhiteSpace(agent) ? "-" : agent;
 
                 if (DecisionModelText != null)
                     DecisionModelText.Text = string.IsNullOrWhiteSpace(model) ? "-" : model;
@@ -956,7 +1023,6 @@ namespace test
                     DecisionStatusText.Foreground = CreateBrush(statusTextBrushHex, "#404040");
             });
         }
-
         private static SolidColorBrush CreateBrush(string? hex, string fallbackHex)
         {
             try
@@ -974,15 +1040,27 @@ namespace test
             if (viewData == null)
                 return;
 
+            string extra = viewData.Extra;
+
+            if (!string.IsNullOrWhiteSpace(viewData.DelegationSummary) &&
+                !string.Equals(viewData.DelegationSummary, "-", StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(extra) || extra == "-")
+                    extra = "delegation: " + viewData.DelegationSummary;
+                else
+                    extra += " / delegation: " + viewData.DelegationSummary;
+            }
+
             ApplyDecisionThemeByMode(
                 status: viewData.Status,
                 mode: viewData.Mode,
                 resolver: viewData.Resolver,
+                agent: viewData.Agent,
                 model: viewData.Model,
                 taskSummary: viewData.TaskSummary,
                 reason: viewData.Reason,
                 keywords: viewData.Keywords,
-                extra: viewData.Extra,
+                extra: extra,
                 capabilityAdjusted: viewData.CapabilityAdjusted,
                 runtimeFallbackUsed: viewData.RuntimeFallbackUsed,
                 apiFallbackUsed: viewData.ApiFallbackUsed);
@@ -1387,6 +1465,7 @@ namespace test
     string status,
     string mode,
     string resolver,
+    string agent,
     string model,
     string taskSummary,
     string reason,
@@ -1407,6 +1486,7 @@ namespace test
                     reason: reason,
                     keywords: keywords,
                     extra: extra,
+                    agent: agent,
                     statusBrushHex: "#FFE9E9",
                     statusTextBrushHex: "#9B2C2C");
                 return;
@@ -1423,6 +1503,7 @@ namespace test
                     reason: reason,
                     keywords: keywords,
                     extra: extra,
+                    agent: agent,
                     statusBrushHex: "#FFF4E8",
                     statusTextBrushHex: "#9A5A00");
                 return;
@@ -1440,6 +1521,7 @@ namespace test
                     reason: reason,
                     keywords: keywords,
                     extra: extra,
+                    agent: agent,
                     statusBrushHex: "#EAF4FF",
                     statusTextBrushHex: "#245A9B");
                 return;
@@ -1456,6 +1538,7 @@ namespace test
                     reason: reason,
                     keywords: keywords,
                     extra: extra,
+                    agent: agent,
                     statusBrushHex: "#EEF7EA",
                     statusTextBrushHex: "#2E6A2E");
                 return;
@@ -1470,6 +1553,7 @@ namespace test
                 reason: reason,
                 keywords: keywords,
                 extra: extra,
+                agent: agent,
                 statusBrushHex: "#EDEDED",
                 statusTextBrushHex: "#404040");
         }
@@ -1629,8 +1713,11 @@ namespace test
                 MainCanvas.Children.Add(node);
                 HookNode(node);
 
-                _nodeModelsById[node.Id] = GetDefaultNodeModelId();
-                _nodeTaskModesById[node.Id] = GetDefaultNodeTaskMode();
+                _nodeAgentsById[node.Id] = GetDefaultAgentId();
+
+                var defaultAgent = AgentRegistry.Get(GetDefaultAgentId());
+                _nodeModelsById[node.Id] = AiModelHelper.NormalizeNodeModel(defaultAgent.DefaultModelId);
+                _nodeTaskModesById[node.Id] = NodeTaskModeHelper.Normalize(defaultAgent.DefaultTaskMode);
                 _initialNode = node;
 
                 _scale = 1.0;
@@ -1664,6 +1751,7 @@ namespace test
             _attachmentsByNode.Clear();
             _nodeModelsById.Clear();
             _nodeTaskModesById.Clear();
+            _nodeAgentsById.Clear();
 
             _editingNode = null;
             _editingReason = EditReason.None;
@@ -2017,8 +2105,11 @@ namespace test
 
             HookNode(node);
 
-            _nodeModelsById[node.Id] = GetDefaultNodeModelId();
-            _nodeTaskModesById[node.Id] = GetDefaultNodeTaskMode();
+            _nodeAgentsById[node.Id] = GetDefaultAgentId();
+
+            var defaultAgent = AgentRegistry.Get(GetDefaultAgentId());
+            _nodeModelsById[node.Id] = AiModelHelper.NormalizeNodeModel(defaultAgent.DefaultModelId);
+            _nodeTaskModesById[node.Id] = NodeTaskModeHelper.Normalize(defaultAgent.DefaultTaskMode);
 
             MainCanvas.Children.Add(node);
 
@@ -2312,18 +2403,19 @@ namespace test
                 double fontSize = SafePositiveFinite(child.GetFontSize(), 20);
 
                 nodes.Add(new NodeState(
-                    child.Id.ToString(),
-                    x,
-                    y,
-                    width,
-                    height,
-                    child.GetTopText(),
-                    child.GetBottomText(),
-                    child.GetTopLocked(),
-                    fontSize,
-                    GetNodeSelectedModel(child),
-                    GetNodeTaskModeStorageValue(child)
-                ));
+    child.Id.ToString(),
+    x,
+    y,
+    width,
+    height,
+    child.GetTopText(),
+    child.GetBottomText(),
+    child.GetTopLocked(),
+    fontSize,
+    GetNodeSelectedAgent(child),
+    GetNodeSelectedModel(child),
+    GetNodeTaskModeStorageValue(child)
+));
             }
 
             var conns = new List<ConnState>();
@@ -2424,6 +2516,7 @@ namespace test
             _nodeModelsById.Clear();
             _nodeTaskModesById.Clear();
             _executionLogService.ClearAll();
+            _nodeAgentsById.Clear();
 
             _hoveredDecisionNode = null;
             _lastDecisionNode = null;
@@ -2476,9 +2569,20 @@ namespace test
                     MainCanvas.Children.Add(node);
                     HookNode(node);
 
-                    string loadedModel = _aiRouter.NormalizeNodeModel(n.NodeModel);
+                    string loadedAgentId = NormalizeOrDefaultAgentId(n.AgentId);
+                    _nodeAgentsById[node.Id] = loadedAgentId;
+
+                    var loadedAgent = AgentRegistry.Get(loadedAgentId);
+
+                    string loadedModel = string.IsNullOrWhiteSpace(n.NodeModel)
+                        ? AiModelHelper.NormalizeNodeModel(loadedAgent.DefaultModelId)
+                        : _aiRouter.NormalizeNodeModel(n.NodeModel);
+
                     _nodeModelsById[node.Id] = loadedModel;
-                    _nodeTaskModesById[node.Id] = ParseNodeTaskMode(n.TaskMode);
+
+                    _nodeTaskModesById[node.Id] = string.IsNullOrWhiteSpace(n.TaskMode)
+                        ? NodeTaskModeHelper.Normalize(loadedAgent.DefaultTaskMode)
+                        : ParseNodeTaskMode(n.TaskMode);
 
                     node.SetCommittedModelId(loadedModel, syncEditingModel: true);
 
@@ -2545,6 +2649,7 @@ namespace test
             _executionLogService.ClearAll();
             _autoFlowTemplatesByNode.Clear();
             _autoFlowPoliciesByNode.Clear();
+            _nodeAgentsById.Clear();
             _editingNode = null;
             _editingReason = EditReason.None;
         }
@@ -3091,6 +3196,16 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
     DetailLines = BuildCapabilityLines(decision, forcePendingText: !decision.CapabilityAdjusted)
 },
         new NodeDecisionStepViewData
+{
+    Title = "Delegation",
+    Detail = "尚未觸發",
+    State = NodeDecisionStepState.Info,
+    DetailLines = new[]
+    {
+        "目前尚未進入 agent delegation"
+    }
+},
+        new NodeDecisionStepViewData
         {
             Title = "Fallback",
             Detail = "尚未觸發",
@@ -3125,7 +3240,13 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             RefreshDecisionForNode(node);
         }
 
-        public void SetLiveDecisionExecuting(NodeControl node, NodeExecutionDecision decision, string modelId, bool isFallbackAttempt, int attemptIndex, string reason)
+        public void SetLiveDecisionExecuting(
+            NodeControl node,
+            NodeExecutionDecision decision,
+            string modelId,
+            bool isFallbackAttempt,
+            int attemptIndex,
+            string reason)
         {
             if (node == null || decision == null)
                 return;
@@ -3158,6 +3279,20 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         $"Model：{plannedLabel}",
         $"Streaming：{decision.UseStreaming}"
     };
+
+            // ===== Delegation =====
+            var delegationLines = new List<string>();
+            string delegationDetail = "尚未觸發";
+
+            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
+            {
+                delegationDetail = AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace);
+                delegationLines.AddRange(AgentDelegationTraceFormatter.BuildDetailLines(decision.DelegationTrace));
+            }
+            else
+            {
+                delegationLines.Add("目前尚未進入 agent delegation");
+            }
 
             var steps = new List<NodeDecisionStepViewData>
     {
@@ -3192,23 +3327,33 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             DetailLines = BuildCapabilityLines(decision, forcePendingText: false)
         },
         new NodeDecisionStepViewData
-{
-    Title = "Fallback",
-    Detail = isFallbackAttempt ? $"已進入第 {attemptIndex} 次嘗試" : "尚未觸發",
-    State = isFallbackAttempt ? NodeDecisionStepState.Warning : NodeDecisionStepState.Info,
-    Highlight = isFallbackAttempt,
-    IsActive = isFallbackAttempt,
-    DetailLines = fallbackLines
-},
+        {
+            Title = "Delegation",
+            Detail = delegationDetail,
+            State = decision.DelegationTrace != null && decision.DelegationTrace.Count > 0
+                ? NodeDecisionStepState.Warning
+                : NodeDecisionStepState.Info,
+            Highlight = decision.DelegationTrace != null && decision.DelegationTrace.Count > 0,
+            DetailLines = delegationLines
+        },
         new NodeDecisionStepViewData
-{
-    Title = "Execution",
-    Detail = "執行中",
-    State = NodeDecisionStepState.Info,
-    Highlight = true,
-    IsActive = true,
-    DetailLines = executionLines
-}
+        {
+            Title = "Fallback",
+            Detail = isFallbackAttempt ? $"已進入第 {attemptIndex} 次嘗試" : "尚未觸發",
+            State = isFallbackAttempt ? NodeDecisionStepState.Warning : NodeDecisionStepState.Info,
+            Highlight = isFallbackAttempt,
+            IsActive = isFallbackAttempt,
+            DetailLines = fallbackLines
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Execution",
+            Detail = "執行中",
+            State = NodeDecisionStepState.Info,
+            Highlight = true,
+            IsActive = true,
+            DetailLines = executionLines
+        }
     };
 
             var extraParts = new List<string>();
@@ -3217,6 +3362,9 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
             if (isFallbackAttempt)
                 extraParts.Add($"fallback attempt {attemptIndex}");
+
+            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
+                extraParts.Add("delegation: " + AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace));
 
             var view = BuildLiveDecisionViewData(
                 decision,
@@ -3228,7 +3376,6 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             _liveDecisionViewsByNode[node.Id] = view;
             RefreshDecisionForNode(node);
         }
-
         public void SetLiveDecisionFailed(NodeControl node, NodeExecutionDecision decision, string errorMessage)
         {
             if (node == null || decision == null)
@@ -3243,6 +3390,20 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             string modelText = string.Equals(requestedLabel, actualLabel, StringComparison.OrdinalIgnoreCase)
                 ? actualLabel
                 : $"{actualLabel} ← {requestedLabel}";
+
+            // ===== Delegation =====
+            var delegationLines = new List<string>();
+            string delegationDetail = "尚未觸發";
+
+            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
+            {
+                delegationDetail = AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace);
+                delegationLines.AddRange(AgentDelegationTraceFormatter.BuildDetailLines(decision.DelegationTrace));
+            }
+            else
+            {
+                delegationLines.Add("目前尚未進入 agent delegation");
+            }
 
             var steps = new List<NodeDecisionStepViewData>
     {
@@ -3278,6 +3439,16 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         },
         new NodeDecisionStepViewData
         {
+            Title = "Delegation",
+            Detail = delegationDetail,
+            State = decision.DelegationTrace != null && decision.DelegationTrace.Count > 0
+                ? NodeDecisionStepState.Warning
+                : NodeDecisionStepState.Info,
+            Highlight = decision.DelegationTrace != null && decision.DelegationTrace.Count > 0,
+            DetailLines = delegationLines
+        },
+        new NodeDecisionStepViewData
+        {
             Title = "Fallback",
             Detail = decision.RuntimeFallbackUsed ? "已觸發" : "無",
             State = decision.RuntimeFallbackUsed ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
@@ -3296,17 +3467,24 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         }
     };
 
+            var extraParts = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(errorMessage))
+                extraParts.Add(errorMessage);
+
+            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
+                extraParts.Add("delegation: " + AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace));
+
             var view = BuildLiveDecisionViewData(
                 decision,
                 modelText,
                 $"{NodeTaskModeHelper.ToDisplayName(decision.TaskMode)} / 失敗",
-                extra: string.IsNullOrWhiteSpace(errorMessage) ? "-" : errorMessage,
+                extra: extraParts.Count == 0 ? "-" : string.Join(" / ", extraParts),
                 steps: steps);
 
             _liveDecisionViewsByNode[node.Id] = view;
             RefreshDecisionForNode(node);
         }
-
         public void ClearLiveDecisionState(NodeControl node)
         {
             if (node == null)
@@ -3317,11 +3495,11 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         }
 
         private NodeDecisionViewData BuildLiveDecisionViewData(
-            NodeExecutionDecision decision,
-            string modelText,
-            string taskSummary,
-            string extra,
-            IReadOnlyList<NodeDecisionStepViewData> steps)
+    NodeExecutionDecision decision,
+    string modelText,
+    string taskSummary,
+    string extra,
+    IReadOnlyList<NodeDecisionStepViewData> steps)
         {
             string status = decision.StatusLabel;
             if (string.IsNullOrWhiteSpace(status))
@@ -3343,17 +3521,32 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                         .Where(x => !string.IsNullOrWhiteSpace(x))
                         .Distinct(StringComparer.OrdinalIgnoreCase));
             }
+            string delegationSummary = "-";
+            var delegationDetails = new List<string>();
+
+            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
+            {
+                delegationSummary = AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace);
+                delegationDetails = AgentDelegationTraceFormatter.BuildDetailLines(decision.DelegationTrace).ToList();
+            }
+
+            string agent = string.IsNullOrWhiteSpace(decision.ActualAgentId)
+                ? (string.IsNullOrWhiteSpace(decision.RequestedAgentId) ? "-" : decision.RequestedAgentId)
+                : decision.ActualAgentId;
 
             return new NodeDecisionViewData
             {
                 Status = status,
                 Mode = mode,
                 Resolver = resolver,
+                Agent = agent,
                 Model = modelText,
                 TaskSummary = taskSummary,
                 Reason = reason,
                 Keywords = keywords,
                 Extra = string.IsNullOrWhiteSpace(extra) ? "-" : extra,
+                DelegationSummary = delegationSummary,
+                DelegationDetails = delegationDetails,
                 CapabilityAdjusted = decision.CapabilityAdjusted,
                 RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
                 ApiFallbackUsed = decision.UsedFallbackToRules,

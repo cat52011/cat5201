@@ -27,5 +27,8 @@ namespace test
 
         public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
         public DateTime UpdatedAtUtc { get; init; } = DateTime.UtcNow;
+
+        public string AgentId { get; init; } = "";
+        public bool IsSharedMemory { get; init; }
     }
 }

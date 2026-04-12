@@ -5,6 +5,8 @@ namespace test
 {
     public sealed class AiExecutionLogEntry
     {
+        public string RequestedAgentId { get; init; } = "";
+        public string ActualAgentId { get; init; } = "";    
         public string NodeId { get; init; } = "";
 
         public DateTime StartedAtUtc { get; init; }

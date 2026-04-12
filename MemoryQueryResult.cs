@@ -6,6 +6,9 @@ namespace test
     {
         public IReadOnlyList<MemoryItem> Items { get; init; } = new List<MemoryItem>();
 
+        public IReadOnlyList<MemoryItem> AgentItems { get; init; } = new List<MemoryItem>();
+        public IReadOnlyList<MemoryItem> SharedItems { get; init; } = new List<MemoryItem>();
+
         public string PromptBlock { get; init; } = "";
     }
 }

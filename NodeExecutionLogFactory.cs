@@ -55,7 +55,9 @@ namespace test
                 Success = success,
                 ErrorMessage = errorMessage ?? "",
 
-                FallbackAttempts = decision.RuntimeFallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
+                FallbackAttempts = decision.RuntimeFallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>(),
+                RequestedAgentId = decision.RequestedAgentId ?? "",
+                ActualAgentId = decision.ActualAgentId ?? "",
             };
         }
 

@@ -502,6 +502,18 @@ Margin="0,20,20,0">
                    Foreground="#2A2A2A"
                    Margin="0,0,0,10"/>
 
+                            <TextBlock Text="Agent"
+           FontSize="12"
+           Foreground="#7A7A7A"
+           Margin="0,0,0,2"/>
+
+                            <TextBlock x:Name="DecisionAgentText"
+           Text="-"
+           FontSize="14"
+           FontWeight="SemiBold"
+           Foreground="#232323"
+           Margin="0,0,0,10"/>
+
                             <!-- 策略 -->
                             <TextBlock Text="策略"
                    FontSize="12"

@@ -21,6 +21,9 @@ namespace test
 
             string displayFromLabel = requestedLabel;
             string displayToLabel = actualLabel;
+            string agent = string.IsNullOrWhiteSpace(log.ActualAgentId)
+    ? (string.IsNullOrWhiteSpace(log.RequestedAgentId) ? "-" : log.RequestedAgentId)
+    : log.ActualAgentId;
 
             if (log.CapabilityAdjusted &&
                 !string.IsNullOrWhiteSpace(log.CapabilityRequestedModelId) &&
@@ -78,6 +81,7 @@ namespace test
                 Reason = reason,
                 Keywords = keywords,
                 Extra = extra,
+                Agent = agent,
                 CapabilityAdjusted = log.CapabilityAdjusted,
                 RuntimeFallbackUsed = log.RuntimeFallbackUsed,
                 ApiFallbackUsed = apiFallbackUsed,
@@ -103,6 +107,7 @@ namespace test
                 Reason = "-",
                 Keywords = "-",
                 Extra = "-",
+                Agent = "-",
                 Steps = Array.Empty<NodeDecisionStepViewData>()
             };
         }
@@ -366,6 +371,7 @@ namespace test
         private static string BuildExtraSummary(AiExecutionLogEntry log)
         {
             var extraParts = new List<string>();
+
 
             if (!string.IsNullOrWhiteSpace(log.CapabilityReason))
                 extraParts.Add(log.CapabilityReason);

@@ -39,14 +39,14 @@ namespace test
             _mainReplyMaxOutputTokens = mainReplyMaxOutputTokens;
         }
         public async Task<string> ExecuteAsync(
-            NodeControl currentNode,
-            string topText,
-            string model,
-            NodeTaskMode taskMode,
-            CancellationToken ct)
+    NodeControl currentNode,
+    string agentId,
+    string topText,
+    string model,
+    NodeTaskMode taskMode,
+    CancellationToken ct)
         {
-            var memory = _memoryService.RecallRelevant(currentNode, topText, taskMode);
-
+            var memory = _memoryService.RecallRelevant(currentNode, agentId, topText, taskMode);
             string prompt = _promptBuilder.BuildPrompt(new NodePromptBuildRequest
             {
                 CurrentNode = currentNode,
@@ -68,15 +68,15 @@ namespace test
                 ct);
         }
         public async Task<string> ExecuteStreamAsync(
-    NodeControl currentNode,
-    string topText,
-    string model,
-    NodeTaskMode taskMode,
-    Action<string> onDelta,
-    CancellationToken ct)
+     NodeControl currentNode,
+     string agentId,
+     string topText,
+     string model,
+     NodeTaskMode taskMode,
+     Action<string> onDelta,
+     CancellationToken ct)
         {
-            var memory = _memoryService.RecallRelevant(currentNode, topText, taskMode);
-
+            var memory = _memoryService.RecallRelevant(currentNode, agentId, topText, taskMode);
             string prompt = _promptBuilder.BuildPrompt(new NodePromptBuildRequest
             {
                 CurrentNode = currentNode,
