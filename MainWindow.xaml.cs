@@ -315,6 +315,11 @@ namespace test
             string CapabilityMissing,
             bool CapabilityStreamingAdjusted,
 
+            List<AgentCapabilityTraceItem> CapabilityTrace,
+
+            string RequestedAgentId,
+            string ActualAgentId,
+
             bool RuntimeFallbackUsed,
             string RuntimeFallbackSummary,
 
@@ -323,7 +328,6 @@ namespace test
 
             List<AiFallbackAttempt> FallbackAttempts
         );
-
         private record AppState(
             DateTime CreatedAt,
             string? InitialNodeId,
@@ -461,6 +465,11 @@ namespace test
                 CapabilityMissing: entry.CapabilityMissing ?? "",
                 CapabilityStreamingAdjusted: entry.CapabilityStreamingAdjusted,
 
+                CapabilityTrace: entry.CapabilityTrace?.ToList() ?? new List<AgentCapabilityTraceItem>(),
+
+                RequestedAgentId: entry.RequestedAgentId ?? "",
+                ActualAgentId: entry.ActualAgentId ?? "",
+
                 RuntimeFallbackUsed: entry.RuntimeFallbackUsed,
                 RuntimeFallbackSummary: entry.RuntimeFallbackSummary ?? "",
 
@@ -470,7 +479,6 @@ namespace test
                 FallbackAttempts: entry.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
             );
         }
-
         private static AiExecutionLogEntry ToExecutionLogEntry(ExecutionLogState state)
         {
             return new AiExecutionLogEntry
@@ -502,6 +510,11 @@ namespace test
                 CapabilityMissing = state.CapabilityMissing ?? "",
                 CapabilityStreamingAdjusted = state.CapabilityStreamingAdjusted,
 
+                CapabilityTrace = state.CapabilityTrace?.ToList() ?? new List<AgentCapabilityTraceItem>(),
+
+                RequestedAgentId = state.RequestedAgentId ?? "",
+                ActualAgentId = state.ActualAgentId ?? "",
+
                 RuntimeFallbackUsed = state.RuntimeFallbackUsed,
                 RuntimeFallbackSummary = state.RuntimeFallbackSummary ?? "",
 
@@ -511,7 +524,6 @@ namespace test
                 FallbackAttempts = state.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
             };
         }
-
         private void ShowDecisionForNode(NodeControl node)
         {
             if (node == null)
@@ -538,8 +550,7 @@ namespace test
             NodeTaskMode previewTask = NodeTaskModeHelper.Normalize(previewResolution.Mode);
             string previewTaskName = NodeTaskModeHelper.ToDisplayName(previewTask);
 
-            string previewAgent = GetNodeSelectedAgent(node);
-
+            string previewAgent = GetEffectiveNodeAgent(node, node.GetTopText());
             string requestedModel = GetNodeSelectedModel(node);
             string effectiveModel = GetEffectiveNodeModel(node, node.GetTopText());
             string requestedLabel2 = AiModelHelper.GetDefinition(requestedModel).DisplayName;
@@ -598,44 +609,56 @@ namespace test
                 Reason = previewReason,
                 Keywords = previewKeywords,
                 Extra = "-",
+                CapabilitySummary = "-",
+                CapabilityDetails = new List<string>(),
                 DelegationSummary = "-",
                 DelegationDetails = new List<string>(),
                 CapabilityAdjusted = false,
                 RuntimeFallbackUsed = false,
                 ApiFallbackUsed = false,
                 Steps = new[]
-                {
-            new NodeDecisionStepViewData
+    {
+        new NodeDecisionStepViewData
+        {
+            Title = "Task Mode",
+            Detail = $"{previewTaskName} / 預估",
+            State = NodeDecisionStepState.Info,
+            Highlight = true
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Model Selection",
+            Detail = previewModel,
+            State = NodeDecisionStepState.Info,
+            Highlight = true
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Capability",
+            Detail = "尚未觸發",
+            State = NodeDecisionStepState.Info,
+            DetailLines = new[]
             {
-                Title = "Task Mode",
-                Detail = $"{previewTaskName} / 預估",
-                State = NodeDecisionStepState.Info,
-                Highlight = true
-            },
-            new NodeDecisionStepViewData
-            {
-                Title = "Model Selection",
-                Detail = previewModel,
-                State = NodeDecisionStepState.Info,
-                Highlight = true
-            },
-            new NodeDecisionStepViewData
-            {
-                Title = "Delegation",
-                Detail = "尚未觸發",
-                State = NodeDecisionStepState.Info,
-                DetailLines = new[]
-                {
-                    "Preview 階段尚未實際執行 agent delegation"
-                }
-            },
-            new NodeDecisionStepViewData
-            {
-                Title = "Execution",
-                Detail = "尚未執行",
-                State = NodeDecisionStepState.Info
+                "Preview 階段尚未實際執行 capability"
             }
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Delegation",
+            Detail = "尚未觸發",
+            State = NodeDecisionStepState.Info,
+            DetailLines = new[]
+            {
+                "Preview 階段尚未實際執行 agent delegation"
+            }
+        },
+        new NodeDecisionStepViewData
+        {
+            Title = "Execution",
+            Detail = "尚未執行",
+            State = NodeDecisionStepState.Info
         }
+    }
             };
 
             ApplyDecisionViewData(previewViewData);
@@ -714,6 +737,30 @@ namespace test
             var fallback = GetDefaultAgentId();
             _nodeAgentsById[node.Id] = fallback;
             return fallback;
+        }
+
+        public string GetEffectiveNodeAgent(NodeControl node, string? topText = null)
+        {
+            if (node == null)
+                return GetDefaultAgentId();
+
+            string selectedAgentId = GetNodeSelectedAgent(node);
+
+            if (!_isAutoModelSelectionEnabled)
+                return selectedAgentId;
+
+            string text = topText ?? node.GetTopText() ?? "";
+            var taskResolution = NodeTaskModeResolver.Resolve(text);
+            var taskMode = NodeTaskModeHelper.Normalize(taskResolution.Mode);
+
+            var resolver = new AgentSelectionResolver();
+            var selection = resolver.Resolve(
+                text,
+                taskMode,
+                GetAttachmentsForNode(node),
+                selectedAgentId);
+
+            return AgentRegistry.Get(selection.AgentId).Id;
         }
 
         public AgentDefinition GetNodeAgentDefinition(NodeControl node)
@@ -3252,13 +3299,47 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 return;
 
             string requestedLabel = GetDecisionModelLabel(
-                string.IsNullOrWhiteSpace(decision.RequestedModelId) ? decision.ModelId : decision.RequestedModelId);
+                string.IsNullOrWhiteSpace(decision.RequestedModelId)
+                    ? decision.ModelId
+                    : decision.RequestedModelId);
 
             string plannedLabel = GetDecisionModelLabel(modelId);
+
             string modelText = string.Equals(requestedLabel, plannedLabel, StringComparison.OrdinalIgnoreCase)
                 ? plannedLabel
                 : $"{plannedLabel} ← {requestedLabel}";
 
+            // ===== Capability =====
+            var capabilityLines = new List<string>();
+            string capabilityDetail;
+
+            if (decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0)
+            {
+                capabilityDetail = AgentCapabilityTraceFormatter.BuildSummary(decision.CapabilityTrace);
+                capabilityLines.AddRange(AgentCapabilityTraceFormatter.BuildDetailLines(decision.CapabilityTrace));
+            }
+            else
+            {
+                capabilityDetail = decision.CapabilityAdjusted ? "已調整" : "OK";
+                capabilityLines.AddRange(BuildCapabilityLines(decision, forcePendingText: false));
+            }
+
+            // ===== Delegation =====
+            var delegationLines = new List<string>();
+            string delegationDetail;
+
+            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
+            {
+                delegationDetail = AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace);
+                delegationLines.AddRange(AgentDelegationTraceFormatter.BuildDetailLines(decision.DelegationTrace));
+            }
+            else
+            {
+                delegationDetail = "尚未觸發";
+                delegationLines.Add("目前尚未進入 agent delegation");
+            }
+
+            // ===== Fallback =====
             var fallbackLines = new List<string>();
 
             if (isFallbackAttempt)
@@ -3273,26 +3354,28 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 fallbackLines.Add($"模型：{plannedLabel}");
             }
 
+            if (decision.RuntimeFallbackAttempts != null && decision.RuntimeFallbackAttempts.Count > 0)
+            {
+                foreach (var attempt in decision.RuntimeFallbackAttempts)
+                {
+                    if (attempt == null)
+                        continue;
+
+                    string attemptModelLabel = GetDecisionModelLabel(attempt.ModelId);
+                    string state = attempt.Success ? "Success" : "Failed";
+
+                    fallbackLines.Add(
+                        $"{attempt.AttemptIndex}. {attemptModelLabel} / {state} / {attempt.Reason} / {attempt.ErrorMessage}");
+                }
+            }
+
+            // ===== Execution =====
             var executionLines = new List<string>
     {
         "Execution 狀態：執行中",
         $"Model：{plannedLabel}",
         $"Streaming：{decision.UseStreaming}"
     };
-
-            // ===== Delegation =====
-            var delegationLines = new List<string>();
-            string delegationDetail = "尚未觸發";
-
-            if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
-            {
-                delegationDetail = AgentDelegationTraceFormatter.BuildSummary(decision.DelegationTrace);
-                delegationLines.AddRange(AgentDelegationTraceFormatter.BuildDetailLines(decision.DelegationTrace));
-            }
-            else
-            {
-                delegationLines.Add("目前尚未進入 agent delegation");
-            }
 
             var steps = new List<NodeDecisionStepViewData>
     {
@@ -3321,10 +3404,13 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         },
         new NodeDecisionStepViewData
         {
-            Title = "Capability Guard",
-            Detail = decision.CapabilityAdjusted ? "已調整" : "OK",
-            State = decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
-            DetailLines = BuildCapabilityLines(decision, forcePendingText: false)
+            Title = "Capability",
+            Detail = capabilityDetail,
+            State = decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0
+                ? NodeDecisionStepState.Warning
+                : (decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success),
+            Highlight = decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0,
+            DetailLines = capabilityLines
         },
         new NodeDecisionStepViewData
         {
@@ -3357,7 +3443,10 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
     };
 
             var extraParts = new List<string>();
-            if (decision.CapabilityAdjusted && !string.IsNullOrWhiteSpace(decision.CapabilityReason))
+
+            if (decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0)
+                extraParts.Add("capability: " + AgentCapabilityTraceFormatter.BuildSummary(decision.CapabilityTrace));
+            else if (decision.CapabilityAdjusted && !string.IsNullOrWhiteSpace(decision.CapabilityReason))
                 extraParts.Add(decision.CapabilityReason);
 
             if (isFallbackAttempt)
@@ -3382,18 +3471,37 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 return;
 
             string requestedLabel = GetDecisionModelLabel(
-                string.IsNullOrWhiteSpace(decision.RequestedModelId) ? decision.ModelId : decision.RequestedModelId);
+                string.IsNullOrWhiteSpace(decision.RequestedModelId)
+                    ? decision.ModelId
+                    : decision.RequestedModelId);
 
             string actualLabel = GetDecisionModelLabel(
-                string.IsNullOrWhiteSpace(decision.ActualModelId) ? decision.ModelId : decision.ActualModelId);
+                string.IsNullOrWhiteSpace(decision.ActualModelId)
+                    ? decision.ModelId
+                    : decision.ActualModelId);
 
             string modelText = string.Equals(requestedLabel, actualLabel, StringComparison.OrdinalIgnoreCase)
                 ? actualLabel
                 : $"{actualLabel} ← {requestedLabel}";
 
+            // ===== Capability =====
+            var capabilityLines = new List<string>();
+            string capabilityDetail;
+
+            if (decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0)
+            {
+                capabilityDetail = AgentCapabilityTraceFormatter.BuildSummary(decision.CapabilityTrace);
+                capabilityLines.AddRange(AgentCapabilityTraceFormatter.BuildDetailLines(decision.CapabilityTrace));
+            }
+            else
+            {
+                capabilityDetail = decision.CapabilityAdjusted ? "已調整" : "OK";
+                capabilityLines.AddRange(BuildCapabilityLines(decision, forcePendingText: false));
+            }
+
             // ===== Delegation =====
             var delegationLines = new List<string>();
-            string delegationDetail = "尚未觸發";
+            string delegationDetail;
 
             if (decision.DelegationTrace != null && decision.DelegationTrace.Count > 0)
             {
@@ -3402,6 +3510,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             }
             else
             {
+                delegationDetail = "尚未觸發";
                 delegationLines.Add("目前尚未進入 agent delegation");
             }
 
@@ -3432,10 +3541,13 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         },
         new NodeDecisionStepViewData
         {
-            Title = "Capability Guard",
-            Detail = decision.CapabilityAdjusted ? "已調整" : "OK",
-            State = decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
-            DetailLines = BuildCapabilityLines(decision, forcePendingText: false)
+            Title = "Capability",
+            Detail = capabilityDetail,
+            State = decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0
+                ? NodeDecisionStepState.Warning
+                : (decision.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success),
+            Highlight = decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0,
+            DetailLines = capabilityLines
         },
         new NodeDecisionStepViewData
         {
@@ -3468,6 +3580,9 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
     };
 
             var extraParts = new List<string>();
+
+            if (decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0)
+                extraParts.Add("capability: " + AgentCapabilityTraceFormatter.BuildSummary(decision.CapabilityTrace));
 
             if (!string.IsNullOrWhiteSpace(errorMessage))
                 extraParts.Add(errorMessage);
@@ -3521,6 +3636,18 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                         .Where(x => !string.IsNullOrWhiteSpace(x))
                         .Distinct(StringComparer.OrdinalIgnoreCase));
             }
+
+            // ===== Capability =====
+            string capabilitySummary = "-";
+            var capabilityDetails = new List<string>();
+
+            if (decision.CapabilityTrace != null && decision.CapabilityTrace.Count > 0)
+            {
+                capabilitySummary = AgentCapabilityTraceFormatter.BuildSummary(decision.CapabilityTrace);
+                capabilityDetails = AgentCapabilityTraceFormatter.BuildDetailLines(decision.CapabilityTrace).ToList();
+            }
+
+            // ===== Delegation =====
             string delegationSummary = "-";
             var delegationDetails = new List<string>();
 
@@ -3545,8 +3672,13 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 Reason = reason,
                 Keywords = keywords,
                 Extra = string.IsNullOrWhiteSpace(extra) ? "-" : extra,
+
+                CapabilitySummary = capabilitySummary,
+                CapabilityDetails = capabilityDetails,
+
                 DelegationSummary = delegationSummary,
                 DelegationDetails = delegationDetails,
+
                 CapabilityAdjusted = decision.CapabilityAdjusted,
                 RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
                 ApiFallbackUsed = decision.UsedFallbackToRules,

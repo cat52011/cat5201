@@ -38,8 +38,13 @@ namespace test
 
         public bool RuntimeFallbackUsed { get; set; }
         public string RuntimeFallbackSummary { get; set; } = "";
+
+        public IReadOnlyList<AgentCapabilityTraceItem> CapabilityTrace { get; set; }
+            = Array.Empty<AgentCapabilityTraceItem>();
+
         public IReadOnlyList<AgentDelegationTraceItem> DelegationTrace { get; set; }
-    = System.Array.Empty<AgentDelegationTraceItem>();
+            = Array.Empty<AgentDelegationTraceItem>();
+
         public IReadOnlyList<AiFallbackAttempt> RuntimeFallbackAttempts { get; set; }
             = Array.Empty<AiFallbackAttempt>();
     }

@@ -13,10 +13,15 @@ namespace test
         public string Reason { get; init; } = "-";
         public string Keywords { get; init; } = "-";
         public string Extra { get; init; } = "-";
-        public string DelegationSummary { get; init; } = "-";
 
+        public string CapabilitySummary { get; init; } = "-";
+        public IReadOnlyList<string> CapabilityDetails { get; init; }
+            = new List<string>();
+
+        public string DelegationSummary { get; init; } = "-";
         public IReadOnlyList<string> DelegationDetails { get; init; }
             = new List<string>();
+
         public bool CapabilityAdjusted { get; init; }
         public bool RuntimeFallbackUsed { get; init; }
         public bool ApiFallbackUsed { get; init; }

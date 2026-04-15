@@ -25,6 +25,7 @@ namespace test
         private readonly NodeTranslationExecutionService _translationExecutionService;
         private readonly NodeExecutionHeuristicsService _executionHeuristics;
 
+
         private readonly NodeInstructionBuilder _instructionBuilder = new();
         private readonly NodeTextProcessingService _textProcessing = new();
         private readonly NodeExecutionLogFactory _executionLogFactory = new();
@@ -87,7 +88,10 @@ namespace test
                 BuildAiRequestAsync,
                 SegmentDiscoveryMaxTokens,
                 SegmentTranslationMaxTokens);
+            InitializeAgentCapabilities();
         }
+
+
         private const int MainReplyMaxOutputTokens = 8000;
         private const int ContinuationMaxRounds = 5;
         private const int SegmentDiscoveryMaxTokens = 1200;
@@ -102,6 +106,7 @@ namespace test
             public string Title { get; set; } = "";
             public string Hint { get; set; } = "";
         }
+
 
         private Task<AiRequest> BuildExecutionRequestAsync(
     string model,
@@ -181,6 +186,24 @@ namespace test
     decision.ActualModelId,
     ct);
 
+                await _memoryService.RememberCapabilityTraceAsync(
+                    node,
+                    decision.ActualAgentId,
+                    topText,
+                    decision.CapabilityTrace,
+                    decision.TaskMode,
+                    decision.ActualModelId,
+                    ct);
+
+                await _memoryService.RememberDelegationTraceAsync(
+                    node,
+                    decision.ActualAgentId,
+                    topText,
+                    decision.DelegationTrace,
+                    decision.TaskMode,
+                    decision.ActualModelId,
+                    ct);
+
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
@@ -257,6 +280,24 @@ namespace test
     decision.ActualModelId,
     ct);
 
+                await _memoryService.RememberCapabilityTraceAsync(
+                    node,
+                    decision.ActualAgentId,
+                    topText,
+                    decision.CapabilityTrace,
+                    decision.TaskMode,
+                    decision.ActualModelId,
+                    ct);
+
+                await _memoryService.RememberDelegationTraceAsync(
+                    node,
+                    decision.ActualAgentId,
+                    topText,
+                    decision.DelegationTrace,
+                    decision.TaskMode,
+                    decision.ActualModelId,
+                    ct);
+
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
@@ -281,6 +322,24 @@ namespace test
                 throw;
             }
         }
+
+        private void InitializeAgentCapabilities()
+        {
+            AgentCapabilityRegistry.Clear();
+
+            AgentCapabilityRegistry.Register(
+                new SearchCapability(_main.GetPerplexityToolService()));
+
+            AgentCapabilityRegistry.Register(
+                new FileCapability());
+
+            AgentCapabilityRegistry.Register(
+                new CodeCapability());
+
+            AgentCapabilityRegistry.Register(
+                new ImageCapability());
+        }
+
         private async Task<AiFallbackExecutionResult> ExecuteWithFallbackAsync(
     NodeControl node,
     string topText,

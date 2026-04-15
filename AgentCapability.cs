@@ -23,6 +23,11 @@ namespace test
         Delegation = 1 << 11,
         ToolUse = 1 << 12,
         MemoryRead = 1 << 13,
-        MemoryWrite = 1 << 14
+        MemoryWrite = 1 << 14,
+
+        // ===== Phase 1 Step 6 新增 =====
+        FileTool = 1 << 15,
+        CodeTool = 1 << 16,
+        ImageTool = 1 << 17
     }
 }

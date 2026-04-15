@@ -15,15 +15,15 @@ namespace test
             string plannedLabel = GetModelLabel(log.PlannedModelId);
             string actualLabel = GetModelLabel(log.ActualModelId);
 
-            // 若有 capability guard 調整，主顯示優先反映 capability 轉移
             string capabilityRequestedLabel = GetModelLabel(log.CapabilityRequestedModelId);
             string capabilityResolvedLabel = GetModelLabel(log.CapabilityResolvedModelId);
 
             string displayFromLabel = requestedLabel;
             string displayToLabel = actualLabel;
+
             string agent = string.IsNullOrWhiteSpace(log.ActualAgentId)
-    ? (string.IsNullOrWhiteSpace(log.RequestedAgentId) ? "-" : log.RequestedAgentId)
-    : log.ActualAgentId;
+                ? (string.IsNullOrWhiteSpace(log.RequestedAgentId) ? "-" : log.RequestedAgentId)
+                : log.ActualAgentId;
 
             if (log.CapabilityAdjusted &&
                 !string.IsNullOrWhiteSpace(log.CapabilityRequestedModelId) &&
@@ -56,6 +56,7 @@ namespace test
                 : log.Resolver;
 
             string taskSummary = BuildTaskSummary(log);
+
             string reason = string.IsNullOrWhiteSpace(log.ResolverReason)
                 ? "-"
                 : log.ResolverReason;
@@ -63,6 +64,17 @@ namespace test
             string keywords = BuildKeywordSummary(log);
             if (string.IsNullOrWhiteSpace(keywords))
                 keywords = "-";
+
+            string capabilitySummary = BuildCapabilityTraceSummary(log);
+            if (string.IsNullOrWhiteSpace(capabilitySummary))
+                capabilitySummary = "-";
+
+            var capabilityDetails = BuildCapabilityTraceDetails(log);
+
+            string delegationSummary = "-";
+            var delegationDetails = new List<string>();
+            // 歷史 log 目前若尚未存 delegation trace，可先留空
+            // 若你之後把 delegation trace 也加進 log，可在這裡一併接回
 
             string extra = BuildExtraSummary(log);
             if (string.IsNullOrWhiteSpace(extra))
@@ -76,15 +88,23 @@ namespace test
                 Status = status,
                 Mode = mode,
                 Resolver = resolver,
+                Agent = agent,
                 Model = modelLabel,
                 TaskSummary = taskSummary,
                 Reason = reason,
                 Keywords = keywords,
                 Extra = extra,
-                Agent = agent,
+
+                CapabilitySummary = capabilitySummary,
+                CapabilityDetails = capabilityDetails,
+
+                DelegationSummary = delegationSummary,
+                DelegationDetails = delegationDetails,
+
                 CapabilityAdjusted = log.CapabilityAdjusted,
                 RuntimeFallbackUsed = log.RuntimeFallbackUsed,
                 ApiFallbackUsed = apiFallbackUsed,
+
                 Steps = BuildSteps(
                     log,
                     requestedLabel,
@@ -107,6 +127,10 @@ namespace test
                 Reason = "-",
                 Keywords = "-",
                 Extra = "-",
+                CapabilitySummary = "-",
+                CapabilityDetails = Array.Empty<string>(),
+                DelegationSummary = "-",
+                DelegationDetails = Array.Empty<string>(),
                 Agent = "-",
                 Steps = Array.Empty<NodeDecisionStepViewData>()
             };
@@ -176,11 +200,11 @@ namespace test
                 summary = $"{requestedLabel} → {actualLabel}";
 
             var lines = new List<string>
-{
-    $"Requested Model: {requestedLabel}",
-    $"Planned Model: {plannedLabel}",
-    $"Actual Model: {actualLabel}"
-};
+            {
+                $"Requested Model: {requestedLabel}",
+                $"Planned Model: {plannedLabel}",
+                $"Actual Model: {actualLabel}"
+            };
 
             if (log.CapabilityAdjusted &&
                 !string.IsNullOrWhiteSpace(log.CapabilityRequestedModelId) &&
@@ -234,16 +258,44 @@ namespace test
         private static NodeDecisionStepViewData BuildCapabilityStep(AiExecutionLogEntry log)
         {
             string detail;
+            IReadOnlyList<string> lines;
 
-            if (log.CapabilityAdjusted)
+            var traceSummary = BuildCapabilityTraceSummary(log);
+            var traceDetails = BuildCapabilityTraceDetails(log);
+
+            if (!string.IsNullOrWhiteSpace(traceSummary) && traceSummary != "-")
             {
-                detail = $"{GetModelLabel(log.CapabilityRequestedModelId)} → {GetModelLabel(log.CapabilityResolvedModelId)}";
+                detail = traceSummary;
+                lines = traceDetails.Count > 0
+                    ? traceDetails
+                    : BuildCapabilityGuardLines(log);
             }
             else
             {
-                detail = "OK";
+                detail = log.CapabilityAdjusted
+                    ? $"{GetModelLabel(log.CapabilityRequestedModelId)} → {GetModelLabel(log.CapabilityResolvedModelId)}"
+                    : "OK";
+
+                lines = BuildCapabilityGuardLines(log);
             }
 
+            var state =
+                (!string.IsNullOrWhiteSpace(traceSummary) && traceSummary != "-") || log.CapabilityAdjusted
+                    ? NodeDecisionStepState.Warning
+                    : NodeDecisionStepState.Success;
+
+            return new NodeDecisionStepViewData
+            {
+                Title = "Capability",
+                Detail = detail,
+                State = state,
+                Highlight = !string.IsNullOrWhiteSpace(traceSummary) && traceSummary != "-",
+                DetailLines = lines
+            };
+        }
+
+        private static IReadOnlyList<string> BuildCapabilityGuardLines(AiExecutionLogEntry log)
+        {
             var lines = new List<string>();
 
             if (!string.IsNullOrWhiteSpace(log.CapabilityRequestedModelId))
@@ -267,13 +319,7 @@ namespace test
             if (lines.Count == 0)
                 lines.Add("Capability Guard: OK");
 
-            return new NodeDecisionStepViewData
-            {
-                Title = "Capability Guard",
-                Detail = detail,
-                State = log.CapabilityAdjusted ? NodeDecisionStepState.Warning : NodeDecisionStepState.Success,
-                DetailLines = lines
-            };
+            return lines;
         }
 
         private static NodeDecisionStepViewData BuildFallbackStep(AiExecutionLogEntry log, bool apiFallbackUsed)
@@ -368,17 +414,36 @@ namespace test
             return "keywords: " + string.Join(", ", keywords);
         }
 
+        private static string BuildCapabilityTraceSummary(AiExecutionLogEntry log)
+        {
+            if (log?.CapabilityTrace == null || log.CapabilityTrace.Count == 0)
+                return "";
+
+            return AgentCapabilityTraceFormatter.BuildSummary(log.CapabilityTrace);
+        }
+
+        private static IReadOnlyList<string> BuildCapabilityTraceDetails(AiExecutionLogEntry log)
+        {
+            if (log?.CapabilityTrace == null || log.CapabilityTrace.Count == 0)
+                return new List<string>();
+
+            return AgentCapabilityTraceFormatter.BuildDetailLines(log.CapabilityTrace);
+        }
+
         private static string BuildExtraSummary(AiExecutionLogEntry log)
         {
             var extraParts = new List<string>();
 
+            string capabilityTraceSummary = BuildCapabilityTraceSummary(log);
+            if (!string.IsNullOrWhiteSpace(capabilityTraceSummary) && capabilityTraceSummary != "-")
+                extraParts.Add("capability: " + capabilityTraceSummary);
 
             if (!string.IsNullOrWhiteSpace(log.CapabilityReason))
                 extraParts.Add(log.CapabilityReason);
 
             string capabilityDetail = BuildCapabilityDetail(log);
             if (!string.IsNullOrWhiteSpace(capabilityDetail))
-                extraParts.Add("capability: " + capabilityDetail);
+                extraParts.Add("capability-guard: " + capabilityDetail);
 
             if (!string.IsNullOrWhiteSpace(log.RuntimeFallbackSummary))
                 extraParts.Add(log.RuntimeFallbackSummary);
@@ -462,7 +527,7 @@ namespace test
             return "trace: " + string.Join(" → ", parts);
         }
 
-        private static string GetModelLabel(string modelId)
+        private static string GetModelLabel(string? modelId)
         {
             var def = AiModelHelper.GetDefinition(modelId);
 

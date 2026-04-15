@@ -6,7 +6,7 @@ namespace test
     public sealed class AiExecutionLogEntry
     {
         public string RequestedAgentId { get; init; } = "";
-        public string ActualAgentId { get; init; } = "";    
+        public string ActualAgentId { get; init; } = "";
         public string NodeId { get; init; } = "";
 
         public DateTime StartedAtUtc { get; init; }
@@ -36,6 +36,9 @@ namespace test
         public string CapabilityRequired { get; init; } = "";
         public string CapabilityMissing { get; init; } = "";
         public bool CapabilityStreamingAdjusted { get; init; }
+
+        public IReadOnlyList<AgentCapabilityTraceItem> CapabilityTrace { get; init; }
+            = Array.Empty<AgentCapabilityTraceItem>();
 
         public bool RuntimeFallbackUsed { get; init; }
         public string RuntimeFallbackSummary { get; init; } = "";

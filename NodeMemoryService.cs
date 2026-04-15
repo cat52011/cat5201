@@ -101,6 +101,110 @@ namespace test
             _store.AddRange(items);
             return Task.CompletedTask;
         }
+
+        public Task RememberCapabilityTraceAsync(
+            NodeControl node,
+            string agentId,
+            string topText,
+            IReadOnlyList<AgentCapabilityTraceItem> capabilityTrace,
+            NodeTaskMode taskMode,
+            string modelId,
+            CancellationToken ct = default)
+        {
+            if (node == null || capabilityTrace == null || capabilityTrace.Count == 0)
+                return Task.CompletedTask;
+
+            agentId ??= "";
+            topText ??= "";
+
+            string fileKey = GetCurrentFileKey();
+            string title = BuildTitle(topText, taskMode);
+
+            var executed = capabilityTrace
+                .Where(x => x != null && x.Executed)
+                .ToList();
+
+            if (executed.Count == 0)
+                return Task.CompletedTask;
+
+            string content = string.Join(
+                "\n",
+                executed.Select(x =>
+                    $"- Capability={x.CapabilityId}, Handled={x.Handled}, Augmented={x.AugmentedPrompt}, Success={x.Success}, Summary={TrimText(x.Summary, 120)}"));
+
+            var item = new MemoryItem
+            {
+                Scope = MemoryScope.File,
+                Category = "capability_result",
+                FileKey = fileKey,
+                SourceNodeId = node.Id.ToString(),
+                AgentId = agentId,
+                IsSharedMemory = false,
+                Title = $"Capability 摘要：{title}",
+                Content = TrimText(content, 1200),
+                Tags = BuildTags(topText, taskMode),
+                TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
+                ModelId = AiModelHelper.NormalizeNodeModel(modelId),
+                Importance = 0.62,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+
+            _store.Add(item);
+            return Task.CompletedTask;
+        }
+
+        public Task RememberDelegationTraceAsync(
+            NodeControl node,
+            string agentId,
+            string topText,
+            IReadOnlyList<AgentDelegationTraceItem> delegationTrace,
+            NodeTaskMode taskMode,
+            string modelId,
+            CancellationToken ct = default)
+        {
+            if (node == null || delegationTrace == null || delegationTrace.Count == 0)
+                return Task.CompletedTask;
+
+            agentId ??= "";
+            topText ??= "";
+
+            string fileKey = GetCurrentFileKey();
+            string title = BuildTitle(topText, taskMode);
+
+            var succeeded = delegationTrace
+                .Where(x => x != null && x.Success)
+                .ToList();
+
+            if (succeeded.Count == 0)
+                return Task.CompletedTask;
+
+            string content = string.Join(
+                "\n",
+                succeeded.Select(x =>
+                    $"- {x.FromAgentId} -> {x.ToAgentId}, Depth={x.Depth}, Summary={TrimText(x.OutputSummary, 180)}"));
+
+            var item = new MemoryItem
+            {
+                Scope = MemoryScope.File,
+                Category = "delegation_result",
+                FileKey = fileKey,
+                SourceNodeId = node.Id.ToString(),
+                AgentId = agentId,
+                IsSharedMemory = false,
+                Title = $"Delegation 摘要：{title}",
+                Content = TrimText(content, 1400),
+                Tags = BuildTags(topText, taskMode),
+                TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
+                ModelId = AiModelHelper.NormalizeNodeModel(modelId),
+                Importance = 0.66,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+
+            _store.Add(item);
+            return Task.CompletedTask;
+        }
         public MemoryQueryResult RecallRelevant(
             NodeControl currentNode,
             string agentId,
@@ -165,8 +269,17 @@ namespace test
                 foreach (var item in agentItems)
                 {
                     lines.Add($"- Agent Memory {index}");
+                    lines.Add($"- Agent Memory {index}");
                     lines.Add($"  Category: {item.Category}");
                     lines.Add($"  Title: {item.Title}");
+
+                    if (string.Equals(item.Category, "capability_result", StringComparison.OrdinalIgnoreCase))
+                        lines.Add("  Type: capability trace memory");
+                    else if (string.Equals(item.Category, "delegation_result", StringComparison.OrdinalIgnoreCase))
+                        lines.Add("  Type: delegation trace memory");
+                    else if (string.Equals(item.Category, "execution_result", StringComparison.OrdinalIgnoreCase))
+                        lines.Add("  Type: execution result memory");
+
                     lines.Add($"  Content: {TrimText(item.Content, 320)}");
                     index++;
                 }
@@ -179,8 +292,17 @@ namespace test
                 foreach (var item in sharedItems)
                 {
                     lines.Add($"- Shared Memory {index}");
+                    lines.Add($"- Shared Memory {index}");
                     lines.Add($"  Category: {item.Category}");
                     lines.Add($"  Title: {item.Title}");
+
+                    if (string.Equals(item.Category, "capability_result", StringComparison.OrdinalIgnoreCase))
+                        lines.Add("  Type: capability trace memory");
+                    else if (string.Equals(item.Category, "delegation_result", StringComparison.OrdinalIgnoreCase))
+                        lines.Add("  Type: delegation trace memory");
+                    else if (string.Equals(item.Category, "execution_result", StringComparison.OrdinalIgnoreCase))
+                        lines.Add("  Type: execution result memory");
+
                     lines.Add($"  Content: {TrimText(item.Content, 280)}");
                     index++;
                 }

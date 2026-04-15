@@ -31,7 +31,9 @@ namespace test
                     AgentCapability.Files |
                     AgentCapability.LongContext |
                     AgentCapability.MemoryRead |
-                    AgentCapability.MemoryWrite
+                    AgentCapability.MemoryWrite |
+                    AgentCapability.FileTool |
+                    AgentCapability.ImageTool
             },
 
             new AgentDefinition
@@ -51,10 +53,13 @@ namespace test
                 Capabilities =
                     AgentCapability.Research |
                     AgentCapability.Search |
+                    AgentCapability.Files |
                     AgentCapability.LongContext |
                     AgentCapability.MemoryRead |
                     AgentCapability.MemoryWrite |
-                    AgentCapability.Delegation,
+                    AgentCapability.Delegation |
+                    AgentCapability.ToolUse |
+                    AgentCapability.FileTool,
                 AllowDelegation = true
             },
 
@@ -78,51 +83,9 @@ namespace test
                     AgentCapability.Files |
                     AgentCapability.LongContext |
                     AgentCapability.MemoryRead |
-                    AgentCapability.MemoryWrite
-            },
-
-            new AgentDefinition
-            {
-                Id = "writer-agent",
-                Name = "Writer Agent",
-                Role = AgentRole.Writer,
-                DefaultModelId = AiModels.Claude_Sonnet46,
-                DefaultTaskMode = NodeTaskMode.Rewrite,
-                SystemPrompt = "你是一個寫作型代理，負責改寫、潤稿、重組結構與改善可讀性。",
-                AllowedModelIds = new[]
-                {
-                    AiModels.Claude_Sonnet46,
-                    AiModels.OpenAi_Gpt54,
-                    AiModels.Claude_Opus46
-                },
-                Capabilities =
-                    AgentCapability.Rewrite |
-                    AgentCapability.Summarize |
-                    AgentCapability.LongContext |
-                    AgentCapability.MemoryRead |
-                    AgentCapability.MemoryWrite
-            },
-
-            new AgentDefinition
-            {
-                Id = "extract-agent",
-                Name = "Extract Agent",
-                Role = AgentRole.Extractor,
-                DefaultModelId = AiModels.OpenAi_Gpt54,
-                DefaultTaskMode = NodeTaskMode.Extract,
-                SystemPrompt = "你是一個擷取型代理，負責抽取欄位、結構化資訊與整理重點資料。",
-                AllowedModelIds = new[]
-                {
-                    AiModels.OpenAi_Gpt54,
-                    AiModels.Claude_Sonnet46
-                },
-                Capabilities =
-                    AgentCapability.Extract |
-                    AgentCapability.Files |
-                    AgentCapability.Images |
-                    AgentCapability.LongContext |
-                    AgentCapability.MemoryRead |
-                    AgentCapability.MemoryWrite
+                    AgentCapability.MemoryWrite |
+                    AgentCapability.FileTool |
+                    AgentCapability.ImageTool
             },
 
             new AgentDefinition
@@ -142,36 +105,15 @@ namespace test
                 Capabilities =
                     AgentCapability.Code |
                     AgentCapability.Files |
+                    AgentCapability.Search |
                     AgentCapability.LongContext |
                     AgentCapability.MemoryRead |
                     AgentCapability.MemoryWrite |
-                    AgentCapability.Delegation,
-                AllowDelegation = true
-            },
-
-            new AgentDefinition
-            {
-                Id = "coordinator-agent",
-                Name = "Coordinator Agent",
-                Role = AgentRole.Coordinator,
-                DefaultModelId = AiModels.OpenAi_Gpt54,
-                DefaultTaskMode = NodeTaskMode.Chat,
-                SystemPrompt = "你是一個協調型代理，負責任務拆分、委派、彙整與多代理協作。",
-                AllowedModelIds = new[]
-                {
-                    AiModels.OpenAi_Gpt54,
-                    AiModels.Claude_Sonnet46
-                },
-                Capabilities =
-                    AgentCapability.Chat |
-                    AgentCapability.Research |
-                    AgentCapability.Summarize |
                     AgentCapability.Delegation |
                     AgentCapability.ToolUse |
-                    AgentCapability.MemoryRead |
-                    AgentCapability.MemoryWrite,
-                AllowDelegation = true,
-                IsSystemAgent = true
+                    AgentCapability.FileTool |
+                    AgentCapability.CodeTool,
+                AllowDelegation = true
             }
         };
 

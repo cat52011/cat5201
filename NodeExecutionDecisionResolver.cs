@@ -8,6 +8,8 @@ namespace test
     public sealed class NodeExecutionDecisionResolver
     {
         private readonly AgentRuntimeProfileResolver _agentProfileResolver = new();
+        private readonly AgentSelectionResolver _agentSelectionResolver = new();
+
         private readonly AiServiceRouter _router;
         private readonly MainWindow _main;
         private readonly AiAutoModelResolverService _autoResolver;
@@ -31,24 +33,28 @@ namespace test
             CancellationToken ct)
         {
             string selectedAgentId = _main.GetNodeSelectedAgent(node);
-            var agent = AgentRegistry.Get(selectedAgentId);
+            var selectedAgent = AgentRegistry.Get(selectedAgentId);
 
             string selectedModel = _main.GetNodeSelectedModel(node);
-            var agentProfile = _agentProfileResolver.Resolve(
-                agent,
-                preferredModelId: selectedModel,
-                preferredTaskMode: _main.GetNodeTaskMode(node));
+            var attachments = _main.GetAttachmentsForNode(node);
+
+            // ===== Manual：保留原本手動 agent =====
             if (!_main.IsAutoModelSelectionEnabled())
             {
                 var manualTask = ResolveAndPersistTaskMode(node, topText);
 
+                var manualProfile = _agentProfileResolver.Resolve(
+                    selectedAgent,
+                    preferredModelId: selectedModel,
+                    preferredTaskMode: _main.GetNodeTaskMode(node));
+
                 var manualDecision = new NodeExecutionDecision
                 {
-                    RequestedAgentId = agent.Id,
-                    ActualAgentId = agent.Id,
+                    RequestedAgentId = selectedAgent.Id,
+                    ActualAgentId = selectedAgent.Id,
 
-                    RequestedModelId = AiModelHelper.NormalizeNodeModel(agentProfile.RuntimeModelId),
-                    ModelId = AiModelHelper.NormalizeNodeModel(agentProfile.RuntimeModelId),
+                    RequestedModelId = AiModelHelper.NormalizeNodeModel(manualProfile.RuntimeModelId),
+                    ModelId = AiModelHelper.NormalizeNodeModel(manualProfile.RuntimeModelId),
 
                     TaskMode = manualTask.Mode,
                     ResolverLabel = "Manual",
@@ -64,33 +70,44 @@ namespace test
                 return ApplyCapabilityCheck(node, manualDecision);
             }
 
+            // ===== Auto：先解 task，再自動選 agent =====
             if (_main.IsAdvancedAutoResolverEnabled())
             {
                 try
                 {
-                    var resolution = await _autoResolver.ResolveAsync(
+                    var apiResolution = await _autoResolver.ResolveAsync(
                         topText,
-                        _main.GetAttachmentsForNode(node),
+                        attachments,
                         ct);
 
-                    var resolvedMode = NodeTaskModeHelper.Normalize(resolution.TaskMode);
+                    var resolvedMode = NodeTaskModeHelper.Normalize(apiResolution.TaskMode);
                     _main.SetNodeTaskMode(node, resolvedMode);
 
-                    string resolvedModel = AiModelHelper.NormalizeNodeModel(resolution.RecommendedModel);
+                    var autoAgentSelection = _agentSelectionResolver.Resolve(
+                        topText,
+                        resolvedMode,
+                        attachments,
+                        selectedAgentId);
+
+                    var actualAgent = AgentRegistry.Get(autoAgentSelection.AgentId);
+
+                    string resolvedModel = AiModelHelper.NormalizeNodeModel(apiResolution.RecommendedModel);
 
                     var apiDecision = new NodeExecutionDecision
                     {
-                        RequestedAgentId = agent.Id,
-                        ActualAgentId = agent.Id,
+                        RequestedAgentId = selectedAgent.Id,
+                        ActualAgentId = actualAgent.Id,
 
                         RequestedModelId = resolvedModel,
                         ModelId = resolvedModel,
 
                         TaskMode = resolvedMode,
-                        ResolverLabel = "Responses API",
+                        ResolverLabel = "Responses API + Agent Rules",
                         StatusLabel = "API Auto",
-                        Confidence = resolution.Confidence,
-                        ResolverReason = "由 API resolver 根據輸入內容判定模型與任務模式",
+                        Confidence = Math.Max(apiResolution.Confidence, autoAgentSelection.Confidence),
+                        ResolverReason =
+                            $"Agent: {autoAgentSelection.Reason} / " +
+                            $"Task/Model: 由 API resolver 根據輸入內容判定模型與任務模式",
                         ResolverKeywords = Array.Empty<string>(),
                         UsedApiResolver = true,
                         UsedFallbackToRules = false,
@@ -102,23 +119,34 @@ namespace test
                 catch
                 {
                     var fallbackTask = ResolveAndPersistTaskMode(node, topText);
+
+                    var autoAgentSelection = _agentSelectionResolver.Resolve(
+                        topText,
+                        fallbackTask.Mode,
+                        attachments,
+                        selectedAgentId);
+
+                    var actualAgent = AgentRegistry.Get(autoAgentSelection.AgentId);
+
                     string fallbackModel = _modelSelection.ResolveRuleAutoModel(
                         fallbackTask.Mode,
                         selectedModel);
 
                     var fallbackDecision = new NodeExecutionDecision
                     {
-                        RequestedAgentId = agent.Id,
-                        ActualAgentId = agent.Id,
+                        RequestedAgentId = selectedAgent.Id,
+                        ActualAgentId = actualAgent.Id,
 
                         RequestedModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
                         ModelId = AiModelHelper.NormalizeNodeModel(fallbackModel),
 
                         TaskMode = fallbackTask.Mode,
-                        ResolverLabel = "Rules (fallback)",
+                        ResolverLabel = "Rules (fallback) + Agent Rules",
                         StatusLabel = "API Auto",
-                        Confidence = 0.30,
-                        ResolverReason = fallbackTask.Reason,
+                        Confidence = Math.Max(0.30, autoAgentSelection.Confidence),
+                        ResolverReason =
+                            $"Agent: {autoAgentSelection.Reason} / " +
+                            $"Task/Model fallback: {fallbackTask.Reason}",
                         ResolverKeywords = fallbackTask.MatchedKeywords ?? Array.Empty<string>(),
                         UsedApiResolver = true,
                         UsedFallbackToRules = true,
@@ -130,23 +158,34 @@ namespace test
             }
 
             var ruleTask = ResolveAndPersistTaskMode(node, topText);
+
+            var ruleAgentSelection = _agentSelectionResolver.Resolve(
+                topText,
+                ruleTask.Mode,
+                attachments,
+                selectedAgentId);
+
+            var ruleActualAgent = AgentRegistry.Get(ruleAgentSelection.AgentId);
+
             string autoModel = _modelSelection.ResolveRuleAutoModel(
                 ruleTask.Mode,
                 selectedModel);
 
             var ruleDecision = new NodeExecutionDecision
             {
-                RequestedAgentId = agent.Id,
-                ActualAgentId = agent.Id,
+                RequestedAgentId = selectedAgent.Id,
+                ActualAgentId = ruleActualAgent.Id,
 
                 RequestedModelId = AiModelHelper.NormalizeNodeModel(autoModel),
                 ModelId = AiModelHelper.NormalizeNodeModel(autoModel),
 
                 TaskMode = ruleTask.Mode,
-                ResolverLabel = "Rules",
+                ResolverLabel = "Rules + Agent Rules",
                 StatusLabel = "Rule Auto",
-                Confidence = ruleTask.Confidence,
-                ResolverReason = ruleTask.Reason,
+                Confidence = Math.Max(ruleTask.Confidence, ruleAgentSelection.Confidence),
+                ResolverReason =
+                    $"Agent: {ruleAgentSelection.Reason} / " +
+                    $"Task/Model: {ruleTask.Reason}",
                 ResolverKeywords = ruleTask.MatchedKeywords ?? Array.Empty<string>(),
                 UsedApiResolver = false,
                 UsedFallbackToRules = false,

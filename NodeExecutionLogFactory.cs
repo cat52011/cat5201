@@ -49,6 +49,8 @@ namespace test
                 CapabilityMissing = decision.CapabilityMissing.ToString(),
                 CapabilityStreamingAdjusted = decision.CapabilityStreamingAdjusted,
 
+                CapabilityTrace = decision.CapabilityTrace?.ToList() ?? new List<AgentCapabilityTraceItem>(),
+
                 RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
                 RuntimeFallbackSummary = decision.RuntimeFallbackSummary ?? "",
 

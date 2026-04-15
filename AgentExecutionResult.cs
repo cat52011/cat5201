@@ -7,6 +7,9 @@ namespace test
         public NodeExecutionDecision Decision { get; init; } = new();
         public AiFallbackExecutionResult Execution { get; init; } = new();
 
+        public IReadOnlyList<AgentCapabilityTraceItem> CapabilityTrace { get; init; }
+            = new List<AgentCapabilityTraceItem>();
+
         public IReadOnlyList<AgentDelegationTraceItem> DelegationTrace { get; init; }
             = new List<AgentDelegationTraceItem>();
 
