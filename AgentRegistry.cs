@@ -33,7 +33,22 @@ namespace test
                     AgentCapability.MemoryRead |
                     AgentCapability.MemoryWrite |
                     AgentCapability.FileTool |
-                    AgentCapability.ImageTool
+                    AgentCapability.ImageTool,
+
+                AllowedCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "search-capability",
+    "file-capability",
+    "image-capability",
+    "reasoning-capability"
+},
+PreferredCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "file-capability",
+    "reasoning-capability"
+},
             },
 
             new AgentDefinition
@@ -60,7 +75,21 @@ namespace test
                     AgentCapability.Delegation |
                     AgentCapability.ToolUse |
                     AgentCapability.FileTool,
-                AllowDelegation = true
+                AllowDelegation = true,
+
+                AllowedCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "search-capability",
+    "file-capability",
+    "reasoning-capability"
+},
+PreferredCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "search-capability",
+    "reasoning-capability"
+},
             },
 
             new AgentDefinition
@@ -85,7 +114,15 @@ namespace test
                     AgentCapability.MemoryRead |
                     AgentCapability.MemoryWrite |
                     AgentCapability.FileTool |
-                    AgentCapability.ImageTool
+                    AgentCapability.ImageTool,
+
+                AllowedCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "file-capability",
+    "image-capability",
+    "reasoning-capability"
+},
             },
 
             new AgentDefinition
@@ -113,7 +150,21 @@ namespace test
                     AgentCapability.ToolUse |
                     AgentCapability.FileTool |
                     AgentCapability.CodeTool,
-                AllowDelegation = true
+                AllowDelegation = true,
+
+                AllowedCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "code-capability",
+    "file-capability",
+    "reasoning-capability"
+},
+PreferredCapabilityIds = new[]
+{
+    "task-planning-capability",
+    "code-capability",
+    "reasoning-capability"
+},
             }
         };
 

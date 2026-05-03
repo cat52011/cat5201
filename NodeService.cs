@@ -328,6 +328,9 @@ namespace test
             AgentCapabilityRegistry.Clear();
 
             AgentCapabilityRegistry.Register(
+                new TaskPlanningCapability());
+
+            AgentCapabilityRegistry.Register(
                 new SearchCapability(_main.GetPerplexityToolService()));
 
             AgentCapabilityRegistry.Register(
@@ -335,6 +338,9 @@ namespace test
 
             AgentCapabilityRegistry.Register(
                 new CodeCapability());
+
+            AgentCapabilityRegistry.Register(
+                new ReasoningCapability());
 
             AgentCapabilityRegistry.Register(
                 new ImageCapability());

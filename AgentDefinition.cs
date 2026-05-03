@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 
 namespace test
 {
@@ -17,7 +18,7 @@ namespace test
         public string SystemPrompt { get; init; } = "";
 
         // 允許的模型清單（第一版先給 routing / UI 用）
-        public IReadOnlyList<string> AllowedModelIds { get; init; } = new List<string>();
+        public IReadOnlyList<string> AllowedModelIds { get; init; } = Array.Empty<string>();
 
         public AgentCapability Capabilities { get; init; } =
             AgentCapability.Chat |
@@ -28,6 +29,13 @@ namespace test
 
         public bool AllowDelegation { get; init; }
         public bool IsSystemAgent { get; init; }
+
+        // ===== Phase 2: Capability Policy =====
+        public IReadOnlyList<string> AllowedCapabilityIds { get; init; } = Array.Empty<string>();
+
+        public IReadOnlyList<string> PreferredCapabilityIds { get; init; } = Array.Empty<string>();
+
+        public IReadOnlyList<string> BlockedCapabilityIds { get; init; } = Array.Empty<string>();
 
         public bool Supports(NodeTaskMode mode)
         {
@@ -42,6 +50,62 @@ namespace test
                 NodeTaskMode.Code => Capabilities.HasFlag(AgentCapability.Code),
                 _ => false
             };
+        }
+
+        public bool IsCapabilityBlocked(string capabilityId)
+        {
+            if (string.IsNullOrWhiteSpace(capabilityId) ||
+                BlockedCapabilityIds == null ||
+                BlockedCapabilityIds.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var id in BlockedCapabilityIds)
+            {
+                if (string.Equals(id, capabilityId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        public bool IsCapabilityAllowed(string capabilityId)
+        {
+            if (string.IsNullOrWhiteSpace(capabilityId))
+                return false;
+
+            if (IsCapabilityBlocked(capabilityId))
+                return false;
+
+            if (AllowedCapabilityIds == null || AllowedCapabilityIds.Count == 0)
+                return true;
+
+            foreach (var id in AllowedCapabilityIds)
+            {
+                if (string.Equals(id, capabilityId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        public bool IsPreferredCapability(string capabilityId)
+        {
+            if (string.IsNullOrWhiteSpace(capabilityId) ||
+                PreferredCapabilityIds == null ||
+                PreferredCapabilityIds.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var id in PreferredCapabilityIds)
+            {
+                if (string.Equals(id, capabilityId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
     }
 }

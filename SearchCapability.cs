@@ -1,4 +1,7 @@
-﻿using System.Text;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -34,9 +37,9 @@ namespace test
                    text.Contains("查證") ||
                    text.Contains("最新") ||
                    text.Contains("比較") ||
-                   text.Contains("research", System.StringComparison.OrdinalIgnoreCase) ||
-                   text.Contains("search", System.StringComparison.OrdinalIgnoreCase) ||
-                   text.Contains("latest", System.StringComparison.OrdinalIgnoreCase);
+                   text.Contains("research", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("search", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("latest", StringComparison.OrdinalIgnoreCase);
         }
 
         public async Task<AgentCapabilityResult> ExecuteAsync(
@@ -51,30 +54,68 @@ namespace test
             if (results == null || results.Count == 0)
                 return AgentCapabilityResult.NotHandled();
 
+            var cleaned = results
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Title))
+                .GroupBy(x => x.Title.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+
+            if (cleaned.Count == 0)
+                return AgentCapabilityResult.NotHandled();
+
+            var items = cleaned
+                .Select(x => new SearchSummaryItem
+                {
+                    Title = x.Title ?? "",
+                    KeyPoint = ExtractKeyPoint(x.Snippet),
+                    Source = x.Url ?? "",
+                    Date = x.Date ?? ""
+                })
+                .ToList();
+
+            string summary = BuildSummary(context.TopText, items);
+
+            var payload = new SearchSummaryPayload
+            {
+                Query = context.TopText ?? "",
+                Summary = summary,
+                Items = items
+            };
+
+            return AgentCapabilityResult.WithData("search_summary", payload);
+        }
+
+        private static string ExtractKeyPoint(string snippet)
+        {
+            if (string.IsNullOrWhiteSpace(snippet))
+                return "";
+
+            snippet = snippet.Trim();
+
+            return snippet.Length > 100
+                ? snippet.Substring(0, 100)
+                : snippet;
+        }
+
+        private static string BuildSummary(string query, IEnumerable<SearchSummaryItem> items)
+        {
             var sb = new StringBuilder();
-            sb.AppendLine("【Capability Search Results】");
+            sb.AppendLine("整理重點如下：");
 
             int index = 1;
-            foreach (var item in results)
+            foreach (var item in items)
             {
-                sb.AppendLine($"{index}. {item.Title}");
-                if (!string.IsNullOrWhiteSpace(item.Snippet))
-                    sb.AppendLine($"   Snippet: {item.Snippet}");
-                if (!string.IsNullOrWhiteSpace(item.Url))
-                    sb.AppendLine($"   Url: {item.Url}");
-                if (!string.IsNullOrWhiteSpace(item.Date))
-                    sb.AppendLine($"   Date: {item.Date}");
+                if (item == null || string.IsNullOrWhiteSpace(item.KeyPoint))
+                    continue;
 
+                sb.AppendLine($"{index}. {item.KeyPoint}");
                 index++;
             }
 
-            string augmented =
-                context.TopText +
-                "\n\n" +
-                sb.ToString() +
-                "\n請基於以上搜尋結果完成回答。";
+            if (index == 1)
+                return "無明確重點資訊";
 
-            return AgentCapabilityResult.WithAugmentedPrompt(augmented);
+            return sb.ToString().Trim();
         }
     }
 }
