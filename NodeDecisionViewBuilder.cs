@@ -429,6 +429,14 @@ namespace test
 
             return AgentCapabilityTraceFormatter.BuildDetailLines(log.CapabilityTrace);
         }
+        private static string Trim(string text, int max)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+
+            text = text.Trim();
+            return text.Length <= max ? text : text.Substring(0, max) + "…";
+        }
 
         private static string BuildExtraSummary(AiExecutionLogEntry log)
         {
@@ -454,6 +462,10 @@ namespace test
 
             if (!log.Success && !string.IsNullOrWhiteSpace(log.ErrorMessage))
                 extraParts.Add(log.ErrorMessage);
+
+            if (!string.IsNullOrWhiteSpace(log.WorkspaceSummary))
+                extraParts.Add("workspace: " + Trim(log.WorkspaceSummary, 240));
+
 
             return extraParts.Count == 0 ? "" : string.Join(" / ", extraParts);
         }

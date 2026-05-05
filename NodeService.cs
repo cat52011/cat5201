@@ -204,6 +204,18 @@ namespace test
                     decision.ActualModelId,
                     ct);
 
+                if (agentResult.WorkspaceSummary != null)
+                {
+                    await _memoryService.RememberWorkspaceSummaryAsync(
+                        node,
+                        decision.ActualAgentId,
+                        topText,
+                        agentResult.WorkspaceSummary,
+                        decision.TaskMode,
+                        decision.ActualModelId,
+                        ct);
+                }
+
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
@@ -297,6 +309,17 @@ namespace test
                     decision.TaskMode,
                     decision.ActualModelId,
                     ct);
+                if (agentResult.WorkspaceSummary != null)
+                {
+                    await _memoryService.RememberWorkspaceSummaryAsync(
+                        node,
+                        decision.ActualAgentId,
+                        topText,
+                        agentResult.WorkspaceSummary,
+                        decision.TaskMode,
+                        decision.ActualModelId,
+                        ct);
+                }
 
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
@@ -356,6 +379,25 @@ namespace test
         {
             var candidates = AiFallbackPlanner.BuildCandidates(decision.ModelId, decision.TaskMode);
 
+            if (decision.ForceSingleModel)
+            {
+                var forcedModel = AiModelHelper.NormalizeNodeModel(decision.ModelId);
+
+                candidates = candidates
+                    .Where(x => string.Equals(
+                        AiModelHelper.NormalizeNodeModel(x.ModelId),
+                        forcedModel,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Take(1)
+                    .ToList();
+
+                if (candidates.Count == 0)
+                {
+                    candidates = AiFallbackPlanner.BuildCandidates(decision.ModelId, decision.TaskMode)
+                        .Take(1)
+                        .ToList();
+                }
+            }
             var attempts = new List<AiFallbackAttempt>();
             int emittedChars = 0;
 
@@ -726,7 +768,7 @@ namespace test
                     FileName = a.FileName,
                     RelativePath = a.RelativePath,
                     AbsolutePath = Path.Combine(root, a.RelativePath),
-                    MimeType = a.MimeType,
+                    MimeType = NormalizeAttachmentMimeType(a.FileName, a.MimeType),
                     Kind = a.Kind
                 })
                 .Where(a => !string.IsNullOrWhiteSpace(a.AbsolutePath) && File.Exists(a.AbsolutePath))
@@ -882,6 +924,31 @@ namespace test
             }
         }
 
+        private static string NormalizeAttachmentMimeType(string? fileName, string? mimeType)
+        {
+            string ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
+
+            return ext switch
+            {
+                ".cs" => "text/plain",
+                ".xaml" => "text/plain",
+                ".java" => "text/plain",
+                ".cpp" => "text/plain",
+                ".h" => "text/plain",
+                ".hpp" => "text/plain",
+                ".py" => "text/plain",
+                ".js" => "text/plain",
+                ".ts" => "text/plain",
+                ".json" => "application/json",
+                ".csv" => "text/csv",
+                ".txt" => "text/plain",
+                ".md" => "text/markdown",
+                ".pdf" => "application/pdf",
+                _ => string.IsNullOrWhiteSpace(mimeType)
+                    ? "application/octet-stream"
+                    : mimeType
+            };
+        }
         private sealed class AutoFlowRunContext
         {
             public HashSet<Guid> VisitedNodeIds { get; } = new();

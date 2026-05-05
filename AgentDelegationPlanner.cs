@@ -9,50 +9,75 @@ namespace test
             string input,
             NodeTaskMode taskMode)
         {
-            var list = new List<AgentDelegationRequest>();
+            if (agent == null)
+                return Array.Empty<AgentDelegationRequest>();
 
-            if (agent == null || !agent.AllowDelegation)
-                return list;
+            if (!agent.AllowDelegation)
+                return Array.Empty<AgentDelegationRequest>();
 
             input ??= "";
 
-            // research-agent：
-            // 當輸入明顯是「整理 / 分析 / 彙整」時，
-            // 先讓 general-agent 做一份通用整理，再回來由 research-agent 完成
-            if (agent.Id == "research-agent")
+            var plans = new List<AgentDelegationRequest>();
+
+            // Research → General synthesis
+            if (string.Equals(
+                agent.Id,
+                "research-agent",
+                StringComparison.OrdinalIgnoreCase))
             {
-                if (input.Contains("整理") ||
-                    input.Contains("分析") ||
-                    input.Contains("比較") ||
-                    input.Contains("彙整"))
+                if (ContainsAny(
+                    input,
+                    "預測", "推論", "比較", "分析",
+                    "predict", "forecast", "compare", "analyze"))
                 {
-                    list.Add(new AgentDelegationRequest
+                    plans.Add(new AgentDelegationRequest
                     {
                         TargetAgentId = "general-agent",
-                        Instruction = input
+                        Instruction =
+                            "請基於目前 workspace 中已有的 search / reasoning data，做最後整合與人類可讀輸出。"
                     });
                 }
             }
 
-            // code-agent：
-            // 當輸入包含架構分析 / 系統分析 / 設計說明時，
-            // 先讓 research-agent 做脈絡整理，再由 code-agent 產出工程結果
-            if (agent.Id == "code-agent")
+            // Code → General explanation
+            if (string.Equals(
+                agent.Id,
+                "code-agent",
+                StringComparison.OrdinalIgnoreCase))
             {
-                if (input.Contains("架構") ||
-                    input.Contains("分析") ||
-                    input.Contains("設計") ||
-                    input.Contains("流程"))
+                if (ContainsAny(
+                    input,
+                    "解釋", "說明", "explain"))
                 {
-                    list.Add(new AgentDelegationRequest
+                    plans.Add(new AgentDelegationRequest
                     {
-                        TargetAgentId = "research-agent",
-                        Instruction = input
+                        TargetAgentId = "general-agent",
+                        Instruction =
+                            "請把目前 workspace 中的程式分析結果，整理成人類易理解的說明。"
                     });
                 }
             }
 
-            return list;
+            return plans;
+        }
+
+        private static bool ContainsAny(
+    string text,
+    params string[] keywords)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            foreach (var keyword in keywords)
+            {
+                if (!string.IsNullOrWhiteSpace(keyword) &&
+                    text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

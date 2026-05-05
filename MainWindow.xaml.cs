@@ -295,7 +295,7 @@ namespace test
 
             string SelectionMode,
             string Resolver,
-
+            string WorkspaceSummary,
             string RequestedModelId,
             string PlannedModelId,
             string ActualModelId,
@@ -472,7 +472,7 @@ namespace test
 
                 RuntimeFallbackUsed: entry.RuntimeFallbackUsed,
                 RuntimeFallbackSummary: entry.RuntimeFallbackSummary ?? "",
-
+                WorkspaceSummary: entry.WorkspaceSummary ?? "",
                 Success: entry.Success,
                 ErrorMessage: entry.ErrorMessage ?? "",
 
@@ -517,7 +517,7 @@ namespace test
 
                 RuntimeFallbackUsed = state.RuntimeFallbackUsed,
                 RuntimeFallbackSummary = state.RuntimeFallbackSummary ?? "",
-
+                WorkspaceSummary = state.WorkspaceSummary ?? "",
                 Success = state.Success,
                 ErrorMessage = state.ErrorMessage ?? "",
 

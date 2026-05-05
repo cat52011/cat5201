@@ -394,5 +394,49 @@ namespace test
 
             return text.Substring(0, max) + "…";
         }
+        public Task RememberWorkspaceSummaryAsync(
+        NodeControl node,
+        string agentId,
+        string topText,
+        AgentWorkspaceSummary workspaceSummary,
+        NodeTaskMode taskMode,
+        string modelId,
+        CancellationToken ct = default)
+        {
+            if (node == null || workspaceSummary == null)
+                return Task.CompletedTask;
+
+            if (string.IsNullOrWhiteSpace(workspaceSummary.SummaryText))
+                return Task.CompletedTask;
+
+            string fileKey = GetCurrentFileKey();
+            string title = BuildTitle(topText, taskMode);
+
+            var item = new MemoryItem
+            {
+                Scope = MemoryScope.File,
+                Category = "workspace_summary",
+                FileKey = fileKey,
+                SourceNodeId = node.Id.ToString(),
+                AgentId = agentId ?? "",
+                IsSharedMemory = true,
+                Title = $"Workspace 摘要：{title}",
+                Content = TrimText(workspaceSummary.SummaryText, 1800),
+                Tags = BuildTags(topText, taskMode)
+                    .Concat(workspaceSummary.ItemTypes ?? Array.Empty<string>())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
+                ModelId = AiModelHelper.NormalizeNodeModel(modelId),
+                Importance = 0.72,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+
+            _store.Add(item);
+            return Task.CompletedTask;
+        }
+
     }
+
 }

@@ -18,5 +18,6 @@ namespace test
 
         public bool IsSuccess =>
             Execution != null && Execution.IsSuccess;
+        public AgentWorkspaceSummary? WorkspaceSummary { get; init; }
     }
 }

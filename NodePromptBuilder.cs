@@ -99,7 +99,8 @@ $@"你正在一個節點式筆記檔案中工作。
 19. 若目前節點內容包含【Reasoning Analysis】，請依據該推論策略完成分析、比較或預測；但不可直接輸出【Reasoning Analysis】或其內部欄位名稱。
 20. 若任務包含預測，請明確分成「已知資料」「合理推論」「風險 / 不確定性」。
 21. 不可輸出任何 citation marker 或來源索引，例如 [1]、[2]、[3]。
-22. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。";
+22. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。
+23. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
         }
 
         private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock)
@@ -153,7 +154,7 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 6. 若任務模式是 Translate / Summarize / Rewrite / Extract / Code，也要輸出對應結果型態。
 7. 若附件是主要來源，請優先根據附件與目前節點回答。
 8. 若回答過長，請在本次輸出結尾單獨輸出 [[END_OF_RESPONSE]]。
-9.若內容包含【Search Summary】，請優先依據該摘要回答，不要重新解析原始搜尋結果。
+9. 若內容包含【Search Summary】，請優先依據該摘要回答，不要重新解析原始搜尋結果。
 10 若內容包含【Search Summary】，所有數據與事實必須來自該摘要。
 11. 不可自行補充摘要中沒有的數據、百分比、比較結果。
 12. 若摘要沒有提供足夠資訊，請明確說「資料不足」，不要自行推測。
@@ -164,7 +165,8 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 17. 若目前節點內容包含【Reasoning Analysis】，請依據該推論策略完成分析、比較或預測；但不可直接輸出【Reasoning Analysis】或其內部欄位名稱。
 18. 若任務包含預測，請明確分成「已知資料」「合理推論」「風險 / 不確定性」。
 19. 不可輸出任何 citation marker 或來源索引，例如 [1]、[2]、[3]。
-20. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。";
+20. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。
+21. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
         }
 
         private string BuildResearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock)
@@ -230,7 +232,8 @@ $@"你正在處理一個節點式研究任務。
 18. 若目前節點內容包含【Reasoning Analysis】，請依據該推論策略完成分析、比較或預測；但不可直接輸出【Reasoning Analysis】或其內部欄位名稱。
 19. 若任務包含預測，請明確分成「已知資料」「合理推論」「風險 / 不確定性」。
 20. 不可輸出任何 citation marker 或來源索引，例如 [1]、[2]、[3]。
-21. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。";
+21. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。
+22. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
         }
     }
 }

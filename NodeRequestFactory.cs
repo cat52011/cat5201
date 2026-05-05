@@ -34,7 +34,7 @@ namespace test
                     FileName = a.FileName ?? "",
                     RelativePath = a.RelativePath ?? "",
                     AbsolutePath = ResolveAbsoluteAttachmentPath(a.RelativePath),
-                    MimeType = string.IsNullOrWhiteSpace(a.MimeType) ? "application/octet-stream" : a.MimeType,
+                    MimeType = NormalizeAttachmentMimeType(a.FileName, a.MimeType),
                     Kind = string.IsNullOrWhiteSpace(a.Kind) ? "file" : a.Kind
                 })
                 .Where(a => !string.IsNullOrWhiteSpace(a.AbsolutePath))
@@ -54,6 +54,32 @@ namespace test
                     ["node_id"] = currentNode.Id.ToString()
                 }
             });
+        }
+
+        private static string NormalizeAttachmentMimeType(string? fileName, string? mimeType)
+        {
+            string ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
+
+            return ext switch
+            {
+                ".cs" => "text/plain",
+                ".xaml" => "text/plain",
+                ".java" => "text/plain",
+                ".cpp" => "text/plain",
+                ".h" => "text/plain",
+                ".hpp" => "text/plain",
+                ".py" => "text/plain",
+                ".js" => "text/plain",
+                ".ts" => "text/plain",
+                ".json" => "application/json",
+                ".csv" => "text/csv",
+                ".txt" => "text/plain",
+                ".md" => "text/markdown",
+                ".pdf" => "application/pdf",
+                _ => string.IsNullOrWhiteSpace(mimeType)
+                    ? "application/octet-stream"
+                    : mimeType
+            };
         }
 
         private string ResolveAbsoluteAttachmentPath(string? relativePath)

@@ -47,5 +47,7 @@ namespace test
 
         public IReadOnlyList<AiFallbackAttempt> RuntimeFallbackAttempts { get; set; }
             = Array.Empty<AiFallbackAttempt>();
+        public bool ForceSingleModel { get; set; }
+        public string WorkspaceSummary { get; set; } = "";
     }
 }

@@ -34,6 +34,7 @@ namespace test
                     AgentCapability.MemoryWrite |
                     AgentCapability.FileTool |
                     AgentCapability.ImageTool,
+                AllowDelegation = false,
 
                 AllowedCapabilityIds = new[]
 {

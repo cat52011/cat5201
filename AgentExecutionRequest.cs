@@ -12,5 +12,8 @@
         public int DelegationDepth { get; init; }
 
         public System.Threading.CancellationToken CancellationToken { get; init; }
+        public bool ForceAgentProfile { get; init; }
+        public bool SkipCapabilities { get; init; }
+        public AgentWorkspace? Workspace { get; init; }
     }
 }

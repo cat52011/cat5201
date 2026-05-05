@@ -48,5 +48,7 @@ namespace test
 
         public IReadOnlyList<AiFallbackAttempt> FallbackAttempts { get; init; }
             = Array.Empty<AiFallbackAttempt>();
+
+        public string WorkspaceSummary { get; set; } = "";
     }
 }

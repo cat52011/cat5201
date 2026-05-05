@@ -50,6 +50,13 @@ namespace test
                     string.Equals(mimeType, "application/pdf", StringComparison.OrdinalIgnoreCase);
 
                 bool isTextLike =
+                    string.Equals(ext, ".java", StringComparison.OrdinalIgnoreCase) ||
+string.Equals(ext, ".cs", StringComparison.OrdinalIgnoreCase) ||
+string.Equals(ext, ".xaml", StringComparison.OrdinalIgnoreCase) ||
+string.Equals(ext, ".cpp", StringComparison.OrdinalIgnoreCase) ||
+string.Equals(ext, ".py", StringComparison.OrdinalIgnoreCase) ||
+string.Equals(ext, ".js", StringComparison.OrdinalIgnoreCase) ||
+string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(ext, ".md", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(ext, ".csv", StringComparison.OrdinalIgnoreCase) ||
@@ -93,6 +100,15 @@ namespace test
         {
             if (isImage)
                 return "image";
+
+            if (string.Equals(ext, ".java", StringComparison.OrdinalIgnoreCase))
+                return "java";
+
+            if (string.Equals(ext, ".cs", StringComparison.OrdinalIgnoreCase))
+                return "csharp";
+
+            if (string.Equals(ext, ".xaml", StringComparison.OrdinalIgnoreCase))
+                return "xaml";
 
             if (string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(mimeType, "application/pdf", StringComparison.OrdinalIgnoreCase))
