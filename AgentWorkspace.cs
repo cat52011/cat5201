@@ -338,6 +338,7 @@ namespace test
                 return new AgentWorkspaceSummary
                 {
                     RunId = RunId,
+                    ArtifactDetails = Array.Empty<string>(),
                     SummaryText = "本次 agent run 沒有產生 workspace item。"
                 };
             }
@@ -423,13 +424,70 @@ namespace test
                 lines.Add($"Authorities：{string.Join(", ", authorities)}");
             }
 
+            var artifactDetails = BuildArtifactDetails(items);
+
             return new AgentWorkspaceSummary
             {
                 RunId = RunId,
                 ItemTypes = itemTypes,
                 SourceAgents = sourceAgents,
+                ArtifactDetails = artifactDetails,
                 SummaryText = string.Join(Environment.NewLine, lines)
             };
+        }
+
+        private static IReadOnlyList<string> BuildArtifactDetails(IReadOnlyList<AgentWorkspaceItem> items)
+        {
+            if (items == null || items.Count == 0)
+                return Array.Empty<string>();
+
+            var lines = new List<string>();
+
+            foreach (var item in items.Take(20))
+            {
+                if (item == null)
+                    continue;
+
+                string kind = string.IsNullOrWhiteSpace(item.ArtifactKind) ? "artifact" : item.ArtifactKind.Trim();
+                string format = string.IsNullOrWhiteSpace(item.ContentFormat) ? "text" : item.ContentFormat.Trim();
+                string title = string.IsNullOrWhiteSpace(item.Title) ? item.ItemType : item.Title;
+                string visible = item.IsUserVisible ? "visible" : "internal";
+
+                lines.Add($"Artifact: {kind} / {format} / {visible} / Type: {Safe(item.ItemType)} / Agent: {Safe(item.SourceAgentId)} / Title: {Safe(title)}");
+
+                if (item.Payload is VerifiedFactPayload verified)
+                {
+                    var facts = verified.Facts?
+                        .Where(x => x != null)
+                        .Take(30)
+                        .ToList() ?? new List<VerifiedFactItem>();
+
+                    lines.Add($"  VerifiedFacts: {facts.Count} shown / Query: {Safe(verified.Query)}");
+
+                    foreach (var fact in facts)
+                    {
+                        string value = FormatValue(fact.Value, fact.Unit);
+                        string ownership = FormatOwnership(fact);
+                        string asOf = string.IsNullOrWhiteSpace(fact.AsOf) ? "" : $" / AsOf: {fact.AsOf}";
+                        string source = FormatSource(fact);
+                        string sourcePart = string.IsNullOrWhiteSpace(source) ? "" : $" / Source: {source}";
+
+                        lines.Add($"  Fact: {Safe(fact.Subject)} / {Safe(fact.FactType)} = {Safe(value)}{asOf}{sourcePart}");
+
+                        if (!string.IsNullOrWhiteSpace(ownership))
+                            lines.Add($"    {ownership}");
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                {
+                    lines.Add($"  Summary: {Trim(item.TextSummary, 260)}");
+                }
+            }
+
+            if (items.Count > 20)
+                lines.Add($"Artifact list truncated: {items.Count - 20} more item(s).");
+
+            return lines;
         }
 
         private static string NormalizeKey(string? text)

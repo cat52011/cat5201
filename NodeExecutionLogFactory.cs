@@ -40,6 +40,7 @@ namespace test
                 ResolverReason = decision.ResolverReason ?? "",
                 ResolverKeywords = decision.ResolverKeywords?.ToList() ?? new List<string>(),
                 WorkspaceSummary = decision.WorkspaceSummary ?? "",
+                WorkspaceArtifactDetails = decision.WorkspaceArtifactDetails?.ToList() ?? new List<string>(),
                 CapabilityAdjusted = decision.CapabilityAdjusted,
                 CapabilityReason = decision.CapabilityReason ?? "",
 

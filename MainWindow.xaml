@@ -426,8 +426,9 @@
             </Grid>
 
             <!-- 右上角決策可視化視窗 -->
-            
+
             <Border
+    x:Name="DecisionPanel"
     Width="340"
     Height="260"
     CornerRadius="18"
@@ -452,6 +453,7 @@ Margin="0,20,20,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Text="決策可視化"
@@ -460,8 +462,39 @@ Margin="0,20,20,0">
                        Foreground="#303030"
                        VerticalAlignment="Center"/>
 
+                        <Button x:Name="DecisionPanelToggleButton"
+                                Grid.Column="1"
+                                Width="26"
+                                Height="24"
+                                Margin="0,0,8,0"
+                                Padding="0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                ToolTip="放大決策窗"
+                                Click="DecisionPanelToggleButton_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="Transparent">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Viewbox Width="14" Height="14">
+                                <Path x:Name="DecisionPanelToggleIcon"
+                                      Data="M2,6 L2,2 L6,2 M8,2 L12,2 L12,6 M12,8 L12,12 L8,12 M6,12 L2,12 L2,8"
+                                      Stroke="#7A7A7A"
+                                      StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      Fill="Transparent"/>
+                            </Viewbox>
+                        </Button>
+
                         <Border x:Name="DecisionStatusBadge"
-                    Grid.Column="1"
+                    Grid.Column="2"
                     Background="#EEF7EA"
                     CornerRadius="999"
                     Padding="10,4">

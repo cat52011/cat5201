@@ -49,5 +49,7 @@ namespace test
             = Array.Empty<AiFallbackAttempt>();
         public bool ForceSingleModel { get; set; }
         public string WorkspaceSummary { get; set; } = "";
+        public IReadOnlyList<string> WorkspaceArtifactDetails { get; set; }
+            = Array.Empty<string>();
     }
 }

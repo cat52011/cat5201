@@ -150,6 +150,7 @@ namespace test
             steps.Add(BuildModelSelectionStep(log, requestedLabel, plannedLabel, actualLabel));
             steps.Add(BuildResolverStep(log, resolver, apiFallbackUsed));
             steps.Add(BuildCapabilityStep(log));
+            steps.Add(BuildWorkspaceStep(log));
             steps.Add(BuildFallbackStep(log, apiFallbackUsed));
             steps.Add(BuildExecutionStep(log));
 
@@ -291,6 +292,58 @@ namespace test
                 State = state,
                 Highlight = !string.IsNullOrWhiteSpace(traceSummary) && traceSummary != "-",
                 DetailLines = lines
+            };
+        }
+
+        private static NodeDecisionStepViewData BuildWorkspaceStep(AiExecutionLogEntry log)
+        {
+            var detailLines = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(log.WorkspaceSummary))
+            {
+                detailLines.AddRange(
+                    log.WorkspaceSummary
+                        .Replace("\r\n", "\n")
+                        .Replace('\r', '\n')
+                        .Split('\n')
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim()));
+            }
+
+            if (log.WorkspaceArtifactDetails != null && log.WorkspaceArtifactDetails.Count > 0)
+            {
+                if (detailLines.Count > 0)
+                    detailLines.Add("--- Artifacts ---");
+
+                detailLines.AddRange(log.WorkspaceArtifactDetails.Where(x => !string.IsNullOrWhiteSpace(x)));
+            }
+
+            string detail = "-";
+            var state = NodeDecisionStepState.Info;
+
+            if (detailLines.Count == 0)
+            {
+                detail = "No workspace artifacts";
+            }
+            else
+            {
+                var artifactCount = log.WorkspaceArtifactDetails?
+                    .Count(x => x.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+                var factCount = log.WorkspaceArtifactDetails?
+                    .Count(x => x.TrimStart().StartsWith("Fact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+                detail = $"Artifacts: {artifactCount}, facts: {factCount}";
+                state = factCount > 0 ? NodeDecisionStepState.Success : NodeDecisionStepState.Info;
+            }
+
+            return new NodeDecisionStepViewData
+            {
+                Title = "Workspace",
+                Detail = detail,
+                State = state,
+                Highlight = detailLines.Count > 0,
+                DetailLines = detailLines
             };
         }
 

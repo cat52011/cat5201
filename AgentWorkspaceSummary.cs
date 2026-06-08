@@ -12,6 +12,9 @@ namespace test
         public IReadOnlyList<string> SourceAgents { get; init; }
             = new List<string>();
 
+        public IReadOnlyList<string> ArtifactDetails { get; init; }
+            = new List<string>();
+
         public string SummaryText { get; init; } = "";
     }
 }

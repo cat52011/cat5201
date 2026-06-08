@@ -41,6 +41,13 @@ namespace test
 
         private NodeControl? _hoveredDecisionNode;
         private NodeControl? _lastDecisionNode;
+        private const double DecisionPanelCompactWidth = 340;
+        private const double DecisionPanelCompactHeight = 260;
+        private const double DecisionPanelExpandedWidth = 720;
+        private const double DecisionPanelExpandedHeight = 760;
+        private const string DecisionPanelExpandIconData = "M2,6 L2,2 L6,2 M8,2 L12,2 L12,6 M12,8 L12,12 L8,12 M6,12 L2,12 L2,8";
+        private const string DecisionPanelCollapseIconData = "M2,2 L6,6 M6,2 L6,6 L2,6 M12,12 L8,8 M8,12 L8,8 L12,8";
+        private bool _isDecisionPanelExpanded = false;
 
         private readonly NodeModelSelectionService _nodeModelSelection = new();
         private readonly HashSet<string> _expandedDecisionStepKeys = new();
@@ -273,7 +280,7 @@ namespace test
     string? AgentId = null,
     string? NodeModel = null,
     string? TaskMode = null
-); 
+);
 
         private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
 
@@ -296,6 +303,7 @@ namespace test
             string SelectionMode,
             string Resolver,
             string WorkspaceSummary,
+            List<string> WorkspaceArtifactDetails,
             string RequestedModelId,
             string PlannedModelId,
             string ActualModelId,
@@ -445,6 +453,8 @@ namespace test
 
                 SelectionMode: entry.SelectionMode ?? "",
                 Resolver: entry.Resolver ?? "",
+                WorkspaceSummary: entry.WorkspaceSummary ?? "",
+                WorkspaceArtifactDetails: entry.WorkspaceArtifactDetails?.ToList() ?? new List<string>(),
 
                 RequestedModelId: entry.RequestedModelId ?? "",
                 PlannedModelId: entry.PlannedModelId ?? "",
@@ -472,7 +482,6 @@ namespace test
 
                 RuntimeFallbackUsed: entry.RuntimeFallbackUsed,
                 RuntimeFallbackSummary: entry.RuntimeFallbackSummary ?? "",
-                WorkspaceSummary: entry.WorkspaceSummary ?? "",
                 Success: entry.Success,
                 ErrorMessage: entry.ErrorMessage ?? "",
 
@@ -518,12 +527,41 @@ namespace test
                 RuntimeFallbackUsed = state.RuntimeFallbackUsed,
                 RuntimeFallbackSummary = state.RuntimeFallbackSummary ?? "",
                 WorkspaceSummary = state.WorkspaceSummary ?? "",
+                WorkspaceArtifactDetails = state.WorkspaceArtifactDetails?.ToList() ?? new List<string>(),
                 Success = state.Success,
                 ErrorMessage = state.ErrorMessage ?? "",
 
                 FallbackAttempts = state.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
             };
         }
+
+        private void DecisionPanelToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            _isDecisionPanelExpanded = !_isDecisionPanelExpanded;
+            ApplyDecisionPanelSize();
+        }
+
+        private void ApplyDecisionPanelSize()
+        {
+            if (DecisionPanel != null)
+            {
+                DecisionPanel.Width = _isDecisionPanelExpanded
+                    ? DecisionPanelExpandedWidth
+                    : DecisionPanelCompactWidth;
+                DecisionPanel.Height = _isDecisionPanelExpanded
+                    ? DecisionPanelExpandedHeight
+                    : DecisionPanelCompactHeight;
+            }
+
+            if (DecisionPanelToggleIcon != null)
+                DecisionPanelToggleIcon.Data = Geometry.Parse(_isDecisionPanelExpanded
+                    ? DecisionPanelCollapseIconData
+                    : DecisionPanelExpandIconData);
+
+            if (DecisionPanelToggleButton != null)
+                DecisionPanelToggleButton.ToolTip = _isDecisionPanelExpanded ? "縮回決策窗" : "放大決策窗";
+        }
+
         private void ShowDecisionForNode(NodeControl node)
         {
             if (node == null)
@@ -1375,24 +1413,31 @@ namespace test
                 };
                 detailHost.Children.Add(separator);
 
-                foreach (var line in step.DetailLines)
+                if (IsWorkspaceStep(step))
                 {
-                    detailHost.Children.Add(new Border
+                    detailHost.Children.Add(CreateWorkspaceInspector(step.DetailLines));
+                }
+                else
+                {
+                    foreach (var line in step.DetailLines)
                     {
-                        Background = CreateBrush("#FAFBFD", "#FAFBFD"),
-                        BorderBrush = CreateBrush("#EEF1F4", "#EEF1F4"),
-                        BorderThickness = new Thickness(1),
-                        CornerRadius = new CornerRadius(8),
-                        Padding = new Thickness(8, 6, 8, 6),
-                        Margin = new Thickness(0, 0, 0, 6),
-                        Child = new TextBlock
+                        detailHost.Children.Add(new Border
                         {
-                            Text = string.IsNullOrWhiteSpace(line) ? "-" : line,
-                            FontSize = 11.5,
-                            Foreground = CreateBrush("#666666", "#666666"),
-                            TextWrapping = TextWrapping.Wrap
-                        }
-                    });
+                            Background = CreateBrush("#FAFBFD", "#FAFBFD"),
+                            BorderBrush = CreateBrush("#EEF1F4", "#EEF1F4"),
+                            BorderThickness = new Thickness(1),
+                            CornerRadius = new CornerRadius(8),
+                            Padding = new Thickness(8, 6, 8, 6),
+                            Margin = new Thickness(0, 0, 0, 6),
+                            Child = new TextBlock
+                            {
+                                Text = string.IsNullOrWhiteSpace(line) ? "-" : line,
+                                FontSize = 11.5,
+                                Foreground = CreateBrush("#666666", "#666666"),
+                                TextWrapping = TextWrapping.Wrap
+                            }
+                        });
+                    }
                 }
 
                 contentPanel.Children.Add(detailHost);
@@ -1452,6 +1497,275 @@ namespace test
             root.Children.Add(cardBorder);
 
             return root;
+        }
+
+        private static bool IsWorkspaceStep(NodeDecisionStepViewData step)
+        {
+            return string.Equals(step?.Title, "Workspace", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private FrameworkElement CreateWorkspaceInspector(IReadOnlyList<string> lines)
+        {
+            var root = new StackPanel();
+
+            if (lines == null || lines.Count == 0)
+            {
+                root.Children.Add(CreateWorkspaceTextCard("-", muted: true));
+                return root;
+            }
+
+            var currentArtifactFacts = new StackPanel
+            {
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            Border? currentArtifactCard = null;
+
+            foreach (var raw in lines)
+            {
+                string trimmed = (raw ?? "").Trim();
+
+                if (string.IsNullOrWhiteSpace(trimmed))
+                    continue;
+
+                if (trimmed.Equals("--- Artifacts ---", StringComparison.OrdinalIgnoreCase))
+                {
+                    root.Children.Add(CreateWorkspaceSectionLabel("Artifacts"));
+                    continue;
+                }
+
+                if (trimmed.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase))
+                {
+                    currentArtifactFacts = new StackPanel
+                    {
+                        Margin = new Thickness(0, 8, 0, 0)
+                    };
+
+                    currentArtifactCard = CreateArtifactCard(trimmed, currentArtifactFacts);
+                    root.Children.Add(currentArtifactCard);
+                    continue;
+                }
+
+                if (trimmed.StartsWith("VerifiedFacts:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = currentArtifactCard == null ? root : currentArtifactFacts;
+                    target.Children.Add(CreateWorkspaceTextCard(trimmed, muted: true));
+                    continue;
+                }
+
+                if (trimmed.StartsWith("Fact:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = currentArtifactCard == null ? root : currentArtifactFacts;
+                    target.Children.Add(CreateFactCard(trimmed));
+                    continue;
+                }
+
+                if (trimmed.StartsWith("OwnerAgent:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = currentArtifactCard == null ? root : currentArtifactFacts;
+                    target.Children.Add(CreateOwnershipTags(trimmed));
+                    continue;
+                }
+
+                root.Children.Add(CreateWorkspaceTextCard(trimmed, muted: true));
+            }
+
+            return root;
+        }
+
+        private FrameworkElement CreateWorkspaceSectionLabel(string text)
+        {
+            return new TextBlock
+            {
+                Text = text,
+                FontSize = 11.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = CreateBrush("#57606A", "#57606A"),
+                Margin = new Thickness(0, 2, 0, 8)
+            };
+        }
+
+        private Border CreateArtifactCard(string line, StackPanel factsHost)
+        {
+            var parts = line.Substring("Artifact:".Length).Trim()
+                .Split('/')
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            string kind = parts.Count > 0 ? parts[0] : "artifact";
+            string format = parts.Count > 1 ? parts[1] : "text";
+            string visibility = parts.Count > 2 ? parts[2] : "visible";
+            string meta = parts.Count > 3 ? string.Join(" / ", parts.Skip(3)) : "";
+
+            var panel = new StackPanel();
+
+            var header = new WrapPanel();
+            header.Children.Add(CreateWorkspaceBadge(kind, "#EAF4FF", "#245A9B"));
+            header.Children.Add(CreateWorkspaceBadge(format, "#F2F4F7", "#475467"));
+            header.Children.Add(CreateWorkspaceBadge(visibility, "#F7F7F7", "#666666"));
+            panel.Children.Add(header);
+
+            if (!string.IsNullOrWhiteSpace(meta))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = meta,
+                    FontSize = 11.5,
+                    Foreground = CreateBrush("#4A4A4A", "#4A4A4A"),
+                    Margin = new Thickness(0, 6, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+
+            panel.Children.Add(factsHost);
+
+            return new Border
+            {
+                Background = CreateBrush("#FFFFFF", "#FFFFFF"),
+                BorderBrush = CreateBrush("#DDE7F2", "#DDE7F2"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 8),
+                Child = panel
+            };
+        }
+
+        private Border CreateFactCard(string line)
+        {
+            string content = line.Substring("Fact:".Length).Trim();
+            string subject = content;
+            string value = "";
+
+            int equalsIndex = content.IndexOf('=');
+            if (equalsIndex >= 0)
+            {
+                subject = content.Substring(0, equalsIndex).Trim();
+                value = content.Substring(equalsIndex + 1).Trim();
+            }
+
+            var panel = new StackPanel();
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = subject,
+                FontSize = 11.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = CreateBrush("#252525", "#252525"),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                var valueParts = value
+                    .Split(new[] { " / " }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => x.Trim())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .ToList();
+
+                if (valueParts.Count == 0)
+                    valueParts.Add(value);
+
+                panel.Children.Add(new TextBlock
+                {
+                    Text = valueParts[0],
+                    FontSize = 12,
+                    Foreground = CreateBrush("#245A9B", "#245A9B"),
+                    Margin = new Thickness(0, 4, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+
+                foreach (var meta in valueParts.Skip(1))
+                {
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = meta,
+                        FontSize = 11,
+                        Foreground = CreateBrush("#51606F", "#51606F"),
+                        Margin = new Thickness(0, 2, 0, 0),
+                        TextWrapping = TextWrapping.Wrap
+                    });
+                }
+            }
+
+            return new Border
+            {
+                Background = CreateBrush("#F8FBFF", "#F8FBFF"),
+                BorderBrush = CreateBrush("#D8E8F8", "#D8E8F8"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 7, 8, 7),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = panel
+            };
+        }
+
+        private FrameworkElement CreateOwnershipTags(string line)
+        {
+            var wrap = new WrapPanel
+            {
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+
+            var parts = line
+                .Split('|')
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            foreach (var part in parts)
+            {
+                bool numeric = part.Contains("numeric_fact_source", StringComparison.OrdinalIgnoreCase);
+                bool official = part.Contains("official", StringComparison.OrdinalIgnoreCase);
+                bool background = part.Contains("background_context", StringComparison.OrdinalIgnoreCase);
+
+                string bg = numeric ? "#EAF7EF" : official ? "#EEF4FF" : background ? "#FFF7E8" : "#F2F4F7";
+                string fg = numeric ? "#1F7A3A" : official ? "#245A9B" : background ? "#9A5A00" : "#475467";
+
+                wrap.Children.Add(CreateWorkspaceBadge(part, bg, fg));
+            }
+
+            return wrap;
+        }
+
+        private Border CreateWorkspaceBadge(string text, string bgHex, string fgHex)
+        {
+            return new Border
+            {
+                Background = CreateBrush(bgHex, bgHex),
+                CornerRadius = new CornerRadius(999),
+                Padding = new Thickness(7, 3, 7, 3),
+                Margin = new Thickness(0, 0, 5, 5),
+                Child = new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(text) ? "-" : text,
+                    FontSize = 10.5,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = CreateBrush(fgHex, fgHex),
+                    TextWrapping = TextWrapping.Wrap
+                }
+            };
+        }
+
+        private Border CreateWorkspaceTextCard(string text, bool muted)
+        {
+            return new Border
+            {
+                Background = CreateBrush(muted ? "#FAFBFD" : "#FFFFFF", "#FAFBFD"),
+                BorderBrush = CreateBrush("#EEF1F4", "#EEF1F4"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(text) ? "-" : text,
+                    FontSize = 11.5,
+                    Foreground = CreateBrush(muted ? "#666666" : "#333333", "#666666"),
+                    TextWrapping = TextWrapping.Wrap
+                }
+            };
         }
 
         private SolidColorBrush GetStepBrush(NodeDecisionStepState state)
@@ -2682,7 +2996,7 @@ namespace test
                     RestoreDecisionPanelAfterLoad();
                 }), DispatcherPriority.Loaded);
             }
-            
+
         }
 
         private void ClearAll()
@@ -3162,7 +3476,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             }
             _connections.RemoveAll(c => connsToDelete.Contains(c));
 
-            foreach(var n in nodesToDelete)
+            foreach (var n in nodesToDelete)
             {
                 ClearEditingIfDeleted(n);
                 MainCanvas.Children.Remove(n);
@@ -3682,8 +3996,59 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 CapabilityAdjusted = decision.CapabilityAdjusted,
                 RuntimeFallbackUsed = decision.RuntimeFallbackUsed,
                 ApiFallbackUsed = decision.UsedFallbackToRules,
-                Steps = steps
+                Steps = AppendLiveWorkspaceStep(
+                    steps,
+                    decision.WorkspaceSummary ?? "",
+                    decision.WorkspaceArtifactDetails ?? Array.Empty<string>())
             };
+        }
+
+        private static IReadOnlyList<NodeDecisionStepViewData> AppendLiveWorkspaceStep(
+            IReadOnlyList<NodeDecisionStepViewData> steps,
+            string workspaceSummary,
+            IReadOnlyList<string> workspaceArtifactDetails)
+        {
+            var result = steps?.ToList() ?? new List<NodeDecisionStepViewData>();
+            var detailLines = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(workspaceSummary))
+            {
+                detailLines.AddRange(
+                    workspaceSummary
+                        .Replace("\r\n", "\n")
+                        .Replace('\r', '\n')
+                        .Split('\n')
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim()));
+            }
+
+            if (workspaceArtifactDetails != null && workspaceArtifactDetails.Count > 0)
+            {
+                if (detailLines.Count > 0)
+                    detailLines.Add("--- Artifacts ---");
+
+                detailLines.AddRange(workspaceArtifactDetails.Where(x => !string.IsNullOrWhiteSpace(x)));
+            }
+
+            if (detailLines.Count == 0)
+                return result;
+
+            int artifactCount = workspaceArtifactDetails?
+                .Count(x => x.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+            int factCount = workspaceArtifactDetails?
+                .Count(x => x.TrimStart().StartsWith("Fact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+            result.Insert(Math.Max(0, result.Count - 2), new NodeDecisionStepViewData
+            {
+                Title = "Workspace",
+                Detail = $"Artifacts: {artifactCount}, facts: {factCount}",
+                State = factCount > 0 ? NodeDecisionStepState.Success : NodeDecisionStepState.Info,
+                Highlight = true,
+                DetailLines = detailLines
+            });
+
+            return result;
         }
 
 
@@ -3788,7 +4153,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             return lines;
         }
 
-        
+
         private static string GetDecisionModelLabel(string? modelId)
         {
             var def = AiModelHelper.GetDefinition(modelId);

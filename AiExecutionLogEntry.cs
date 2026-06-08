@@ -50,5 +50,7 @@ namespace test
             = Array.Empty<AiFallbackAttempt>();
 
         public string WorkspaceSummary { get; set; } = "";
+        public IReadOnlyList<string> WorkspaceArtifactDetails { get; init; }
+            = Array.Empty<string>();
     }
 }

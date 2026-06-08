@@ -731,6 +731,7 @@ namespace test
             decision.CapabilityTrace = capabilityTrace;
             decision.DelegationTrace = delegationTrace;
             decision.WorkspaceSummary = workspaceSummary?.SummaryText ?? "";
+            decision.WorkspaceArtifactDetails = workspaceSummary?.ArtifactDetails ?? Array.Empty<string>();
 
 
             return new AgentExecutionResult
