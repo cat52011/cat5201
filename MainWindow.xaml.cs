@@ -304,6 +304,7 @@ namespace test
             string Resolver,
             string WorkspaceSummary,
             List<string> WorkspaceArtifactDetails,
+            List<AgentWorkspaceArtifactRecord>? WorkspaceArtifacts,
             string RequestedModelId,
             string PlannedModelId,
             string ActualModelId,
@@ -401,7 +402,7 @@ namespace test
                     continue;
 
                 string modelLabel = AiModelHelper.GetDefinition(attempt.ModelId).DisplayName;
-                string symbol = attempt.Success ? "✅" : "❌";
+                string symbol = attempt.Success ? "?" : "?";
 
                 parts.Add($"{attempt.AttemptIndex}.{modelLabel}{symbol}");
             }
@@ -455,6 +456,7 @@ namespace test
                 Resolver: entry.Resolver ?? "",
                 WorkspaceSummary: entry.WorkspaceSummary ?? "",
                 WorkspaceArtifactDetails: entry.WorkspaceArtifactDetails?.ToList() ?? new List<string>(),
+                WorkspaceArtifacts: entry.WorkspaceArtifacts?.ToList() ?? new List<AgentWorkspaceArtifactRecord>(),
 
                 RequestedModelId: entry.RequestedModelId ?? "",
                 PlannedModelId: entry.PlannedModelId ?? "",
@@ -528,6 +530,7 @@ namespace test
                 RuntimeFallbackSummary = state.RuntimeFallbackSummary ?? "",
                 WorkspaceSummary = state.WorkspaceSummary ?? "",
                 WorkspaceArtifactDetails = state.WorkspaceArtifactDetails?.ToList() ?? new List<string>(),
+                WorkspaceArtifacts = state.WorkspaceArtifacts?.ToList() ?? new List<AgentWorkspaceArtifactRecord>(),
                 Success = state.Success,
                 ErrorMessage = state.ErrorMessage ?? "",
 

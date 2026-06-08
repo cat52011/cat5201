@@ -339,6 +339,7 @@ namespace test
                 {
                     RunId = RunId,
                     ArtifactDetails = Array.Empty<string>(),
+                    Artifacts = Array.Empty<AgentWorkspaceArtifactRecord>(),
                     SummaryText = "本次 agent run 沒有產生 workspace item。"
                 };
             }
@@ -425,6 +426,12 @@ namespace test
             }
 
             var artifactDetails = BuildArtifactDetails(items);
+            var artifacts = BuildArtifactRecords(items);
+
+            int visibleArtifactCount = artifacts.Count(x => x.IsUserVisible);
+            int internalArtifactCount = artifacts.Count - visibleArtifactCount;
+
+            lines.Add($"Artifact index：{artifacts.Count} 項，visible={visibleArtifactCount}，internal={internalArtifactCount}");
 
             return new AgentWorkspaceSummary
             {
@@ -432,8 +439,73 @@ namespace test
                 ItemTypes = itemTypes,
                 SourceAgents = sourceAgents,
                 ArtifactDetails = artifactDetails,
+                Artifacts = artifacts,
                 SummaryText = string.Join(Environment.NewLine, lines)
             };
+        }
+
+        private static IReadOnlyList<AgentWorkspaceArtifactRecord> BuildArtifactRecords(IReadOnlyList<AgentWorkspaceItem> items)
+        {
+            if (items == null || items.Count == 0)
+                return Array.Empty<AgentWorkspaceArtifactRecord>();
+
+            return items
+                .Where(x => x != null)
+                .Select(x =>
+                {
+                    string preview = !string.IsNullOrWhiteSpace(x.TextSummary)
+                        ? x.TextSummary
+                        : x.Payload?.ToString() ?? "";
+
+                    int factCount = 0;
+                    if (x.Payload is VerifiedFactPayload verified)
+                        factCount = verified.Facts?.Count ?? 0;
+
+                    return new AgentWorkspaceArtifactRecord
+                    {
+                        Id = Safe(x.Id),
+                        RunId = Safe(x.RunId),
+                        NodeId = Safe(x.NodeId),
+                        SourceAgentId = Safe(x.SourceAgentId),
+                        ItemType = Safe(x.ItemType),
+                        ArtifactKind = string.IsNullOrWhiteSpace(x.ArtifactKind) ? "artifact" : x.ArtifactKind.Trim(),
+                        ContentFormat = string.IsNullOrWhiteSpace(x.ContentFormat) ? "text" : x.ContentFormat.Trim(),
+                        IsUserVisible = x.IsUserVisible,
+                        Title = string.IsNullOrWhiteSpace(x.Title) ? Safe(x.ItemType) : x.Title.Trim(),
+                        Preview = Trim(preview, 220),
+                        EstimatedSize = EstimateSize(x),
+                        FactCount = factCount,
+                        CreatedAtUtc = x.CreatedAtUtc
+                    };
+                })
+                .ToList();
+        }
+
+        private static int EstimateSize(AgentWorkspaceItem item)
+        {
+            if (item == null)
+                return 0;
+
+            int size = 0;
+
+            if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                size += item.TextSummary.Length;
+
+            if (!string.IsNullOrWhiteSpace(item.Title))
+                size += item.Title.Length;
+
+            if (item.Payload is VerifiedFactPayload verified)
+            {
+                size += verified.Summary?.Length ?? 0;
+                size += verified.Query?.Length ?? 0;
+                size += (verified.Facts?.Count ?? 0) * 80;
+            }
+            else if (item.Payload != null)
+            {
+                size += item.Payload.ToString()?.Length ?? 0;
+            }
+
+            return Math.Max(0, size);
         }
 
         private static IReadOnlyList<string> BuildArtifactDetails(IReadOnlyList<AgentWorkspaceItem> items)

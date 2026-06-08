@@ -15,6 +15,9 @@ namespace test
         public IReadOnlyList<string> ArtifactDetails { get; init; }
             = new List<string>();
 
+        public IReadOnlyList<AgentWorkspaceArtifactRecord> Artifacts { get; init; }
+            = new List<AgentWorkspaceArtifactRecord>();
+
         public string SummaryText { get; init; } = "";
     }
 }

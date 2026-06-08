@@ -41,6 +41,7 @@ namespace test
                 ResolverKeywords = decision.ResolverKeywords?.ToList() ?? new List<string>(),
                 WorkspaceSummary = decision.WorkspaceSummary ?? "",
                 WorkspaceArtifactDetails = decision.WorkspaceArtifactDetails?.ToList() ?? new List<string>(),
+                WorkspaceArtifacts = decision.WorkspaceArtifacts?.ToList() ?? new List<AgentWorkspaceArtifactRecord>(),
                 CapabilityAdjusted = decision.CapabilityAdjusted,
                 CapabilityReason = decision.CapabilityReason ?? "",
 

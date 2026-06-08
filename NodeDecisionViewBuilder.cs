@@ -318,6 +318,19 @@ namespace test
                 detailLines.AddRange(log.WorkspaceArtifactDetails.Where(x => !string.IsNullOrWhiteSpace(x)));
             }
 
+            if ((log.WorkspaceArtifactDetails == null || log.WorkspaceArtifactDetails.Count == 0) &&
+                log.WorkspaceArtifacts != null &&
+                log.WorkspaceArtifacts.Count > 0)
+            {
+                if (detailLines.Count > 0)
+                    detailLines.Add("--- Artifact Index ---");
+
+                detailLines.AddRange(log.WorkspaceArtifacts
+                    .Where(x => x != null)
+                    .Take(20)
+                    .Select(x => $"ArtifactRecord: {Safe(x.ArtifactKind)} / {Safe(x.ContentFormat)} / {(x.IsUserVisible ? "visible" : "internal")} / Type: {Safe(x.ItemType)} / Agent: {Safe(x.SourceAgentId)} / Title: {Safe(x.Title)}"));
+            }
+
             string detail = "-";
             var state = NodeDecisionStepState.Info;
 
@@ -327,11 +340,18 @@ namespace test
             }
             else
             {
-                var artifactCount = log.WorkspaceArtifactDetails?
-                    .Count(x => x.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var artifactCount = log.WorkspaceArtifacts?.Count ?? 0;
+                if (artifactCount == 0)
+                {
+                    artifactCount = log.WorkspaceArtifactDetails?
+                        .Count(x => x.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                }
 
                 var factCount = log.WorkspaceArtifactDetails?
                     .Count(x => x.TrimStart().StartsWith("Fact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+                if (factCount == 0 && log.WorkspaceArtifacts != null)
+                    factCount = log.WorkspaceArtifacts.Sum(x => x?.FactCount ?? 0);
 
                 detail = $"Artifacts: {artifactCount}, facts: {factCount}";
                 state = factCount > 0 ? NodeDecisionStepState.Success : NodeDecisionStepState.Info;

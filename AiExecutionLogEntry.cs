@@ -52,5 +52,7 @@ namespace test
         public string WorkspaceSummary { get; set; } = "";
         public IReadOnlyList<string> WorkspaceArtifactDetails { get; init; }
             = Array.Empty<string>();
+        public IReadOnlyList<AgentWorkspaceArtifactRecord> WorkspaceArtifacts { get; init; }
+            = Array.Empty<AgentWorkspaceArtifactRecord>();
     }
 }

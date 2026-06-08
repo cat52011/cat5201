@@ -94,16 +94,23 @@ namespace test
                     preferredModelId: forcedAgent.DefaultModelId,
                     preferredTaskMode: decision.TaskMode);
 
+                string forcedRuntimeModel = _main.IsAutoModelSelectionEnabled()
+                    ? AiAutoCostPolicy.NormalizeForAuto(profile.RuntimeModelId)
+                    : AiModelHelper.NormalizeNodeModel(profile.RuntimeModelId);
+
                 decision.RequestedAgentId = forcedAgent.Id;
                 decision.ActualAgentId = forcedAgent.Id;
 
                 decision.RequestedModelId = AiModelHelper.NormalizeNodeModel(profile.RuntimeModelId);
-                decision.ModelId = AiModelHelper.NormalizeNodeModel(profile.RuntimeModelId);
+                decision.ModelId = forcedRuntimeModel;
                 decision.ActualModelId = "";
                 decision.ForceSingleModel = true;
                 decision.ResolverLabel += " + Forced Agent Profile";
                 decision.ResolverReason =
-                    $"Delegated agent forced profile: {forcedAgent.Id} / model: {profile.RuntimeModelId}";
+                    $"Delegated agent forced profile: {forcedAgent.Id} / model: {profile.RuntimeModelId}" +
+                    (string.Equals(profile.RuntimeModelId, forcedRuntimeModel, StringComparison.OrdinalIgnoreCase)
+                        ? ""
+                        : $" / Auto cost policy: {profile.RuntimeModelId} → {forcedRuntimeModel}");
             }
 
             var runtimeAgent = AgentRegistry.Get(decision.ActualAgentId);
@@ -172,7 +179,7 @@ namespace test
                         continue;
                     }
 
-                    // ⭐ 關鍵：Required capability 強制允許
+                    // ? 關鍵：Required capability 強制允許
                     if (isRequired)
                     {
                         System.Diagnostics.Debug.WriteLine(
@@ -579,7 +586,7 @@ namespace test
             Output = "",
             Success = false,
 
-            // 🔥 加這行
+            // ?? 加這行
             ActualModelId = "",
 
             ErrorMessage = ex.Message
@@ -732,6 +739,7 @@ namespace test
             decision.DelegationTrace = delegationTrace;
             decision.WorkspaceSummary = workspaceSummary?.SummaryText ?? "";
             decision.WorkspaceArtifactDetails = workspaceSummary?.ArtifactDetails ?? Array.Empty<string>();
+            decision.WorkspaceArtifacts = workspaceSummary?.Artifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>();
 
 
             return new AgentExecutionResult
@@ -1153,7 +1161,7 @@ namespace test
 
             sb.AppendLine();
             sb.AppendLine("【Search Summary】");
-            sb.AppendLine("⚠️ 以下資料為唯一可信來源，不可自行補充未提供資訊。");
+            sb.AppendLine("?? 以下資料為唯一可信來源，不可自行補充未提供資訊。");
 
             if (!string.IsNullOrWhiteSpace(payload.Summary))
                 sb.AppendLine(payload.Summary);
@@ -1203,7 +1211,7 @@ namespace test
 
             sb.AppendLine();
             sb.AppendLine("【File Summary】");
-            sb.AppendLine("⚠️ 以下附件資訊為高優先來源，回答時應優先根據附件內容。");
+            sb.AppendLine("?? 以下附件資訊為高優先來源，回答時應優先根據附件內容。");
 
             if (!string.IsNullOrWhiteSpace(payload.Summary))
                 sb.AppendLine(payload.Summary);

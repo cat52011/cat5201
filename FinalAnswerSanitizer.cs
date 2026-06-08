@@ -13,6 +13,9 @@ namespace test
         private static readonly Regex CitationMarkerRegex =
             new(@"(?<![A-Za-z0-9])\[(?:\d+|[ivxlcdm]+)(?:\s*[,;]\s*(?:\d+|[ivxlcdm]+))*\]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        private static readonly Regex SourceTagCitationRegex =
+            new(@"(?<![A-Za-z0-9])\[(?:[A-Z][A-Z0-9.\-]{1,8})(?:\]\[(?:[A-Z][A-Z0-9.\-]{1,8}))*\]", RegexOptions.Compiled);
+
         private static readonly Regex EndMarkerRegex =
             new(@"\[\[END_OF_RESPONSE\]\]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -23,6 +26,7 @@ namespace test
 
             text = EndMarkerRegex.Replace(text, "");
             text = CitationMarkerRegex.Replace(text, "");
+            text = SourceTagCitationRegex.Replace(text, "");
 
             if (enforceSynthesisFormat)
                 text = NormalizeLegacyHeadingsOnly(text);
