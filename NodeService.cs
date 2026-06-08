@@ -157,7 +157,8 @@ namespace test
                     TopText = topText,
                     UseStreaming = false,
                     OnDelta = null,
-                    CancellationToken = ct
+                    CancellationToken = ct,
+                    Workspace = new AgentWorkspace()
                 });
 
                 var decision = agentResult.Decision;
@@ -263,7 +264,8 @@ namespace test
                     TopText = topText,
                     UseStreaming = true,
                     OnDelta = onDelta,
-                    CancellationToken = ct
+                    CancellationToken = ct,
+                    Workspace = new AgentWorkspace()
                 });
 
                 var decision = agentResult.Decision;

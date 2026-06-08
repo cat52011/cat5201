@@ -464,7 +464,7 @@ namespace test
                 extraParts.Add(log.ErrorMessage);
 
             if (!string.IsNullOrWhiteSpace(log.WorkspaceSummary))
-                extraParts.Add("workspace: " + Trim(log.WorkspaceSummary, 240));
+                extraParts.Add("多代理協作: " + Trim(log.WorkspaceSummary, 360));
 
 
             return extraParts.Count == 0 ? "" : string.Join(" / ", extraParts);

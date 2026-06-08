@@ -46,23 +46,101 @@ namespace test
         public string BuildPromptBlock()
         {
             var items = GetAll();
+
             if (items.Count == 0)
                 return "";
 
-            var lines = new List<string>
-            {
-                "【Agent Workspace】",
-                "以下是本次 agent run 中已產生的共享工作區資料。可用來整合回答，但不可直接輸出內部欄位名稱。"
-            };
+            var verifiedFacts = items
+    .Where(x => string.Equals(x.ItemType, "verified_facts", StringComparison.OrdinalIgnoreCase))
+    .ToList();
 
-            foreach (var item in items)
-            {
-                lines.Add($"- Type: {item.ItemType}");
-                lines.Add($"  Source Agent: {item.SourceAgentId}");
-                lines.Add($"  Title: {item.Title}");
+            var searchSummaries = items
+                .Where(x => string.Equals(x.ItemType, "search_summary", StringComparison.OrdinalIgnoreCase))
+                .ToList();
 
-                if (!string.IsNullOrWhiteSpace(item.TextSummary))
-                    lines.Add($"  Summary: {item.TextSummary}");
+            var researchSearchSummaries = searchSummaries
+                .Where(x => string.Equals(x.SourceAgentId, "research-agent", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var analysis = items
+                .Where(x =>
+                    !string.Equals(x.ItemType, "verified_facts", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(x.ItemType, "search_summary", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var lines = new List<string>();
+
+            if (verifiedFacts.Count > 0)
+            {
+                lines.Add("【Verified Facts】");
+                lines.Add("以下資料是唯一可用來回答數字、價格、日期、財報、即時資訊的事實來源。若其他區塊與此區衝突，必須以此區為準。");
+
+                foreach (var item in verifiedFacts)
+                {
+                    if (item.Payload is VerifiedFactPayload payload)
+                    {
+                        if (!string.IsNullOrWhiteSpace(payload.Summary))
+                            lines.Add(payload.Summary);
+
+                        foreach (var fact in payload.Facts)
+                        {
+                            lines.Add($"- Subject: {fact.Subject}");
+                            lines.Add($"  Type: {fact.FactType}");
+                            lines.Add($"  Value: {fact.Value} {fact.Unit}".Trim());
+                            if (!string.IsNullOrWhiteSpace(fact.AsOf))
+                                lines.Add($"  AsOf: {fact.AsOf}");
+                            if (!string.IsNullOrWhiteSpace(fact.SourceTitle))
+                                lines.Add($"  Source: {fact.SourceTitle}");
+                            if (!string.IsNullOrWhiteSpace(fact.SourceUrl))
+                                lines.Add($"  Url: {fact.SourceUrl}");
+                            lines.Add($"  Confidence: {fact.Confidence}");
+                        }
+                    }
+                    else if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                    {
+                        lines.Add(item.TextSummary);
+                    }
+                }
+            }
+            else if (researchSearchSummaries.Count > 0)
+            {
+                lines.Add("【Verified Facts】");
+                lines.Add("目前沒有獨立 verified_facts payload；以下 research-agent 的 search_summary 暫時作為唯一事實來源。其他 agent 的輸出不可覆蓋此區。");
+
+                foreach (var item in researchSearchSummaries)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                        lines.Add(item.TextSummary);
+                }
+            }
+
+            if (searchSummaries.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("【Search Context】");
+                lines.Add("以下搜尋摘要僅可作為背景脈絡。若要使用數字、價格、日期或財報數據，必須以 Verified Facts 為準。");
+
+                foreach (var item in searchSummaries)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                        lines.Add(item.TextSummary);
+                }
+            }
+
+            if (analysis.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("【Analysis Context】");
+                lines.Add("以下內容只能用於推論、比較、整理與風險分析，不可新增或覆蓋任何事實數字。");
+
+                foreach (var item in analysis)
+                {
+                    lines.Add($"- Type: {item.ItemType}");
+                    lines.Add($"  Source Agent: {item.SourceAgentId}");
+
+                    if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                        lines.Add($"  Summary: {item.TextSummary}");
+                }
             }
 
             return string.Join(Environment.NewLine, lines);
@@ -93,22 +171,34 @@ namespace test
                 .ToList();
 
             var delegateModels = items
-    .Where(x => string.Equals(x.ItemType, "delegate_output", StringComparison.OrdinalIgnoreCase))
-    .Select(x => x.Payload)
-    .OfType<DelegateOutputPayload>()
-    .Where(x => !string.IsNullOrWhiteSpace(x.ActualModelId))
-    .Select(x => $"{x.ToAgentId}={x.ActualModelId}")
-    .Distinct(StringComparer.OrdinalIgnoreCase)
-    .ToList();
+                .Where(x =>
+                    string.Equals(x.ItemType, "delegate_output", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(x.ItemType, "parallel_agent_output", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Payload)
+                .OfType<DelegateOutputPayload>()
+                .Where(x => !string.IsNullOrWhiteSpace(x.ActualModelId))
+                .Select(x => $"{x.ToAgentId}={x.ActualModelId}")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var finalSynthesis = items
+                .Select(x => x.Payload)
+                .OfType<FinalSynthesisPayload>()
+                .FirstOrDefault(x => x.Success);
 
             var lines = new List<string>
-{
-    $"本次 agent run 共產生 {items.Count} 個 workspace item。",
-    $"Item Types: {string.Join(", ", itemTypes)}",
-    $"Source Agents: {string.Join(", ", sourceAgents)}"
-}; 
+    {
+        $"多代理協作：{sourceAgents.Count} 個 agent 參與",
+        $"共享成果：{items.Count} 項",
+        $"資料類型：{string.Join(", ", itemTypes)}",
+        $"參與代理：{string.Join(", ", sourceAgents)}"
+    };
+
             if (delegateModels.Count > 0)
-                lines.Add($"Delegate Models: {string.Join(", ", delegateModels)}");
+                lines.Add($"代理模型：{string.Join(", ", delegateModels)}");
+
+            if (finalSynthesis != null)
+                lines.Add($"最終整合：{finalSynthesis.SynthesizerAgentId} / {finalSynthesis.ModelId}");
 
             return new AgentWorkspaceSummary
             {
@@ -118,7 +208,6 @@ namespace test
                 SummaryText = string.Join(Environment.NewLine, lines)
             };
         }
-
         private static string Trim(string text, int max)
         {
             if (string.IsNullOrWhiteSpace(text))

@@ -41,7 +41,13 @@ namespace test
                 throw new InvalidOperationException("AgentExecutionRequest.Agent 不可為 null。");
 
             string topText = request.TopText ?? "";
-            var workspace = request.Workspace ?? new AgentWorkspace();
+            if (request.Workspace == null)
+            {
+                throw new InvalidOperationException(
+                    "AgentExecutionRequest.Workspace 不可為 null。Parallel / Delegate flow 必須共享同一個 workspace instance。");
+            }
+
+            var workspace = request.Workspace;
             var parallelRunner = new AgentParallelRunner(ExecuteAsync);
             if (string.IsNullOrWhiteSpace(topText))
             {
@@ -102,7 +108,8 @@ namespace test
 
             var runtimeAgent = AgentRegistry.Get(decision.ActualAgentId);
 
-            _main.SetLiveDecisionResolving(request.Node, decision);            // 2. capability layer
+            _main.SetLiveDecisionResolving(request.Node, decision);           
+            // 2. capability layer
             string capabilityAugmentedText = topText;
 
             var capabilityContext = new AgentExecutionContext
@@ -114,10 +121,20 @@ namespace test
                 Attachments = _main.GetAttachmentsForNode(request.Node)
             };
 
-            var orderedCapabilities = AgentCapabilityRegistry.All
+            var capabilityPlan = AgentCapabilityPlanner.Build(
+    runtimeAgent,
+    topText,
+    decision.TaskMode,
+    capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[CapabilityPlan] Agent={runtimeAgent.Id} Required={string.Join(", ", capabilityPlan.RequiredCapabilityIds)} Order={string.Join(" -> ", capabilityPlan.OrderedCapabilityIds)} Reason={capabilityPlan.Reason}");
+
+            var orderedCapabilities = capabilityPlan.OrderedCapabilityIds
+                .Select(id => AgentCapabilityRegistry.All.FirstOrDefault(c =>
+                    string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase)))
                 .Where(c => c != null)
-                .OrderByDescending(c => runtimeAgent.IsPreferredCapability(c.Id))
-                .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
+                .Cast<IAgentCapability>()
                 .ToList();
             if (!request.SkipCapabilities)
             {
@@ -141,25 +158,22 @@ namespace test
                         });
                         continue;
                     }
+                    bool isRequired = capabilityPlan.IsRequired(capability.Id);
 
-                    if (!runtimeAgent.IsCapabilityAllowed(capability.Id))
+                    if (!runtimeAgent.IsCapabilityAllowed(capability.Id) && !isRequired)
                     {
-                        capabilityTrace.Add(new AgentCapabilityTraceItem
-                        {
-                            CapabilityId = capability.Id,
-                            AgentId = runtimeAgent.Id,
-                            CanHandle = false,
-                            Executed = false,
-                            Handled = false,
-                            AugmentedPrompt = false,
-                            Success = true,
-                            Summary = "not allowed by agent policy"
-                        });
                         continue;
                     }
 
+                    // ⭐ 關鍵：Required capability 強制允許
+                    if (isRequired)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Capability Override] Agent={runtimeAgent.Id}, Capability={capability.Id} forced by planner");
+                    }
                     if (capability.RequiredAgentCapability != AgentCapability.None &&
-                        !runtimeAgent.Capabilities.HasFlag(capability.RequiredAgentCapability))
+    !runtimeAgent.Capabilities.HasFlag(capability.RequiredAgentCapability) &&
+    !isRequired)
                     {
                         capabilityTrace.Add(new AgentCapabilityTraceItem
                         {
@@ -197,7 +211,8 @@ namespace test
                         continue;
                     }
 
-                    if (!canHandle)
+
+                    if (!canHandle && !isRequired)
                     {
                         capabilityTrace.Add(new AgentCapabilityTraceItem
                         {
@@ -213,6 +228,9 @@ namespace test
                         continue;
                     }
 
+                    if (isRequired)
+                        canHandle = true;
+
                     AgentCapabilityResult capabilityResult;
                     try
                     {
@@ -222,6 +240,9 @@ namespace test
                     }
                     catch (Exception ex)
                     {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Capability Execute ERROR] Agent={runtimeAgent.Id}, Capability={capability.Id}, Error={ex}");
+
                         capabilityTrace.Add(new AgentCapabilityTraceItem
                         {
                             CapabilityId = capability.Id,
@@ -234,8 +255,24 @@ namespace test
                             Summary = "",
                             ErrorMessage = ex.Message
                         });
+
+                        if (capabilityPlan.IsRequired(capability.Id))
+                        {
+                            throw new InvalidOperationException(
+                                $"Required capability failed: {capability.Id}. {ex.Message}",
+                                ex);
+                        }
+
                         continue;
                     }
+                    System.Diagnostics.Debug.WriteLine(
+    $"[Capability Execute] " +
+    $"Agent={runtimeAgent.Id}, " +
+    $"Capability={capability.Id}, " +
+    $"ResultNull={(capabilityResult == null)}, " +
+    $"Handled={(capabilityResult == null ? false : capabilityResult.Handled)}, " +
+    $"Keys={(capabilityResult?.Data == null ? "(null)" : string.Join(", ", capabilityResult.Data.Keys))}");
+
 
                     if (capabilityResult == null)
                     {
@@ -267,6 +304,14 @@ namespace test
                                     kv.Key,
                                     kv.Value));
                         }
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Capability] Agent={runtimeAgent.Id} Keys={string.Join(", ", capabilityData.Keys)}");
+
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Workspace] Count={workspace.GetAll().Count}");
+
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Workspace] Types={string.Join(", ", workspace.GetAll().Select(x => x.ItemType))}");
                         capabilityTrace.Add(new AgentCapabilityTraceItem
                         {
                             CapabilityId = capability.Id,
@@ -365,6 +410,13 @@ namespace test
                     }
                 }
             }
+            if (capabilityPlan.RequiresFreshFacts &&
+    !capabilityData.ContainsKey("verified_facts") &&
+    !capabilityData.ContainsKey("search_summary"))
+            {
+                throw new InvalidOperationException(
+                    "This task requires fresh facts, but search-capability did not produce verified_facts or search_summary.");
+            }
             // 2.5 parallel multi-agent execution
             bool parallelExecuted = false;
             AgentParallelExecutionResult? parallelResult = null;
@@ -410,7 +462,8 @@ namespace test
                                 }));
                     }
                 }
-            }            // 3. delegation
+            }            
+            // 3. delegation
             IReadOnlyList<AgentDelegationRequest> plans;
 
             if (request.DelegationDepth >= 2)
@@ -632,12 +685,12 @@ namespace test
             };
         }
         private async Task<AiFallbackExecutionResult> RunFinalSynthesisAsync(
-    NodeControl node,
-    AgentDefinition rootAgent,
-    string originalInput,
-    AgentWorkspace workspace,
-    NodeExecutionDecision rootDecision,
-    CancellationToken ct)
+            NodeControl node,
+            AgentDefinition rootAgent,
+            string originalInput,
+            AgentWorkspace workspace,
+            NodeExecutionDecision rootDecision,
+            CancellationToken ct)
         {
             var synthesizer = AgentRegistry.Get("general-agent");
 
@@ -655,33 +708,55 @@ namespace test
                 ForceSingleModel = true
             };
 
-            string workspaceBlock = workspace.BuildPromptBlock();
+            string workspaceBlock = workspace?.BuildPromptBlock() ?? "";
+            System.Diagnostics.Debug.WriteLine(
+    $"[Workspace] Count={workspace.GetAll().Count}");
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[Workspace Preview]\n{workspaceBlock.Substring(0, Math.Min(1000, workspaceBlock.Length))}");
 
             string synthesisInput =
-        $@"你是 final synthesizer。請只根據以下 shared workspace 與原始任務輸出最終答案。
+        $@"你是 final synthesizer。你的任務是根據 shared workspace 統整最終答案。
 
-重要規則：
-1. 必須等同於整合所有 parallel agents 的結果。
-2. 若 workspace 中已有 search_summary，請優先使用它作為事實來源。
-3. 若 workspace 中已有 reasoning_analysis，請依照其推論策略回答。
-4. 不可說「Search Summary 未提供」除非 workspace 真的沒有 search_summary。
-5. 不可輸出任何內部標記，例如 Agent Workspace、Task Plan、Search Summary、parallel_agent_output、delegate_output。
-6. 不可輸出 citation marker，例如 [1][2][3]。
-7. 若資料不足，請說明不足在哪裡，但仍要基於已有資料給出有限分析。
-
-{workspaceBlock}
-
-【原始任務】
+【使用者原始任務】
 {originalInput}
 
-請輸出最終答案：";
+【Shared Workspace】
+{workspaceBlock}
+
+【最高優先規則】
+1. 如果 Shared Workspace 中有【Verified Facts】，必須優先使用它作為事實來源。
+2. 如果【Verified Facts】裡的 Value 是一整段 Perplexity / research-agent 研究答案，請直接把它視為權威研究內容，不要因為它不是表格化數字就說資料不足。
+3. 如果沒有【Verified Facts】，但有【Search Context】或 research-agent 的 search_summary，必須把 research-agent 的 search_summary 作為事實來源。
+4. 只有在 Shared Workspace 完全沒有 Verified Facts、Search Context、search_summary 時，才可以回答資料不足。
+5. Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整合，不可新增或覆蓋事實數字。
+6. 若不同來源出現衝突數字，請分開列出並說明資料衝突，不要混成單一結論。
+7. 不可輸出任何內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
+8. 不可輸出 citation marker，例如 [1][2][3]。
+9. 最終答案請使用繁體中文，並使用以下結構：
+
+已知資料
+- 整理 TSM 與 MU 的最新股價、財報、營收、EPS、毛利率、指引或其他 workspace 中已提供的資訊。
+- 如果某一項資料缺失，只標示該項資料不足，不要把全部任務判定為資料不足。
+
+合理推論
+- 根據已知資料分析短期走勢。
+- 區分 TSM 與 MU。
+- 不要把推論寫成保證。
+
+風險 / 不確定性
+- 說明短期股價可能受哪些因素影響。
+- 若資料來源衝突，明確說明。
+
+請現在輸出最終答案：";
+
             return await _executeWithFallbackAsync(
-    node,
-    synthesisInput,
-    synthesisDecision,
-    null,
-    false,
-    ct);
+                node,
+                synthesisInput,
+                synthesisDecision,
+                null,
+                false,
+                ct);
         }
         private static string BuildCapabilityDataBlock(
             IReadOnlyDictionary<string, object> capabilityData)
@@ -729,6 +804,12 @@ namespace test
                     continue;
                 }
 
+                if (string.Equals(kv.Key, "verified_facts", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendVerifiedFacts(sb, kv.Value);
+                    continue;
+                }
+
                 if (string.Equals(kv.Key, "search_results", StringComparison.OrdinalIgnoreCase))
                 {
                     AppendSearchResults(sb, kv.Value);
@@ -742,6 +823,49 @@ namespace test
             return sb.ToString().Trim();
         }
 
+        private static void AppendVerifiedFacts(StringBuilder sb, object value)
+        {
+            if (sb == null || value == null)
+                return;
+
+            if (value is not VerifiedFactPayload payload)
+            {
+                sb.AppendLine();
+                sb.AppendLine("【Verified Facts】");
+                sb.AppendLine(value.ToString() ?? "");
+                return;
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("【Verified Facts】");
+            sb.AppendLine("以下資料是唯一可用來回答數字、價格、日期、財報、即時資訊的事實來源。");
+
+            if (!string.IsNullOrWhiteSpace(payload.Summary))
+                sb.AppendLine(payload.Summary);
+
+            if (payload.Facts == null || payload.Facts.Count == 0)
+                return;
+
+            foreach (var fact in payload.Facts)
+            {
+                if (fact == null)
+                    continue;
+
+                sb.AppendLine($"- {fact.Subject} / {fact.FactType}: {fact.Value} {fact.Unit}".Trim());
+
+                if (!string.IsNullOrWhiteSpace(fact.AsOf))
+                    sb.AppendLine($"  AsOf: {fact.AsOf}");
+
+                if (!string.IsNullOrWhiteSpace(fact.SourceTitle))
+                    sb.AppendLine($"  Source: {fact.SourceTitle}");
+
+                if (!string.IsNullOrWhiteSpace(fact.SourceUrl))
+                    sb.AppendLine($"  Url: {fact.SourceUrl}");
+
+                if (!string.IsNullOrWhiteSpace(fact.Confidence))
+                    sb.AppendLine($"  Confidence: {fact.Confidence}");
+            }
+        }
         private static void AppendReasoningAnalysis(StringBuilder sb, object value)
         {
             if (sb == null || value == null)

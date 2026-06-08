@@ -39,7 +39,8 @@ namespace test
 
                 return $"Parallel Output - {parallel.ToAgentId} / Model: {model}";
             }
-
+            if (value is VerifiedFactPayload verified)
+                return $"Verified Facts - {verified.Query}";
             if (value is SearchSummaryPayload search)
                 return $"Search Summary - {search.Query}";
 
@@ -76,6 +77,8 @@ namespace test
 
         private static string BuildTextSummary(object value)
         {
+            if (value is VerifiedFactPayload verified)
+                return $"Verified Facts - {verified.Query}";
             if (value is SearchSummaryPayload search)
                 return search.Summary ?? "";
 

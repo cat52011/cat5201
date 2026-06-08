@@ -10,14 +10,11 @@ namespace test
 
         public AgentRole Role { get; init; } = AgentRole.General;
 
-        // 相容你目前系統：先保留 DefaultModelId / DefaultTaskMode
         public string DefaultModelId { get; init; } = AiModels.OpenAi_Gpt54;
         public NodeTaskMode DefaultTaskMode { get; init; } = NodeTaskMode.Chat;
 
-        // Agent 系統提示
         public string SystemPrompt { get; init; } = "";
 
-        // 允許的模型清單（第一版先給 routing / UI 用）
         public IReadOnlyList<string> AllowedModelIds { get; init; } = Array.Empty<string>();
 
         public AgentCapability Capabilities { get; init; } =
@@ -52,6 +49,11 @@ namespace test
             };
         }
 
+        public bool SupportsCapability(string capabilityId)
+        {
+            return IsCapabilityAllowed(capabilityId);
+        }
+
         public bool IsCapabilityBlocked(string capabilityId)
         {
             if (string.IsNullOrWhiteSpace(capabilityId) ||
@@ -78,6 +80,7 @@ namespace test
             if (IsCapabilityBlocked(capabilityId))
                 return false;
 
+            // 沒有限制清單 = 預設允許
             if (AllowedCapabilityIds == null || AllowedCapabilityIds.Count == 0)
                 return true;
 
