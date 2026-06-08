@@ -81,6 +81,9 @@ namespace test
                 lines.Add("【Verified Facts】");
                 lines.Add("以下是唯一可用於數字、價格、日期、財報、即時資訊的事實來源。Final answer 不可自行發明或改寫不存在的數字。");
                 lines.Add("請優先使用 High / Medium confidence facts。若同一 subject + fact type 有多個不同 value，代表來源衝突， final answer 必須簡短合併說明，不要逐條展開成冗長清單。");
+                lines.Add("Fact ownership rule: UsageRole=numeric_fact_source 的 facts 才可作為價格、日期、財報、EPS、營收、毛利率、指引等數字來源。UsageRole=background_context 或 analysis_only 不可覆蓋 numeric facts。");
+                lines.Add("Authority ranking: official > market_quote > trusted_news > search_context > model_generated。若 numeric facts 衝突，必須採用 AuthorityRank 較高者，除非明確說明另一個值只是不同時段或不同口徑。");
+                lines.Add("Quote labeling rule: regular_close_price=收盤價、after_hours_price=盤後價、pre_market_price=盤前價、realtime_price=即時價。若 quote_availability 顯示 not_available，final answer 必須標示未取得，不可用其它時段價格代替。");
                 lines.Add("");
 
                 foreach (var payload in verifiedFactPayloads)
@@ -140,7 +143,7 @@ namespace test
                 }
             }
 
-            if (searchSummaryPayloads.Count > 0)
+            if (searchSummaryPayloads.Count > 0 && verifiedFactPayloads.Count == 0)
             {
                 lines.Add("");
                 lines.Add("【Search Context】");
@@ -167,19 +170,35 @@ namespace test
                     }
                 }
             }
+            else if (searchSummaryPayloads.Count > 0 && verifiedFactPayloads.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("【Search Context】");
+                lines.Add("Search summaries were intentionally omitted because structured verified_facts exist. Use verified_facts for all numbers, prices, dates, financial metrics, EPS, revenue, gross margin and guidance.");
+            }
 
             if (analysisItems.Count > 0)
             {
                 lines.Add("");
                 lines.Add("【Analysis Context】");
-                lines.Add("以下內容只能用於推論、比較、整理與風險分析，不可新增或覆蓋任何價格、日期、EPS、營收、毛利率、指引等事實數字。Final answer 應吸收其重點，不要逐條列出內部 artifact。");
+                if (verifiedFactPayloads.Count > 0)
+                {
+                    lines.Add("Analysis text summaries were intentionally omitted because structured verified_facts exist. Do not use analyst/delegate text as a source for prices, dates, EPS, revenue, gross margin or guidance.");
+                }
+                else
+                {
+                    lines.Add("以下內容只能用於推論、比較、整理與風險分析，不可新增或覆蓋任何價格、日期、EPS、營收、毛利率、指引等事實數字。Final answer 應吸收其重點，不要逐條列出內部 artifact。");
+                }
 
                 foreach (var item in analysisItems.Take(10))
                 {
                     lines.Add($"- Type: {item.ItemType}");
                     lines.Add($"  Source Agent: {item.SourceAgentId}");
 
-                    if (!string.IsNullOrWhiteSpace(item.TextSummary))
+                    if (!string.IsNullOrWhiteSpace(item.ArtifactKind))
+                        lines.Add($"  ArtifactKind: {item.ArtifactKind}");
+
+                    if (verifiedFactPayloads.Count == 0 && !string.IsNullOrWhiteSpace(item.TextSummary))
                         lines.Add($"  Summary: {Trim(item.TextSummary, 700)}");
                 }
             }
@@ -219,9 +238,12 @@ namespace test
                 lines.Add($"Subject: {subject}");
                 lines.Add($"FactType: {factType}");
 
+                bool isNumericFactGroup = group.Any(FactOwnership.CanOwnNumericFacts);
+
                 var valueGroups = group
                     .GroupBy(x => NormalizeValue(x.Value, x.Unit))
-                    .OrderByDescending(g => ConfidenceScore(g.Select(x => x.Confidence)))
+                    .OrderByDescending(g => BestAuthorityScore(g))
+                    .ThenByDescending(g => ConfidenceScore(g.Select(x => x.Confidence)))
                     .ThenByDescending(g => g.Count())
                     .ToList();
 
@@ -239,6 +261,8 @@ namespace test
                     var confidence = BestConfidence(valueGroup.Select(x => x.Confidence));
                     lines.Add($"Confidence: {confidence}");
 
+                    AppendOwnershipLines(lines, first);
+
                     var sources = valueGroup
                         .Select(FormatSource)
                         .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -251,7 +275,16 @@ namespace test
                 }
                 else
                 {
-                    lines.Add("Conflict: true");
+                    lines.Add(isNumericFactGroup
+                        ? "Conflict: true"
+                        : "Variants: true");
+
+                    if (isNumericFactGroup)
+                    {
+                        var preferred = valueGroups[0].First();
+                        lines.Add($"PreferredByAuthority: {FormatValue(preferred.Value, preferred.Unit)}");
+                    }
+
                     lines.Add("Values:");
 
                     foreach (var valueGroup in valueGroups.Take(6))
@@ -273,13 +306,23 @@ namespace test
 
                         line += $" | Confidence: {confidence}";
 
+                        var authorityRank = BestAuthorityScore(valueGroup);
+                        if (authorityRank > 0)
+                            line += $" | AuthorityRank: {authorityRank}";
+
                         if (!string.IsNullOrWhiteSpace(source))
                             line += $" | Source: {source}";
+
+                        var ownership = FormatOwnership(first);
+                        if (!string.IsNullOrWhiteSpace(ownership))
+                            line += $" | {ownership}";
 
                         lines.Add(line);
                     }
 
-                    lines.Add("Instruction: final answer must summarize this conflict briefly and must not merge these values into one number.");
+                    lines.Add(isNumericFactGroup
+                        ? "Instruction: final answer must use PreferredByAuthority unless it explains why a lower authority value is still relevant. Do not merge conflicting numeric values into one number."
+                        : "Instruction: these are background variants, not numeric fact conflicts. They may inform analysis but cannot override numeric facts.");
                 }
 
                 lines.Add("");
@@ -341,6 +384,45 @@ namespace test
             if (finalSynthesis != null)
                 lines.Add($"最終整合：{finalSynthesis.SynthesizerAgentId} / {finalSynthesis.ModelId}");
 
+            var artifactKinds = items
+                .Select(x => string.IsNullOrWhiteSpace(x.ArtifactKind) ? "artifact" : x.ArtifactKind.Trim())
+                .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"{g.Key}={g.Count()}")
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (artifactKinds.Count > 0)
+                lines.Add($"Artifacts：{string.Join(", ", artifactKinds)}");
+
+            var verifiedFacts = items
+                .Where(x => string.Equals(x.ItemType, "verified_facts", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Payload)
+                .OfType<VerifiedFactPayload>()
+                .SelectMany(x => x.Facts ?? Array.Empty<VerifiedFactItem>())
+                .Where(x => x != null)
+                .ToList();
+
+            if (verifiedFacts.Count > 0)
+            {
+                var usageRoles = verifiedFacts
+                    .GroupBy(x => string.IsNullOrWhiteSpace(x.UsageRole) ? "unknown" : x.UsageRole.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .Select(g => $"{g.Key}={g.Count()}")
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var authorities = verifiedFacts
+                    .GroupBy(x => string.IsNullOrWhiteSpace(x.AuthorityLevel) ? "unknown" : x.AuthorityLevel.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .Select(g => $"{g.Key}={g.Count()}")
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                int numericFacts = verifiedFacts.Count(FactOwnership.CanOwnNumericFacts);
+
+                lines.Add($"Verified facts：{verifiedFacts.Count} 項，numeric owners：{numericFacts}");
+                lines.Add($"Usage roles：{string.Join(", ", usageRoles)}");
+                lines.Add($"Authorities：{string.Join(", ", authorities)}");
+            }
+
             return new AgentWorkspaceSummary
             {
                 RunId = RunId,
@@ -390,6 +472,40 @@ namespace test
             return url;
         }
 
+        private static void AppendOwnershipLines(List<string> lines, VerifiedFactItem fact)
+        {
+            var ownership = FormatOwnership(fact);
+            if (!string.IsNullOrWhiteSpace(ownership))
+                lines.Add(ownership);
+        }
+
+        private static string FormatOwnership(VerifiedFactItem fact)
+        {
+            if (fact == null)
+                return "";
+
+            var parts = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(fact.OwnerAgentId))
+                parts.Add($"OwnerAgent: {fact.OwnerAgentId}");
+
+            if (!string.IsNullOrWhiteSpace(fact.OwnerCapabilityId))
+                parts.Add($"OwnerCapability: {fact.OwnerCapabilityId}");
+
+            if (!string.IsNullOrWhiteSpace(fact.AuthorityLevel))
+            {
+                parts.Add($"Authority: {fact.AuthorityLevel}");
+                parts.Add($"AuthorityRank: {FactOwnership.AuthorityRank(fact.AuthorityLevel)}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(fact.UsageRole))
+                parts.Add($"UsageRole: {fact.UsageRole}");
+
+            return parts.Count == 0
+                ? ""
+                : string.Join(" | ", parts);
+        }
+
         private static string FirstNonEmpty(IEnumerable<string?> values)
         {
             return values?
@@ -427,6 +543,15 @@ namespace test
                 "low" => 1,
                 _ => 0
             };
+        }
+
+        private static int BestAuthorityScore(IEnumerable<VerifiedFactItem> facts)
+        {
+            return facts?
+                .Where(x => x != null)
+                .Select(x => FactOwnership.AuthorityRank(x.AuthorityLevel))
+                .DefaultIfEmpty(0)
+                .Max() ?? 0;
         }
 
         private static string Safe(string? text)

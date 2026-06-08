@@ -139,6 +139,39 @@ namespace test
             return AiModelRegistry.Default.DisplayName;
         }
 
+        private static string SanitizeNodeFinalText(string topText, string text)
+        {
+            return FinalAnswerSanitizer.Sanitize(
+                text ?? "",
+                enforceSynthesisFormat: IsFinanceLikeTask(topText));
+        }
+
+        private static bool IsFinanceLikeTask(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return ContainsAny(
+                text,
+                "股價", "美股", "財報", "營收", "毛利率", "EPS", "盤前", "盤後", "收盤", "即時價",
+                "走勢", "短期", "TSM", "MU", "NVDA", "AMD", "TSLA", "AAPL", "MSFT",
+                "stock", "quote", "earnings", "revenue", "guidance", "pre-market", "after-hours");
+        }
+
+        private static bool ContainsAny(string text, params string[] keywords)
+        {
+            foreach (var keyword in keywords)
+            {
+                if (!string.IsNullOrWhiteSpace(keyword) &&
+                    text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public async Task<string> GenerateAsync(NodeControl node, string topText, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(topText))
@@ -224,7 +257,7 @@ namespace test
 
                 await TryAutoFlowToNextNodeAsync(node, flowContext, ct);
 
-                return execution.Text;
+                return SanitizeNodeFinalText(topText, execution.Text);
             }
             catch (Exception ex)
             {
@@ -331,7 +364,7 @@ namespace test
 
                 await TryAutoFlowToNextNodeAsync(node, flowContext, ct);
 
-                return execution.Text;
+                return SanitizeNodeFinalText(topText, execution.Text);
             }
             catch (Exception ex)
             {
@@ -461,7 +494,7 @@ namespace test
                         ? $"fallback 成功：{GetRuntimeModelLabel(candidateModel)}"
                         : "";
 
-                    return new AiFallbackExecutionResult
+                    return FinalAnswerSanitizer.Sanitize(new AiFallbackExecutionResult
                     {
                         IsSuccess = true,
                         Text = text ?? "",
@@ -470,7 +503,7 @@ namespace test
                         Summary = summary,
                         ErrorMessage = "",
                         Attempts = attempts
-                    };
+                    }, enforceSynthesisFormat: false);
                 }
                 catch (Exception ex)
                 {

@@ -86,8 +86,8 @@ $@"你是金融研究代理，負責提供可供下游 agent 使用的最新金�
 
 核心規則：
 1. 對於「最新股價」，請優先使用 Perplexity 搜尋結果中最像即時報價卡、金融資料卡、交易所/券商即時報價、Yahoo Finance、Nasdaq、MarketWatch、CNBC、Google Finance 類型的最新資料。
-2. 必須分開 regular close、after-hours、pre-market。regular close 與 after-hours / pre-market 是不同交易時段，不是資料衝突。
-3. 每個 ticker 至少嘗試取得：regular close price、after-hours/pre-market price、price time、latest fiscal quarter、revenue、EPS、gross margin、guidance。
+2. 必須分開 latest tradable/current session price、regular close、after-hours、pre-market。regular close、after-hours、pre-market、regular session intraday 是不同交易時段，不是資料衝突。
+3. 每個 ticker 至少嘗試取得：latest tradable price/current session、regular close price、after-hours/pre-market price、price time、latest fiscal quarter、revenue、EPS、gross margin、guidance。
 4. 財報數字請優先使用公司 IR / earnings release / SEC filing。若公司官方資料可取得，不可寫「財報核心數字不足」。
 5. 若 ticker 是 MU，請優先查 Micron Investor Relations / Micron earnings release 的最新季度資料；若 ticker 是 TSM，請優先查 TSMC Investor Relations / quarterly results 的最新季度資料。
 6. Revenue、EPS、Gross Margin 只能從官方 earnings release / quarterly results 的「Quarterly Financial Results」或等價正式表格抽取；不可使用新聞摘要、股價頁、分析文章、預估文或搜尋摘要中的二手數字作為 primary fact。
@@ -98,10 +98,11 @@ $@"你是金融研究代理，負責提供可供下游 agent 使用的最新金�
 11. 不要把歷史價格、目標價、預測價、不同 ticker、不同年度或不同季度混在一起。
 12. 只有在同一 ticker、同一 fact type、同一交易時段或同一財報欄位存在不可判斷的重大差異時，才列「資料衝突」。
 13. 若某個價格明顯像歷史價、目標價、錯誤映射、不同日期舊資料，請不要列入 primary facts，只能列入 ignored notes。
-14. 不要自己發明數字。
-15. 不要使用 GPT 內部知識補資料。
-16. 若找不到某欄位，該欄位寫「未取得」，不要整體回答資料不足。
-17. 請輸出乾淨、短而結構化的繁體中文結果，供後續 final synthesizer 使用。
+14. 若目前非盤前交易時段，Pre Market Price 可以寫「未取得 / 非盤前時段」；若資料源沒有真正即時價，Latest Tradable Price 寫「未取得」，不可用 regular close 假裝即時價。
+15. 不要自己發明數字。
+16. 不要使用 GPT 內部知識補資料。
+17. 若找不到某欄位，該欄位寫「未取得」，不要整體回答資料不足。
+18. 請輸出乾淨、短而結構化的繁體中文結果，供後續 final synthesizer 使用。
 
 官方財報抽取自我檢查：
 - MU / Micron：若最新官方資料是 FQ2-26，Revenue 應來自 total company Revenue row，不可使用 business unit revenue 或 FQ3 guidance 當作 FQ2 revenue。
@@ -113,6 +114,9 @@ $@"你是金融研究代理，負責提供可供下游 agent 使用的最新金�
 【Primary Facts】
 Ticker: 
 Company:
+Latest Tradable Price:
+Latest Tradable Time:
+Latest Tradable Session:
 Regular Close Price:
 Regular Close Time:
 After Hours Price:
@@ -130,6 +134,9 @@ Quote Source:
 
 Ticker:
 Company:
+Latest Tradable Price:
+Latest Tradable Time:
+Latest Tradable Session:
 Regular Close Price:
 Regular Close Time:
 After Hours Price:
@@ -259,16 +266,39 @@ Quote Source:
                 }
             }
 
+            var quoteFactRequests = BuildMissingQuoteFactRequests(facts, query ?? "");
+            if (quoteFactRequests.Count > 0)
+            {
+                string quoteRepairAnswer = await ExecuteFinanceQuoteRepairAsync(
+                    query ?? "",
+                    cleanedAnswer,
+                    quoteFactRequests,
+                    ct);
+
+                if (!string.IsNullOrWhiteSpace(quoteRepairAnswer))
+                {
+                    string cleanedQuoteRepair = CleanFinanceResearchAnswer(quoteRepairAnswer);
+                    var quoteFacts = BuildFinanceVerifiedFacts(query ?? "", cleanedQuoteRepair, now);
+
+                    facts = MergeFinanceFacts(facts, quoteFacts);
+                    combinedAnswer +=
+                        Environment.NewLine +
+                        "【Quote Repair Applied】" +
+                        Environment.NewLine +
+                        "缺失的報價欄位已用 quote-only repair pass 補查。";
+                }
+            }
+
             var searchPayload = new SearchSummaryPayload
             {
                 Query = query ?? "",
-                Summary = combinedAnswer,
+                Summary = BuildFinanceSearchContextSummary(facts),
                 Items = new List<SearchSummaryItem>
                 {
                     new SearchSummaryItem
                     {
                         Title = "Perplexity authoritative finance research",
-                        KeyPoint = combinedAnswer,
+                        KeyPoint = BuildFinanceSearchContextSummary(facts),
                         Source = "Perplexity Sonar",
                         Date = now
                     }
@@ -307,9 +337,16 @@ Quote Source:
                     ? ticker.Trim()
                     : $"{ticker.Trim()} ({company.Trim()})";
 
-                AddFinanceFact(facts, subject, "regular_close_price", ReadFinanceField(block, "Regular Close Price", "Regular Close", "Close Price"), "USD", ReadFinanceField(block, "Regular Close Time", "Close Time", "Price Time"), now);
-                AddFinanceFact(facts, subject, "after_hours_price", ReadFinanceField(block, "After Hours Price", "After-hours Price", "Afterhours Price"), "USD", ReadFinanceField(block, "After Hours Time", "After-hours Time", "Afterhours Time"), now);
-                AddFinanceFact(facts, subject, "pre_market_price", ReadFinanceField(block, "Pre Market Price", "Pre-market Price", "Premarket Price"), "USD", ReadFinanceField(block, "Pre Market Time", "Pre-market Time", "Premarket Time"), now);
+                string regularClosePrice = ReadFinanceField(block, "Regular Close Price", "Regular Close", "Close Price");
+                string regularCloseTime = ReadFinanceField(block, "Regular Close Time", "Close Time", "Price Time");
+                string afterHoursPrice = ReadFinanceField(block, "After Hours Price", "After-hours Price", "Afterhours Price");
+                string afterHoursTime = ReadFinanceField(block, "After Hours Time", "After-hours Time", "Afterhours Time");
+                string preMarketPrice = ReadFinanceField(block, "Pre Market Price", "Pre-market Price", "Premarket Price");
+                string preMarketTime = ReadFinanceField(block, "Pre Market Time", "Pre-market Time", "Premarket Time");
+
+                AddFinanceFact(facts, subject, "regular_close_price", regularClosePrice, "USD", regularCloseTime, now);
+                AddFinanceFact(facts, subject, "after_hours_price", afterHoursPrice, "USD", afterHoursTime, now);
+                AddFinanceFact(facts, subject, "pre_market_price", preMarketPrice, "USD", preMarketTime, now);
                 AddFinanceFact(facts, subject, "latest_fiscal_quarter", ReadFinanceField(block, "Latest Fiscal Quarter", "Fiscal Quarter", "Quarter"), "", now, now);
                 AddFinanceFact(facts, subject, "revenue", ReadFinanceField(block, "Revenue", "Revenue / Sales", "Net Sales"), "", now, now);
                 AddFinanceFact(facts, subject, "eps", ReadFinanceField(block, "EPS", "Earnings Per Share", "Non-GAAP EPS", "GAAP EPS"), "", now, now);
@@ -318,6 +355,7 @@ Quote Source:
                 AddFinanceFact(facts, subject, "key_market_drivers", ReadFinanceField(block, "Key Market Drivers", "Market Drivers", "Drivers"), "", now, now);
                 AddFinanceFact(facts, subject, "official_earnings_source", ReadFinanceField(block, "Official Earnings Source", "Earnings Source", "Official Source"), "", now, now);
                 AddFinanceFact(facts, subject, "quote_source", ReadFinanceField(block, "Quote Source", "Price Source"), "", now, now);
+                AddQuoteAvailabilityFact(facts, subject, regularClosePrice, afterHoursPrice, preMarketPrice, now);
             }
 
             if (facts.Count > 0)
@@ -334,7 +372,11 @@ Quote Source:
                     AsOf = now,
                     SourceTitle = "Perplexity Sonar",
                     SourceUrl = "",
-                    Confidence = "medium"
+                    Confidence = "medium",
+                    OwnerAgentId = FactOwnership.ResearchAgent,
+                    OwnerCapabilityId = FactOwnership.SearchCapability,
+                    AuthorityLevel = FactOwnership.AuthoritySearchContext,
+                    UsageRole = FactOwnership.UsageBackgroundContext
                 }
             };
         }
@@ -441,6 +483,108 @@ Official Earnings Source:
             return requests;
         }
 
+        private async Task<string> ExecuteFinanceQuoteRepairAsync(
+            string query,
+            string firstAnswer,
+            IReadOnlyList<string> missingQuotes,
+            CancellationToken ct)
+        {
+            if (missingQuotes == null || missingQuotes.Count == 0)
+                return "";
+
+            string tickers = string.Join(", ", DetectTickers(query));
+            string requestedQuotes = string.Join(Environment.NewLine, missingQuotes.Select(x => "- " + x));
+
+            string instructions =
+$@"你是美股報價校正代理。請只補查缺失的報價欄位，不要重新分析財報，不要輸出完整投資分析。
+
+使用者問題：
+{query}
+
+目標 ticker：
+{tickers}
+
+需要補查的報價欄位：
+{requestedQuotes}
+
+上一輪輸出：
+{firstAnswer}
+
+硬性規則：
+1. 優先使用 quote card、交易所、券商、Yahoo Finance、Nasdaq、MarketWatch、CNBC、Google Finance 類型資料。
+2. Regular Close Price 是最新正常交易時段收盤價。
+3. After Hours Price 是盤後價；若資料源沒有提供，寫「未取得」。
+4. Pre Market Price 是盤前價；若目前不是盤前時段或資料源沒有提供，寫「未取得 / 非盤前時段」。
+5. 不可把歷史價、目標價、52 週高低、不同 ticker、不同日期舊價當成最新報價。
+6. 不可把 regular close 假裝 after-hours、pre-market 或 realtime。
+7. 若找不到某欄位，只寫「未取得」，不要刪掉其它已取得欄位。
+
+請嚴格輸出以下格式：
+
+【Primary Facts】
+Ticker:
+Company:
+Regular Close Price:
+Regular Close Time:
+After Hours Price:
+After Hours Time:
+Pre Market Price:
+Pre Market Time:
+Quote Source:
+
+Ticker:
+Company:
+Regular Close Price:
+Regular Close Time:
+After Hours Price:
+After Hours Time:
+Pre Market Price:
+Pre Market Time:
+Quote Source:
+
+【Conflicts】
+若沒有，寫：無重大衝突。
+
+【Ignored / Low Confidence】
+若沒有，寫：無。";
+
+            return await _service.GenerateAgentAsync(
+                instructions: instructions,
+                userText: query,
+                enableWebSearch: true,
+                maxOutputTokens: 1800,
+                ct: ct);
+        }
+
+        private static IReadOnlyList<string> BuildMissingQuoteFactRequests(
+            IReadOnlyList<VerifiedFactItem> facts,
+            string query)
+        {
+            var requests = new List<string>();
+            var tickers = DetectTickers(query);
+
+            if (tickers.Count == 0)
+                return requests;
+
+            string[] quoteFactTypes =
+            {
+                "regular_close_price",
+                "after_hours_price",
+                "pre_market_price"
+            };
+
+            foreach (var ticker in tickers)
+            {
+                foreach (var factType in quoteFactTypes)
+                {
+                    if (!HasFinanceFact(facts, ticker, factType))
+                        requests.Add($"{ticker}: {factType}");
+                }
+            }
+
+            return requests;
+        }
+
         private static bool HasFinanceFact(
             IReadOnlyList<VerifiedFactItem> facts,
             string ticker,
@@ -521,14 +665,49 @@ Official Earnings Source:
             if (IsMissingFinanceValue(current.Value))
                 return true;
 
+            if (string.Equals(repaired.FactType, "quote_availability", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (IsOfficialFinanceMetric(repaired.FactType))
+                return true;
+
+            if (FactOwnership.CanOwnNumericFacts(current) &&
+                !FactOwnership.CanOwnNumericFacts(repaired))
+            {
+                return false;
+            }
+
+            if (!FactOwnership.CanOwnNumericFacts(current) &&
+                FactOwnership.CanOwnNumericFacts(repaired))
+            {
+                return true;
+            }
+
+            int repairedAuthority = FactOwnership.AuthorityRank(repaired.AuthorityLevel);
+            int currentAuthority = FactOwnership.AuthorityRank(current.AuthorityLevel);
+
+            if (repairedAuthority != currentAuthority)
+                return repairedAuthority > currentAuthority;
+
             bool repairedOfficial =
                 (repaired.SourceTitle ?? "").Contains("official", StringComparison.OrdinalIgnoreCase) ||
                 (repaired.SourceTitle ?? "").Contains("Perplexity Sonar finance research", StringComparison.OrdinalIgnoreCase);
 
             bool currentOfficial =
-                (current.SourceTitle ?? "").Contains("official", StringComparison.OrdinalIgnoreCase);
+                (current.SourceTitle ?? "").Contains("official", StringComparison.OrdinalIgnoreCase) ||
+                (current.SourceTitle ?? "").Contains("Perplexity Sonar finance research", StringComparison.OrdinalIgnoreCase);
 
             return repairedOfficial && !currentOfficial;
+        }
+
+        private static bool IsOfficialFinanceMetric(string factType)
+        {
+            return string.Equals(factType, "latest_fiscal_quarter", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(factType, "revenue", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(factType, "eps", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(factType, "gross_margin", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(factType, "guidance", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(factType, "official_earnings_source", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string NormalizeSubjectForMerge(string subject)
@@ -568,6 +747,26 @@ Official Earnings Source:
                 "金融研究已轉成結構化 verified_facts。regular_close_price、after_hours_price、pre_market_price 屬於不同交易時段，不可互相視為資料衝突。"
                 + Environment.NewLine
                 + $"Subjects: {string.Join(", ", subjects)}";
+        }
+
+        private static string BuildFinanceSearchContextSummary(
+            IReadOnlyList<VerifiedFactItem> facts)
+        {
+            var subjects = facts?
+                .Where(x => x != null)
+                .Select(x => x.Subject)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<string>();
+
+            string subjectText = subjects.Count == 0
+                ? "unknown subjects"
+                : string.Join(", ", subjects);
+
+            return
+                "Finance research produced structured verified_facts for " +
+                subjectText +
+                ". Numeric details are intentionally omitted from search_summary; downstream answers must use verified_facts for prices, dates, revenue, EPS, gross margin and guidance.";
         }
 
         private static IReadOnlyList<List<string>> ExtractPrimaryFactBlocks(string text)
@@ -724,8 +923,70 @@ Official Earnings Source:
                 AsOf = string.IsNullOrWhiteSpace(asOf) ? fallbackAsOf : asOf.Trim(),
                 SourceTitle = "Perplexity Sonar finance research",
                 SourceUrl = "",
-                Confidence = "high"
+                Confidence = "high",
+                OwnerAgentId = FactOwnership.ResearchAgent,
+                OwnerCapabilityId = FactOwnership.SearchCapability,
+                AuthorityLevel = ResolveFinanceAuthority(factType),
+                UsageRole = FactOwnership.ResolveFinanceUsageRole(factType)
             });
+        }
+
+        private static void AddQuoteAvailabilityFact(
+            List<VerifiedFactItem> facts,
+            string subject,
+            string regularClosePrice,
+            string afterHoursPrice,
+            string preMarketPrice,
+            string now)
+        {
+            if (facts == null || string.IsNullOrWhiteSpace(subject))
+                return;
+
+            string value =
+                "regular_close_price=" + AvailabilityLabel(regularClosePrice) +
+                "; after_hours_price=" + AvailabilityLabel(afterHoursPrice) +
+                "; pre_market_price=" + AvailabilityLabel(preMarketPrice) +
+                "; realtime_price=not_available";
+
+            facts.Add(new VerifiedFactItem
+            {
+                Subject = subject.Trim(),
+                FactType = "quote_availability",
+                Value = value,
+                Unit = "",
+                AsOf = now,
+                SourceTitle = "Perplexity Sonar finance research",
+                SourceUrl = "",
+                Confidence = "high",
+                OwnerAgentId = FactOwnership.ResearchAgent,
+                OwnerCapabilityId = FactOwnership.SearchCapability,
+                AuthorityLevel = FactOwnership.AuthorityMarketQuote,
+                UsageRole = FactOwnership.UsageBackgroundContext
+            });
+        }
+
+        private static string AvailabilityLabel(string value)
+        {
+            return IsMissingFinanceValue(value)
+                ? "not_available"
+                : "available";
+        }
+
+        private static string ResolveFinanceAuthority(string factType)
+        {
+            if (string.IsNullOrWhiteSpace(factType))
+                return FactOwnership.AuthoritySearchContext;
+
+            if (factType.Contains("price", StringComparison.OrdinalIgnoreCase) ||
+                factType.Contains("quote", StringComparison.OrdinalIgnoreCase))
+            {
+                return FactOwnership.AuthorityMarketQuote;
+            }
+
+            if (string.Equals(factType, "key_market_drivers", StringComparison.OrdinalIgnoreCase))
+                return FactOwnership.AuthoritySearchContext;
+
+            return FactOwnership.AuthorityOfficial;
         }
 
         private static bool IsMissingFinanceValue(string value)
@@ -781,7 +1042,11 @@ Official Earnings Source:
                     AsOf = item.Date ?? "",
                     SourceTitle = item.Title ?? "",
                     SourceUrl = item.Source ?? "",
-                    Confidence = "medium"
+                    Confidence = "medium",
+                    OwnerAgentId = FactOwnership.ResearchAgent,
+                    OwnerCapabilityId = FactOwnership.SearchCapability,
+                    AuthorityLevel = FactOwnership.AuthoritySearchContext,
+                    UsageRole = FactOwnership.UsageBackgroundContext
                 });
             }
 

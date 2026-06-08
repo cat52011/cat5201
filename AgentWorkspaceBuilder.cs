@@ -19,11 +19,105 @@ namespace test
                 NodeId = node?.Id.ToString() ?? "",
                 SourceAgentId = agentId ?? "",
                 ItemType = key,
+                ArtifactKind = ResolveArtifactKind(key, value),
+                ContentFormat = ResolveContentFormat(key, value),
+                IsUserVisible = ResolveUserVisible(key, value),
                 Title = BuildTitle(key, value),
                 Payload = value,
                 TextSummary = BuildTextSummary(value),
                 CreatedAtUtc = DateTime.UtcNow
             };
+        }
+
+        private static string ResolveArtifactKind(string key, object value)
+        {
+            key ??= "";
+
+            if (value is VerifiedFactPayload)
+                return "facts";
+
+            if (value is SearchSummaryPayload)
+                return "search";
+
+            if (value is CodeAnalysisPayload)
+                return "code";
+
+            if (value is ReasoningPayload ||
+                value is TaskDecompositionPayload ||
+                value is DelegateOutputPayload)
+            {
+                return "analysis";
+            }
+
+            if (value is FinalSynthesisPayload)
+                return "final";
+
+            if (key.Contains("patch", StringComparison.OrdinalIgnoreCase))
+                return "patch";
+
+            if (key.Contains("diff", StringComparison.OrdinalIgnoreCase))
+                return "diff";
+
+            if (key.Contains("image", StringComparison.OrdinalIgnoreCase))
+                return "media";
+
+            if (key.Contains("video", StringComparison.OrdinalIgnoreCase))
+                return "media";
+
+            if (key.Contains("sandbox", StringComparison.OrdinalIgnoreCase))
+                return "sandbox";
+
+            if (value is FileSummaryPayload)
+                return "file";
+
+            return "artifact";
+        }
+
+        private static string ResolveContentFormat(string key, object value)
+        {
+            key ??= "";
+
+            if (key.Contains("image", StringComparison.OrdinalIgnoreCase))
+                return "image";
+
+            if (key.Contains("video", StringComparison.OrdinalIgnoreCase))
+                return "video";
+
+            if (key.Contains("patch", StringComparison.OrdinalIgnoreCase))
+                return "patch";
+
+            if (key.Contains("diff", StringComparison.OrdinalIgnoreCase))
+                return "diff";
+
+            if (value is CodeAnalysisPayload)
+                return "code";
+
+            if (value is VerifiedFactPayload ||
+                value is SearchSummaryPayload ||
+                value is FileSummaryPayload ||
+                value is ReasoningPayload ||
+                value is TaskDecompositionPayload ||
+                value is FinalSynthesisPayload ||
+                value is DelegateOutputPayload)
+            {
+                return "markdown";
+            }
+
+            return "text";
+        }
+
+        private static bool ResolveUserVisible(string key, object value)
+        {
+            key ??= "";
+
+            if (value is DelegateOutputPayload ||
+                string.Equals(key, "parallel_agent_output", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "delegate_output", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private static string BuildTitle(string key, object value)

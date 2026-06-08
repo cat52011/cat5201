@@ -101,7 +101,7 @@ namespace test
         private static string BuildOutputGuidance(string text)
         {
             return
-                "回答時請使用『已知資料』、『合理推論』、『風險 / 不確定性』三段式結構。" +
+                "回答時必須清楚區分事實資料與合理推論；若 final synthesizer 已指定格式，必須服從 final synthesizer 格式。" +
                 "不得輸出內部標記，不得輸出 citation marker，例如 [1][2][3]。";
         }
 

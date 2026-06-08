@@ -598,6 +598,13 @@ namespace test
                     decision,
                     request.CancellationToken);
 
+                if (synthesisExecution != null)
+                {
+                    synthesisExecution = FinalAnswerSanitizer.Sanitize(
+                        synthesisExecution,
+                        enforceSynthesisFormat: true);
+                }
+
                 if (synthesisExecution != null && synthesisExecution.IsSuccess)
                 {
                     workspace.Add(
@@ -619,6 +626,13 @@ namespace test
             // 4. merge
             string capabilityDataBlock = BuildCapabilityDataBlock(capabilityData);
             string workspaceBlock = workspace.BuildPromptBlock();
+            bool hasVerifiedFacts =
+                capabilityData.ContainsKey("verified_facts") ||
+                workspace.GetByType("verified_facts").Count > 0;
+
+            bool enforceFinalSynthesisFormat =
+                hasVerifiedFacts ||
+                !string.IsNullOrWhiteSpace(workspaceBlock);
 
             string finalInput = capabilityAugmentedText;
 
@@ -633,12 +647,15 @@ namespace test
                 if (!string.IsNullOrWhiteSpace(capabilityDataBlock))
                     parts.Add(capabilityDataBlock);
 
+                if (enforceFinalSynthesisFormat)
+                    parts.Add(BuildFinalOutputFormatBlock());
+
                 parts.Add("【目前任務】\n" + capabilityAugmentedText);
 
                 finalInput = string.Join("\n\n", parts);
             }
 
-            if (!string.IsNullOrWhiteSpace(delegatedContext))
+            if (!string.IsNullOrWhiteSpace(delegatedContext) && !hasVerifiedFacts)
             {
                 var parts = new List<string>();
 
@@ -647,6 +664,9 @@ namespace test
 
                 if (!string.IsNullOrWhiteSpace(capabilityDataBlock))
                     parts.Add(capabilityDataBlock);
+
+                if (enforceFinalSynthesisFormat)
+                    parts.Add(BuildFinalOutputFormatBlock());
 
                 parts.Add(
                     "以下是其他代理提供的補充資訊：\n" +
@@ -657,13 +677,31 @@ namespace test
                 finalInput =
                     string.Join("\n\n", parts);
             }
+            else if (!string.IsNullOrWhiteSpace(delegatedContext) && hasVerifiedFacts)
+            {
+                var parts = new List<string>();
+
+                if (!string.IsNullOrWhiteSpace(workspaceBlock))
+                    parts.Add(workspaceBlock);
+
+                if (!string.IsNullOrWhiteSpace(capabilityDataBlock))
+                    parts.Add(capabilityDataBlock);
+
+                parts.Add(BuildFinalOutputFormatBlock());
+                parts.Add("【Delegated Analysis Omitted】\nDelegated/parallel agent text was omitted because structured verified_facts exist. Use delegated analysis only as internal reasoning, not as a source for numeric facts.");
+                parts.Add("【目前任務】\n" + capabilityAugmentedText);
+
+                finalInput = string.Join("\n\n", parts);
+            }
 
             // 5. execution
             AiFallbackExecutionResult execution;
 
             if (synthesisExecution != null && synthesisExecution.IsSuccess)
             {
-                execution = synthesisExecution;
+                execution = FinalAnswerSanitizer.Sanitize(
+                    synthesisExecution,
+                    enforceSynthesisFormat: true);
 
                 if (request.UseStreaming && request.OnDelta != null &&
                     !string.IsNullOrWhiteSpace(execution.Text))
@@ -680,6 +718,10 @@ namespace test
                     request.OnDelta,
                     request.UseStreaming,
                     request.CancellationToken);
+
+                execution = FinalAnswerSanitizer.Sanitize(
+                    execution,
+                    enforceSynthesisFormat: enforceFinalSynthesisFormat);
             }
 
             // 6. finalize
@@ -743,19 +785,25 @@ namespace test
 1. 如果 Shared Workspace 中有【Verified Facts】，必須優先使用它作為價格、日期、財報、EPS、營收、毛利率、指引等事實來源。
 2. 如果沒有【Verified Facts】，但有【Search Context】或 research-agent 的 search_summary，才可使用 search_summary 作為事實來源。
 3. 只有在 Shared Workspace 完全沒有 Verified Facts、Search Context、search_summary 時，才可以回答資料不足。
-4. Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整理，不可新增或覆蓋任何事實數字。
-5. 若同一項資料有多個來源數字：
+4. Fact ownership 是硬規則：
+   - UsageRole=numeric_fact_source 才能作為價格、日期、財報、EPS、營收、毛利率、指引等數字來源。
+   - UsageRole=background_context 只能作為背景，不可覆蓋 numeric_fact_source。
+   - UsageRole=analysis_only、Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整理，不可新增或覆蓋任何事實數字。
+   - OwnerAgent=research-agent 且 OwnerCapability=search-capability 的 numeric facts 是事實擁有者。
+5. Authority ranking 是採用順序：official > market_quote > trusted_news > search_context > model_generated。若同一 numeric fact 有衝突，採用 AuthorityRank 較高者；低權威來源只能作為補充或列入資料衝突。
+6. Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整理，不可新增或覆蓋任何事實數字。
+7. 若同一項資料有多個來源數字：
    - regular close、after-hours、pre-market 屬於不同交易時段，不可互相視為資料衝突；請分開標示。
    - 若 verified_facts 來自 official earnings / official facts repair，且 Search Context 或舊搜尋摘要有不同數字，應以 verified_facts 為準，不要把被 repair 取代的舊數字列為資料衝突。
    - 若數字接近，請合併成簡短區間或代表值。
    - 若數字明顯衝突，請列在「資料衝突」中。
    - 不要把所有來源逐條原封不動列出。
-6. 若某個 ticker 只有部分欄位缺失，只能標示該欄位缺失；不可因此整體回答「財報核心數字不足」或「資料不足」。
-7. 不要使用「資料批次」「較強的那組資料」「若採用某組資料」這類內部研究口徑；請直接使用最高權威 verified_facts。
-8. 不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
-9. 不可輸出 citation marker，例如 [1][2][3]。
-10. 不要寫成研究紀錄，不要把 workspace 全部倒出來。請輸出給一般使用者看的精簡結論。
-11. 使用繁體中文。
+8. 若某個 ticker 只有部分欄位缺失，只能標示該欄位缺失；不可因此整體回答「財報核心數字不足」或「資料不足」。
+9. 不要使用「資料批次」「較強的那組資料」「若採用某組資料」這類內部研究口徑；請直接使用最高權威 verified_facts。
+10. 不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
+11. 不可輸出 citation marker，例如 [1][2][3]。
+12. 不要寫成研究紀錄，不要把 workspace 全部倒出來。請輸出給一般使用者看的精簡結論。
+13. 使用繁體中文。
 
 【輸出格式】
 請嚴格使用以下格式：
@@ -812,6 +860,8 @@ namespace test
             sb.AppendLine("以下內容來自系統工具/能力層的真實輸出，屬高優先參考。");
             sb.AppendLine("回答時請優先使用這些資料，不要忽略，也不要憑空改寫來源。");
 
+            bool hasVerifiedFacts = capabilityData.ContainsKey("verified_facts");
+
             foreach (var kv in capabilityData)
             {
                 if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null)
@@ -819,6 +869,14 @@ namespace test
 
                 if (string.Equals(kv.Key, "search_summary", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (hasVerifiedFacts)
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine("【Search Summary Omitted】");
+                        sb.AppendLine("Structured verified_facts are present. Search summary text is intentionally omitted so older or lower-authority numeric snippets cannot override verified facts.");
+                        continue;
+                    }
+
                     AppendSearchSummary(sb, kv.Value);
                     continue;
                 }
@@ -907,7 +965,42 @@ namespace test
 
                 if (!string.IsNullOrWhiteSpace(fact.Confidence))
                     sb.AppendLine($"  Confidence: {fact.Confidence}");
+
+                if (!string.IsNullOrWhiteSpace(fact.OwnerAgentId))
+                    sb.AppendLine($"  OwnerAgent: {fact.OwnerAgentId}");
+
+                if (!string.IsNullOrWhiteSpace(fact.OwnerCapabilityId))
+                    sb.AppendLine($"  OwnerCapability: {fact.OwnerCapabilityId}");
+
+                if (!string.IsNullOrWhiteSpace(fact.AuthorityLevel))
+                    sb.AppendLine($"  Authority: {fact.AuthorityLevel} (rank {FactOwnership.AuthorityRank(fact.AuthorityLevel)})");
+
+                if (!string.IsNullOrWhiteSpace(fact.UsageRole))
+                    sb.AppendLine($"  UsageRole: {fact.UsageRole}");
             }
+        }
+
+        private static string BuildFinalOutputFormatBlock()
+        {
+            return
+@"【Final Output Format - Required】
+請使用以下五段標題，且不可省略標題：
+
+結論
+- 2～4 點直接回答。
+
+關鍵資料
+- 對每個 ticker 標清楚資料類型：收盤價、盤後價、盤前價、即時價、財報、指引。
+- 若某種報價未取得，請寫「盤前價：未取得」或「即時價：未取得」，不要把收盤價當即時價。
+
+短期走勢判斷
+- 明確區分 verified facts 與合理推論。
+
+資料衝突 / 缺失
+- 只列真正衝突或缺失。不同交易時段的收盤價、盤後價、盤前價不是衝突。
+
+總結一句話
+- 用一句話收束。";
         }
         private static void AppendReasoningAnalysis(StringBuilder sb, object value)
         {

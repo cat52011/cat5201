@@ -97,7 +97,7 @@ $@"你正在一個節點式筆記檔案中工作。
 17. 若目前節點內容包含【Code Analysis】，請優先依據該結構化分析完成程式任務；不要捏造不存在的檔案、類別或方法。
 18. 若目前節點內容包含【Task Plan】，請依照該任務拆解順序整合資料並回答；但不可直接輸出【Task Plan】、step type、Required Input、Output 等內部標記。
 19. 若目前節點內容包含【Reasoning Analysis】，請依據該推論策略完成分析、比較或預測；但不可直接輸出【Reasoning Analysis】或其內部欄位名稱。
-20. 若任務包含預測，請明確分成「已知資料」「合理推論」「風險 / 不確定性」。
+20. 若任務包含預測，請清楚區分事實資料、合理推論與不確定性；若上層 final synthesizer 已指定輸出格式，必須服從該格式。
 21. 不可輸出任何 citation marker 或來源索引，例如 [1]、[2]、[3]。
 22. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。
 23. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
@@ -163,7 +163,7 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 15. 若目前節點內容包含【Code Analysis】，請優先依據該結構化分析完成程式任務；不要捏造不存在的檔案、類別或方法。
 16. 若目前節點內容包含【Task Plan】，請依照該任務拆解順序整合資料並回答；但不可直接輸出【Task Plan】、step type、Required Input、Output 等內部標記。
 17. 若目前節點內容包含【Reasoning Analysis】，請依據該推論策略完成分析、比較或預測；但不可直接輸出【Reasoning Analysis】或其內部欄位名稱。
-18. 若任務包含預測，請明確分成「已知資料」「合理推論」「風險 / 不確定性」。
+18. 若任務包含預測，請清楚區分事實資料、合理推論與不確定性；若上層 final synthesizer 已指定輸出格式，必須服從該格式。
 19. 不可輸出任何 citation marker 或來源索引，例如 [1]、[2]、[3]。
 20. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。
 21. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
@@ -230,7 +230,7 @@ $@"你正在處理一個節點式研究任務。
 16. 若目前節點內容包含【Code Analysis】，請優先依據該結構化分析完成程式任務；不要捏造不存在的檔案、類別或方法。
 17. 若目前節點內容包含【Task Plan】，請依照該任務拆解順序整合資料並回答；但不可直接輸出【Task Plan】、step type、Required Input、Output 等內部標記。
 18. 若目前節點內容包含【Reasoning Analysis】，請依據該推論策略完成分析、比較或預測；但不可直接輸出【Reasoning Analysis】或其內部欄位名稱。
-19. 若任務包含預測，請明確分成「已知資料」「合理推論」「風險 / 不確定性」。
+19. 若任務包含預測，請清楚區分事實資料、合理推論與不確定性；若上層 final synthesizer 已指定輸出格式，必須服從該格式。
 20. 不可輸出任何 citation marker 或來源索引，例如 [1]、[2]、[3]。
 21. 不可輸出任何系統內部區塊名稱或 metadata，例如【Task Plan】、【Search Summary】、【File Summary】、【Code Analysis】、【Reasoning Analysis】。
 22. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";

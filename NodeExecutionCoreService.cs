@@ -46,7 +46,9 @@ namespace test
     NodeTaskMode taskMode,
     CancellationToken ct)
         {
-            var memory = _memoryService.RecallRelevant(currentNode, agentId, topText, taskMode);
+            var memory = ShouldSuppressMemoryForFreshFinance(topText, taskMode)
+                ? new MemoryQueryResult()
+                : _memoryService.RecallRelevant(currentNode, agentId, topText, taskMode);
             string prompt = _promptBuilder.BuildPrompt(new NodePromptBuildRequest
             {
                 CurrentNode = currentNode,
@@ -76,7 +78,9 @@ namespace test
      Action<string> onDelta,
      CancellationToken ct)
         {
-            var memory = _memoryService.RecallRelevant(currentNode, agentId, topText, taskMode);
+            var memory = ShouldSuppressMemoryForFreshFinance(topText, taskMode)
+                ? new MemoryQueryResult()
+                : _memoryService.RecallRelevant(currentNode, agentId, topText, taskMode);
             string prompt = _promptBuilder.BuildPrompt(new NodePromptBuildRequest
             {
                 CurrentNode = currentNode,
@@ -156,6 +160,39 @@ namespace test
             }
 
             return _textProcessing.RemoveRepeatedBlocks(finalText.ToString().Trim());
+        }
+
+        private static bool ShouldSuppressMemoryForFreshFinance(string text, NodeTaskMode taskMode)
+        {
+            if (taskMode == NodeTaskMode.Translate ||
+                taskMode == NodeTaskMode.Rewrite ||
+                taskMode == NodeTaskMode.Summarize)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return ContainsAny(
+                text,
+                "股價", "財報", "營收", "毛利率", "EPS", "盤前", "盤後", "收盤", "即時價",
+                "TSM", "MU", "NVDA", "AMD", "TSLA", "AAPL", "MSFT",
+                "stock", "quote", "earnings", "revenue", "guidance", "after-hours", "pre-market");
+        }
+
+        private static bool ContainsAny(string text, params string[] keywords)
+        {
+            foreach (var keyword in keywords)
+            {
+                if (!string.IsNullOrWhiteSpace(keyword) &&
+                    text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private async Task<string> GenerateWithContinuationStreamingAsync(
