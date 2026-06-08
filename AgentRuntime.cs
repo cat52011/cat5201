@@ -709,14 +709,13 @@ namespace test
             };
 
             string workspaceBlock = workspace?.BuildPromptBlock() ?? "";
-            System.Diagnostics.Debug.WriteLine(
-    $"[Workspace] Count={workspace.GetAll().Count}");
 
+            System.Diagnostics.Debug.WriteLine($"[Workspace] Count={workspace.GetAll().Count}");
             System.Diagnostics.Debug.WriteLine(
                 $"[Workspace Preview]\n{workspaceBlock.Substring(0, Math.Min(1000, workspaceBlock.Length))}");
 
             string synthesisInput =
-        $@"你是 final synthesizer。你的任務是根據 shared workspace 統整最終答案。
+        $@"你是 final synthesizer。你的任務是把 shared workspace 整理成使用者真正需要看的最終答案。
 
 【使用者原始任務】
 {originalInput}
@@ -725,28 +724,52 @@ namespace test
 {workspaceBlock}
 
 【最高優先規則】
-1. 如果 Shared Workspace 中有【Verified Facts】，必須優先使用它作為事實來源。
-2. 如果【Verified Facts】裡的 Value 是一整段 Perplexity / research-agent 研究答案，請直接把它視為權威研究內容，不要因為它不是表格化數字就說資料不足。
-3. 如果沒有【Verified Facts】，但有【Search Context】或 research-agent 的 search_summary，必須把 research-agent 的 search_summary 作為事實來源。
-4. 只有在 Shared Workspace 完全沒有 Verified Facts、Search Context、search_summary 時，才可以回答資料不足。
-5. Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整合，不可新增或覆蓋事實數字。
-6. 若不同來源出現衝突數字，請分開列出並說明資料衝突，不要混成單一結論。
-7. 不可輸出任何內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
-8. 不可輸出 citation marker，例如 [1][2][3]。
-9. 最終答案請使用繁體中文，並使用以下結構：
+1. 如果 Shared Workspace 中有【Verified Facts】，必須優先使用它作為價格、日期、財報、EPS、營收、毛利率、指引等事實來源。
+2. 如果沒有【Verified Facts】，但有【Search Context】或 research-agent 的 search_summary，才可使用 search_summary 作為事實來源。
+3. 只有在 Shared Workspace 完全沒有 Verified Facts、Search Context、search_summary 時，才可以回答資料不足。
+4. Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整理，不可新增或覆蓋任何事實數字。
+5. 若同一項資料有多個來源數字：
+   - 若數字接近，請合併成簡短區間或代表值。
+   - 若數字明顯衝突，請列在「資料衝突」中。
+   - 不要把所有來源逐條原封不動列出。
+6. 不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
+7. 不可輸出 citation marker，例如 [1][2][3]。
+8. 不要寫成研究紀錄，不要把 workspace 全部倒出來。請輸出給一般使用者看的精簡結論。
+9. 使用繁體中文。
 
-已知資料
-- 整理 TSM 與 MU 的最新股價、財報、營收、EPS、毛利率、指引或其他 workspace 中已提供的資訊。
-- 如果某一項資料缺失，只標示該項資料不足，不要把全部任務判定為資料不足。
+【輸出格式】
+請嚴格使用以下格式：
 
-合理推論
-- 根據已知資料分析短期走勢。
-- 區分 TSM 與 MU。
-- 不要把推論寫成保證。
+結論
+- 用 2～4 點直接回答。
+- 先說 TSM 與 MU 各自短期判斷。
+- 若兩者相比，直接說哪個較穩、哪個彈性較大、哪個風險較高。
 
-風險 / 不確定性
-- 說明短期股價可能受哪些因素影響。
-- 若資料來源衝突，明確說明。
+關鍵資料
+- TSM：只列最重要的股價、財報或市場資料。最多 5 點。
+- MU：只列最重要的股價、財報或市場資料。最多 5 點。
+- 如果資料來源衝突，不要在這裡展開；只簡短標示「報價來源有衝突，詳見資料衝突」。
+
+短期走勢判斷
+- 分開寫 TSM 與 MU。
+- 每檔最多 1 段。
+- 必須清楚區分「已知資料」與「合理推論」。
+- 不要保證漲跌。
+
+資料衝突 / 缺失
+- 只列真正影響判斷的衝突或缺失。
+- 若沒有重大衝突，就寫「目前沒有影響主要判斷的重大缺口」。
+- 不要把所有來源重複列一遍。
+
+總結一句話
+- 用一句話收束。
+
+【風格限制】
+- 不要長篇列點。
+- 不要重複同一個觀點。
+- 不要把每個來源都展開。
+- 不要用「已知資料 / 合理推論 / 風險」這三段舊格式。
+- 最終答案長度控制在一般回答可讀範圍內。
 
 請現在輸出最終答案：";
 

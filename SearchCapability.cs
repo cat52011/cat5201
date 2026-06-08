@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,49 +51,103 @@ namespace test
         {
             string originalQuery = context.TopText ?? "";
 
-            bool forceFinanceResearch =
+            bool financeQuery =
                 IsStockFinanceQuery(originalQuery) ||
                 DetectTickers(originalQuery).Count > 0;
 
-            if (forceFinanceResearch)
+            if (financeQuery)
             {
-                string answer = await _service.GenerateAgentAsync(
-                    instructions:
-            @"你是金融研究代理。
-
-請使用最新網路資料回答。
-
-規則：
-
-1. 若使用者問股價：
-必須回答：
-Ticker / 最新價格 / 交易時間
-
-2. 若問財報：
-必須回答：
-營收 / EPS / 毛利率 / 指引
-
-3. 若來源衝突：
-分開列出，不要自己合併
-
-4. 禁止回答『資料不足』，除非真的完全查不到。",
-                    userText: originalQuery,
-                    enableWebSearch: true,
-                    maxOutputTokens: 4000,
-                    ct: ct);
-
-                if (!string.IsNullOrWhiteSpace(answer))
-                {
-                    return BuildAuthoritativeFinanceResult(
-                        originalQuery,
-                        answer);
-                }
+                return await ExecuteAuthoritativeFinanceResearchAsync(
+                    originalQuery,
+                    ct);
             }
+
+            return await ExecuteGeneralSearchAsync(
+                originalQuery,
+                ct);
+        }
+
+        private async Task<AgentCapabilityResult> ExecuteAuthoritativeFinanceResearchAsync(
+            string originalQuery,
+            CancellationToken ct)
+        {
+            string tickers = string.Join(", ", DetectTickers(originalQuery));
+
+            string instructions =
+$@"你是金融研究代理，負責提供可供下游 agent 使用的最新金融事實。
+
+你必須使用 Perplexity / web search 的最新資料。
+
+目前使用者問題：
+{originalQuery}
+
+若有股票代號，目標股票代號為：
+{tickers}
+
+核心規則：
+1. 對於「最新股價」，請優先使用 Perplexity 搜尋結果中最像即時報價卡、金融資料卡、交易所/券商即時報價、Yahoo Finance、Nasdaq、MarketWatch、CNBC、Google Finance 類型的最新資料。
+2. 每個 ticker 只輸出一個 primary latest price。
+3. 不要把不同網站的舊收盤價、盤前價、盤後價、歷史價格、目標價、預測價全部混在一起。
+4. 只有在你確定同一個 ticker 的最新價格來源真的互相衝突，而且無法判斷哪一個較新或較可靠時，才列「資料衝突」。
+5. 若某個價格明顯像歷史價、目標價、錯誤映射、不同日期舊資料，請不要列入 primary facts，只能列入 ignored notes。
+6. 財報資料請使用最新一季或最新公司指引；不要混用不同年度或不同季度。
+7. 不要自己發明數字。
+8. 不要使用 GPT 內部知識補資料。
+9. 若找不到某欄位，該欄位寫「未取得」，不要整體回答資料不足。
+10. 請輸出乾淨、短而結構化的繁體中文結果，供後續 final synthesizer 使用。
+
+請嚴格使用以下格式：
+
+【Primary Facts】
+Ticker: 
+Company:
+Latest Price:
+Price Time:
+Market Session:
+Revenue:
+EPS:
+Gross Margin:
+Guidance:
+Key Market Drivers:
+
+【Conflicts】
+只列真正不可判斷的重大衝突。若沒有，寫：無重大衝突。
+
+【Ignored / Low Confidence】
+列出你排除不用的舊資料、疑似錯誤資料、歷史價格、目標價或來源不明數字。若沒有，寫：無。
+
+【Research Summary】
+用 5～8 點整理市場、財報、短期走勢相關重點。";
+
+            string answer = await _service.GenerateAgentAsync(
+                instructions: instructions,
+                userText: originalQuery,
+                enableWebSearch: true,
+                maxOutputTokens: 3000,
+                ct: ct);
+
+            if (string.IsNullOrWhiteSpace(answer))
+            {
+                return AgentCapabilityResult.DirectHandle(
+                    "search-capability required authoritative finance research, but Perplexity returned empty result.");
+            }
+
+            return BuildAuthoritativeFinanceResult(
+                originalQuery,
+                answer); return BuildAuthoritativeFinanceResult(
+                originalQuery,
+                answer);
+        }
+
+        private async Task<AgentCapabilityResult> ExecuteGeneralSearchAsync(
+            string originalQuery,
+            CancellationToken ct)
+        {
             string searchQuery = BuildSearchQuery(originalQuery);
 
             var results = await _service.SearchAsync(
                 searchQuery,
-                maxResults: IsStockFinanceQuery(originalQuery) ? 10 : 5,
+                maxResults: 5,
                 ct: ct);
 
             if (results == null || results.Count == 0)
@@ -118,9 +171,6 @@ Ticker / 最新價格 / 交易時間
                     Date = x.Date ?? ""
                 })
                 .ToList();
-
-            if (IsStockFinanceQuery(originalQuery))
-                items = NormalizeFinanceItems(originalQuery, items);
 
             string summary = BuildSummary(originalQuery, items);
 
@@ -146,16 +196,18 @@ Ticker / 最新價格 / 交易時間
         {
             string now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
 
+            string cleanedAnswer = CleanFinanceResearchAnswer(answer);
+
             var searchPayload = new SearchSummaryPayload
             {
                 Query = query ?? "",
-                Summary = answer ?? "",
+                Summary = cleanedAnswer,
                 Items = new List<SearchSummaryItem>
                 {
                     new SearchSummaryItem
                     {
                         Title = "Perplexity authoritative finance research",
-                        KeyPoint = answer ?? "",
+                        KeyPoint = cleanedAnswer,
                         Source = "Perplexity Sonar",
                         Date = now
                     }
@@ -165,14 +217,14 @@ Ticker / 最新價格 / 交易時間
             var verifiedPayload = new VerifiedFactPayload
             {
                 Query = query ?? "",
-                Summary = answer ?? "",
+                Summary = cleanedAnswer,
                 Facts = new List<VerifiedFactItem>
                 {
                     new VerifiedFactItem
                     {
                         Subject = BuildVerifiedSubject(query),
                         FactType = "authoritative_finance_research",
-                        Value = answer ?? "",
+                        Value = cleanedAnswer,
                         Unit = "",
                         AsOf = now,
                         SourceTitle = "Perplexity Sonar",
@@ -184,169 +236,8 @@ Ticker / 最新價格 / 交易時間
 
             var result = AgentCapabilityResult.WithData("verified_facts", verifiedPayload);
             result.Data["search_summary"] = searchPayload;
+
             return result;
-        }
-
-        private async Task<string> TryGenerateAuthoritativeResearchAsync(
-            string query,
-            CancellationToken ct)
-        {
-            string instructions =
-@"你是金融資料研究代理。
-請查詢最新可得資料，回答使用者要求。
-若是股價，請明確列出 ticker、價格、交易時間或資料時間。
-若是財報，請列出營收、EPS、毛利率、指引等可查證數據。
-不要混用舊資料；若資料來源衝突，請明確分開說明。
-請使用繁體中文，輸出乾淨可供後續模型整合的研究結果。";
-
-            string prompt =
-$@"使用者問題：
-{query}
-
-請輸出：
-1. 最新股價 / 報價時間
-2. 最新財報重點
-3. 可查證的市場資訊
-4. 若資料衝突，請明確列出衝突，不要自行合併。";
-
-            string answer = await TryInvokeStringAsync(
-                "GenerateAgentAsync",
-                instructions,
-                prompt,
-                ct);
-
-            if (!string.IsNullOrWhiteSpace(answer))
-                return answer.Trim();
-
-            answer = await TryInvokeStringAsync(
-                "GenerateAsync",
-                instructions,
-                prompt,
-                ct);
-
-            if (!string.IsNullOrWhiteSpace(answer))
-                return answer.Trim();
-
-            return "";
-        }
-
-        private async Task<string> TryInvokeStringAsync(
-            string methodName,
-            string instructions,
-            string prompt,
-            CancellationToken ct)
-        {
-            try
-            {
-                var methods = _service
-                    .GetType()
-                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(x => string.Equals(x.Name, methodName, StringComparison.Ordinal))
-                    .ToList();
-
-                foreach (var method in methods)
-                {
-                    var parameters = method.GetParameters();
-
-                    object?[]? args = TryBuildArguments(
-                        parameters,
-                        instructions,
-                        prompt,
-                        ct);
-
-                    if (args == null)
-                        continue;
-
-                    object? raw = method.Invoke(_service, args);
-
-                    if (raw is Task<string> taskString)
-                        return await taskString.ConfigureAwait(false);
-
-                    if (raw is Task task)
-                    {
-                        await task.ConfigureAwait(false);
-
-                        var resultProp = task.GetType().GetProperty("Result");
-                        var value = resultProp?.GetValue(task);
-                        return value?.ToString() ?? "";
-                    }
-
-                    return raw?.ToString() ?? "";
-                }
-            }
-            catch
-            {
-                return "";
-            }
-
-            return "";
-        }
-
-        private static object?[]? TryBuildArguments(
-            ParameterInfo[] parameters,
-            string instructions,
-            string prompt,
-            CancellationToken ct)
-        {
-            var args = new object?[parameters.Length];
-
-            for (int i = 0; i < parameters.Length; i++)
-            {
-                var p = parameters[i];
-                string name = p.Name ?? "";
-
-                if (p.ParameterType == typeof(string))
-                {
-                    if (name.Contains("instruction", StringComparison.OrdinalIgnoreCase) ||
-                        name.Contains("system", StringComparison.OrdinalIgnoreCase))
-                    {
-                        args[i] = instructions;
-                    }
-                    else
-                    {
-                        args[i] = prompt;
-                    }
-
-                    continue;
-                }
-
-                if (p.ParameterType == typeof(bool))
-                {
-                    if (name.Contains("web", StringComparison.OrdinalIgnoreCase) ||
-                        name.Contains("search", StringComparison.OrdinalIgnoreCase))
-                    {
-                        args[i] = true;
-                    }
-                    else
-                    {
-                        args[i] = false;
-                    }
-
-                    continue;
-                }
-
-                if (p.ParameterType == typeof(int))
-                {
-                    args[i] = 4000;
-                    continue;
-                }
-
-                if (p.ParameterType == typeof(CancellationToken))
-                {
-                    args[i] = ct;
-                    continue;
-                }
-
-                if (p.HasDefaultValue)
-                {
-                    args[i] = p.DefaultValue;
-                    continue;
-                }
-
-                return null;
-            }
-
-            return args;
         }
 
         private static VerifiedFactPayload BuildVerifiedFacts(
@@ -365,10 +256,8 @@ $@"使用者問題：
                 };
             }
 
-            bool finance = IsStockFinanceQuery(query);
-
             var topItems = items
-                .Take(finance ? 3 : 5)
+                .Take(5)
                 .ToList();
 
             foreach (var item in topItems)
@@ -386,13 +275,13 @@ $@"使用者問題：
                 facts.Add(new VerifiedFactItem
                 {
                     Subject = subject,
-                    FactType = finance ? "finance_quote_context" : "general",
+                    FactType = "general_search_context",
                     Value = item.KeyPoint ?? "",
                     Unit = "",
                     AsOf = item.Date ?? "",
                     SourceTitle = item.Title ?? "",
                     SourceUrl = item.Source ?? "",
-                    Confidence = finance ? "medium" : "high"
+                    Confidence = "medium"
                 });
             }
 
@@ -477,17 +366,7 @@ $@"使用者問題：
             if (string.IsNullOrWhiteSpace(query))
                 return "";
 
-            if (!IsStockFinanceQuery(query))
-                return query;
-
-            var tickers = DetectTickers(query);
-            if (tickers.Count == 0)
-                return query;
-
-            string tickerPart = string.Join(" ", tickers);
-
-            return
-                $"{tickerPart} latest stock price current quote latest earnings revenue EPS gross margin guidance short term outlook";
+            return query;
         }
 
         private static bool IsStockFinanceQuery(string text)
@@ -539,82 +418,6 @@ $@"使用者問題：
             }
         }
 
-        private static List<SearchSummaryItem> NormalizeFinanceItems(
-            string query,
-            List<SearchSummaryItem> items)
-        {
-            if (items == null || items.Count == 0)
-                return items ?? new List<SearchSummaryItem>();
-
-            var tickers = DetectTickers(query);
-
-            var scored = items
-                .Select(x => new
-                {
-                    Item = x,
-                    Score = ScoreFinanceItem(x, tickers)
-                })
-                .OrderByDescending(x => x.Score)
-                .ThenByDescending(x => ParseDateScore(x.Item.Date))
-                .ToList();
-
-            var selected = scored
-                .Where(x => x.Score > 0)
-                .Select(x => x.Item)
-                .Take(6)
-                .ToList();
-
-            if (selected.Count == 0)
-                selected = scored.Select(x => x.Item).Take(6).ToList();
-
-            return selected;
-        }
-
-        private static int ScoreFinanceItem(SearchSummaryItem item, IReadOnlyList<string> tickers)
-        {
-            if (item == null)
-                return 0;
-
-            string all = $"{item.Title} {item.KeyPoint} {item.Source} {item.Date}";
-            int score = 0;
-
-            foreach (var ticker in tickers ?? Array.Empty<string>())
-            {
-                if (all.Contains(ticker, StringComparison.OrdinalIgnoreCase))
-                    score += 8;
-            }
-
-            if (ContainsAny(all, "latest", "current", "real-time", "quote", "stock price", "price", "after hours"))
-                score += 6;
-
-            if (ContainsAny(all, "earnings", "revenue", "EPS", "gross margin", "guidance", "財報", "營收", "毛利率"))
-                score += 5;
-
-            if (ContainsAny(all, "nasdaq.com", "marketwatch.com", "cnbc.com", "yahoo.com", "finance.yahoo.com", "marketwatch", "nasdaq"))
-                score += 4;
-
-            if (ContainsAny(all, "forecast", "prediction", "analyst", "target price"))
-                score += 1;
-
-            if (ContainsAny(all, "2024", "2023", "2022"))
-                score -= 6;
-
-            if (ContainsAny(all, "historical", "history", "all time", "52 week"))
-                score -= 2;
-
-            return score;
-        }
-
-        private static double ParseDateScore(string date)
-        {
-            if (string.IsNullOrWhiteSpace(date))
-                return 0;
-
-            return DateTime.TryParse(date, out var parsed)
-                ? parsed.ToOADate()
-                : 0;
-        }
-
         private static string ExtractKeyPoint(string snippet)
         {
             if (string.IsNullOrWhiteSpace(snippet))
@@ -627,7 +430,9 @@ $@"使用者問題：
                 : snippet;
         }
 
-        private static string BuildSummary(string query, IEnumerable<SearchSummaryItem> items)
+        private static string BuildSummary(
+            string query,
+            IEnumerable<SearchSummaryItem> items)
         {
             var list = items?
                 .Where(x => x != null)
@@ -637,16 +442,7 @@ $@"使用者問題：
                 return "無明確重點資訊";
 
             var sb = new StringBuilder();
-
-            if (IsStockFinanceQuery(query))
-            {
-                sb.AppendLine("整理重點如下：");
-                sb.AppendLine("此摘要來自搜尋片段，可信度低於 Perplexity authoritative finance research；若有 verified_facts，最終回答必須以 verified_facts 為準。");
-            }
-            else
-            {
-                sb.AppendLine("整理重點如下：");
-            }
+            sb.AppendLine("整理重點如下：");
 
             int index = 1;
             foreach (var item in list)
@@ -694,6 +490,75 @@ $@"使用者問題：
             }
 
             return false;
+        }
+
+        private static string CleanFinanceResearchAnswer(string answer)
+        {
+            if (string.IsNullOrWhiteSpace(answer))
+                return "";
+
+            var lines = answer
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Split('\n')
+                .Select(x => x.TrimEnd())
+                .ToList();
+
+            var cleaned = new List<string>();
+
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    if (cleaned.Count > 0 && !string.IsNullOrWhiteSpace(cleaned[^1]))
+                        cleaned.Add("");
+
+                    continue;
+                }
+
+                if (line.Contains("[") && line.Contains("]"))
+                {
+                    cleaned.Add(RemoveSimpleCitationMarkers(line));
+                }
+                else
+                {
+                    cleaned.Add(line);
+                }
+            }
+
+            return string.Join(Environment.NewLine, cleaned)
+                .Trim();
+        }
+
+        private static string RemoveSimpleCitationMarkers(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+
+            var sb = new StringBuilder();
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '[')
+                {
+                    int end = text.IndexOf(']', i + 1);
+
+                    if (end > i)
+                    {
+                        string inside = text.Substring(i + 1, end - i - 1);
+
+                        if (inside.All(c => char.IsDigit(c) || c == ',' || c == ' ' || c == '-'))
+                        {
+                            i = end;
+                            continue;
+                        }
+                    }
+                }
+
+                sb.Append(text[i]);
+            }
+
+            return sb.ToString().Trim();
         }
     }
 }
