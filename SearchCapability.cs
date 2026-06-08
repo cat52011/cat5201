@@ -86,29 +86,64 @@ $@"你是金融研究代理，負責提供可供下游 agent 使用的最新金�
 
 核心規則：
 1. 對於「最新股價」，請優先使用 Perplexity 搜尋結果中最像即時報價卡、金融資料卡、交易所/券商即時報價、Yahoo Finance、Nasdaq、MarketWatch、CNBC、Google Finance 類型的最新資料。
-2. 每個 ticker 只輸出一個 primary latest price。
-3. 不要把不同網站的舊收盤價、盤前價、盤後價、歷史價格、目標價、預測價全部混在一起。
-4. 只有在你確定同一個 ticker 的最新價格來源真的互相衝突，而且無法判斷哪一個較新或較可靠時，才列「資料衝突」。
-5. 若某個價格明顯像歷史價、目標價、錯誤映射、不同日期舊資料，請不要列入 primary facts，只能列入 ignored notes。
-6. 財報資料請使用最新一季或最新公司指引；不要混用不同年度或不同季度。
-7. 不要自己發明數字。
-8. 不要使用 GPT 內部知識補資料。
-9. 若找不到某欄位，該欄位寫「未取得」，不要整體回答資料不足。
-10. 請輸出乾淨、短而結構化的繁體中文結果，供後續 final synthesizer 使用。
+2. 必須分開 regular close、after-hours、pre-market。regular close 與 after-hours / pre-market 是不同交易時段，不是資料衝突。
+3. 每個 ticker 至少嘗試取得：regular close price、after-hours/pre-market price、price time、latest fiscal quarter、revenue、EPS、gross margin、guidance。
+4. 財報數字請優先使用公司 IR / earnings release / SEC filing。若公司官方資料可取得，不可寫「財報核心數字不足」。
+5. 若 ticker 是 MU，請優先查 Micron Investor Relations / Micron earnings release 的最新季度資料；若 ticker 是 TSM，請優先查 TSMC Investor Relations / quarterly results 的最新季度資料。
+6. Revenue、EPS、Gross Margin 只能從官方 earnings release / quarterly results 的「Quarterly Financial Results」或等價正式表格抽取；不可使用新聞摘要、股價頁、分析文章、預估文或搜尋摘要中的二手數字作為 primary fact。
+7. Guidance 只能從官方 business outlook / guidance / outlook table 抽取；不可把下一季 guidance 寫成最新一季 revenue。
+8. 若官方表格標示 in millions，請精確換算：例如 Revenue $23,860 million 必須寫 US$23.86B；不可改成 US$30.8B 或其他估算值。
+9. EPS 必須明確標示 GAAP 或 non-GAAP；若兩者皆取得，請在 EPS 欄同時列出，例如 GAAP EPS: US$12.07; Non-GAAP EPS: US$12.20。
+10. 如果 Official Earnings Source 已取得，但 Revenue、EPS、Gross Margin 或 Guidance 仍是「未取得」，請先再次查官方財報來源，不要直接宣稱財報核心數字不足。
+11. 不要把歷史價格、目標價、預測價、不同 ticker、不同年度或不同季度混在一起。
+12. 只有在同一 ticker、同一 fact type、同一交易時段或同一財報欄位存在不可判斷的重大差異時，才列「資料衝突」。
+13. 若某個價格明顯像歷史價、目標價、錯誤映射、不同日期舊資料，請不要列入 primary facts，只能列入 ignored notes。
+14. 不要自己發明數字。
+15. 不要使用 GPT 內部知識補資料。
+16. 若找不到某欄位，該欄位寫「未取得」，不要整體回答資料不足。
+17. 請輸出乾淨、短而結構化的繁體中文結果，供後續 final synthesizer 使用。
+
+官方財報抽取自我檢查：
+- MU / Micron：若最新官方資料是 FQ2-26，Revenue 應來自 total company Revenue row，不可使用 business unit revenue 或 FQ3 guidance 當作 FQ2 revenue。
+- TSM / TSMC：若最新官方資料是 Q1 2026，Revenue 應來自 consolidated revenue row，Gross Margin 應來自 gross margin for the quarter。
+- 輸出前請逐欄確認 Revenue、EPS、Gross Margin、Guidance 的來源類型是 official earnings，不是 quote provider。
 
 請嚴格使用以下格式：
 
 【Primary Facts】
 Ticker: 
 Company:
-Latest Price:
-Price Time:
-Market Session:
+Regular Close Price:
+Regular Close Time:
+After Hours Price:
+After Hours Time:
+Pre Market Price:
+Pre Market Time:
+Latest Fiscal Quarter:
 Revenue:
 EPS:
 Gross Margin:
 Guidance:
 Key Market Drivers:
+Official Earnings Source:
+Quote Source:
+
+Ticker:
+Company:
+Regular Close Price:
+Regular Close Time:
+After Hours Price:
+After Hours Time:
+Pre Market Price:
+Pre Market Time:
+Latest Fiscal Quarter:
+Revenue:
+EPS:
+Gross Margin:
+Guidance:
+Key Market Drivers:
+Official Earnings Source:
+Quote Source:
 
 【Conflicts】
 只列真正不可判斷的重大衝突。若沒有，寫：無重大衝突。
@@ -123,7 +158,7 @@ Key Market Drivers:
                 instructions: instructions,
                 userText: originalQuery,
                 enableWebSearch: true,
-                maxOutputTokens: 3000,
+                maxOutputTokens: 4000,
                 ct: ct);
 
             if (string.IsNullOrWhiteSpace(answer))
@@ -132,11 +167,10 @@ Key Market Drivers:
                     "search-capability required authoritative finance research, but Perplexity returned empty result.");
             }
 
-            return BuildAuthoritativeFinanceResult(
+            return await BuildAuthoritativeFinanceResultAsync(
                 originalQuery,
-                answer); return BuildAuthoritativeFinanceResult(
-                originalQuery,
-                answer);
+                answer,
+                ct);
         }
 
         private async Task<AgentCapabilityResult> ExecuteGeneralSearchAsync(
@@ -190,24 +224,51 @@ Key Market Drivers:
             return result;
         }
 
-        private AgentCapabilityResult BuildAuthoritativeFinanceResult(
+        private async Task<AgentCapabilityResult> BuildAuthoritativeFinanceResultAsync(
             string query,
-            string answer)
+            string answer,
+            CancellationToken ct)
         {
             string now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
 
             string cleanedAnswer = CleanFinanceResearchAnswer(answer);
+            var facts = BuildFinanceVerifiedFacts(query ?? "", cleanedAnswer, now);
+            string combinedAnswer = cleanedAnswer;
+
+            var officialFactRequests = BuildOfficialFinanceFactRequests(query ?? "");
+            if (officialFactRequests.Count > 0)
+            {
+                string repairAnswer = await ExecuteFinanceFactRepairAsync(
+                    query ?? "",
+                    cleanedAnswer,
+                    officialFactRequests,
+                    ct);
+
+                if (!string.IsNullOrWhiteSpace(repairAnswer))
+                {
+                    string cleanedRepair = CleanFinanceResearchAnswer(repairAnswer);
+                    var repairedFacts = BuildFinanceVerifiedFacts(query ?? "", cleanedRepair, now);
+
+                    facts = MergeFinanceFacts(facts, repairedFacts);
+                    combinedAnswer =
+                        "【Official Facts Repair Applied】" +
+                        Environment.NewLine +
+                        "上一輪研究缺少部分官方財報欄位；以下已用官方財報 repair pass 補齊。下游只能使用 verified_facts 中的結構化欄位，不應再把第一輪未校正資料視為衝突來源。" +
+                        Environment.NewLine +
+                        cleanedRepair;
+                }
+            }
 
             var searchPayload = new SearchSummaryPayload
             {
                 Query = query ?? "",
-                Summary = cleanedAnswer,
+                Summary = combinedAnswer,
                 Items = new List<SearchSummaryItem>
                 {
                     new SearchSummaryItem
                     {
                         Title = "Perplexity authoritative finance research",
-                        KeyPoint = cleanedAnswer,
+                        KeyPoint = combinedAnswer,
                         Source = "Perplexity Sonar",
                         Date = now
                     }
@@ -217,27 +278,466 @@ Key Market Drivers:
             var verifiedPayload = new VerifiedFactPayload
             {
                 Query = query ?? "",
-                Summary = cleanedAnswer,
-                Facts = new List<VerifiedFactItem>
-                {
-                    new VerifiedFactItem
-                    {
-                        Subject = BuildVerifiedSubject(query),
-                        FactType = "authoritative_finance_research",
-                        Value = cleanedAnswer,
-                        Unit = "",
-                        AsOf = now,
-                        SourceTitle = "Perplexity Sonar",
-                        SourceUrl = "",
-                        Confidence = "high"
-                    }
-                }
+                Summary = BuildFinanceFactSummary(facts, combinedAnswer),
+                Facts = facts
             };
 
             var result = AgentCapabilityResult.WithData("verified_facts", verifiedPayload);
             result.Data["search_summary"] = searchPayload;
 
             return result;
+        }
+
+        private static IReadOnlyList<VerifiedFactItem> BuildFinanceVerifiedFacts(
+            string query,
+            string cleanedAnswer,
+            string now)
+        {
+            var facts = new List<VerifiedFactItem>();
+            var blocks = ExtractPrimaryFactBlocks(cleanedAnswer);
+
+            foreach (var block in blocks)
+            {
+                string ticker = ReadFinanceField(block, "Ticker");
+                if (string.IsNullOrWhiteSpace(ticker))
+                    continue;
+
+                string company = ReadFinanceField(block, "Company");
+                string subject = string.IsNullOrWhiteSpace(company)
+                    ? ticker.Trim()
+                    : $"{ticker.Trim()} ({company.Trim()})";
+
+                AddFinanceFact(facts, subject, "regular_close_price", ReadFinanceField(block, "Regular Close Price", "Regular Close", "Close Price"), "USD", ReadFinanceField(block, "Regular Close Time", "Close Time", "Price Time"), now);
+                AddFinanceFact(facts, subject, "after_hours_price", ReadFinanceField(block, "After Hours Price", "After-hours Price", "Afterhours Price"), "USD", ReadFinanceField(block, "After Hours Time", "After-hours Time", "Afterhours Time"), now);
+                AddFinanceFact(facts, subject, "pre_market_price", ReadFinanceField(block, "Pre Market Price", "Pre-market Price", "Premarket Price"), "USD", ReadFinanceField(block, "Pre Market Time", "Pre-market Time", "Premarket Time"), now);
+                AddFinanceFact(facts, subject, "latest_fiscal_quarter", ReadFinanceField(block, "Latest Fiscal Quarter", "Fiscal Quarter", "Quarter"), "", now, now);
+                AddFinanceFact(facts, subject, "revenue", ReadFinanceField(block, "Revenue", "Revenue / Sales", "Net Sales"), "", now, now);
+                AddFinanceFact(facts, subject, "eps", ReadFinanceField(block, "EPS", "Earnings Per Share", "Non-GAAP EPS", "GAAP EPS"), "", now, now);
+                AddFinanceFact(facts, subject, "gross_margin", ReadFinanceField(block, "Gross Margin", "Non-GAAP Gross Margin", "GAAP Gross Margin"), "", now, now);
+                AddFinanceFact(facts, subject, "guidance", ReadFinanceField(block, "Guidance", "Outlook", "Forecast"), "", now, now);
+                AddFinanceFact(facts, subject, "key_market_drivers", ReadFinanceField(block, "Key Market Drivers", "Market Drivers", "Drivers"), "", now, now);
+                AddFinanceFact(facts, subject, "official_earnings_source", ReadFinanceField(block, "Official Earnings Source", "Earnings Source", "Official Source"), "", now, now);
+                AddFinanceFact(facts, subject, "quote_source", ReadFinanceField(block, "Quote Source", "Price Source"), "", now, now);
+            }
+
+            if (facts.Count > 0)
+                return facts;
+
+            return new List<VerifiedFactItem>
+            {
+                new VerifiedFactItem
+                {
+                    Subject = BuildVerifiedSubject(query),
+                    FactType = "authoritative_finance_research",
+                    Value = cleanedAnswer,
+                    Unit = "",
+                    AsOf = now,
+                    SourceTitle = "Perplexity Sonar",
+                    SourceUrl = "",
+                    Confidence = "medium"
+                }
+            };
+        }
+
+        private async Task<string> ExecuteFinanceFactRepairAsync(
+            string query,
+            string firstAnswer,
+            IReadOnlyList<string> missingFacts,
+            CancellationToken ct)
+        {
+            if (missingFacts == null || missingFacts.Count == 0)
+                return "";
+
+            string tickers = string.Join(", ", DetectTickers(query));
+            string requestedFacts = string.Join(Environment.NewLine, missingFacts.Select(x => "- " + x));
+
+            string instructions =
+$@"你是金融資料校正代理。上一輪研究可能包含不完整或錯口徑的財報資料。請重新用官方來源校正下列財報欄位，不要寫完整分析。
+
+使用者問題：
+{query}
+
+目標 ticker：
+{tickers}
+
+需要官方校正的欄位：
+{requestedFacts}
+
+上一輪輸出：
+{firstAnswer}
+
+硬性規則：
+1. 只能使用公司官方 IR / earnings release / quarterly results / SEC filing。
+2. Revenue、EPS、Gross Margin 必須從最新季度正式財報表格抽取。
+3. Guidance 必須從官方 business outlook / guidance / outlook table 抽取。
+4. 不可使用新聞摘要、股價頁、分析文章、預估文或搜尋摘要的二手數字。
+5. 若官方表格標示 in millions，請精確換算：Revenue $23,860 million = US$23.86B。
+6. EPS 必須標示 GAAP 或 non-GAAP；若兩者皆取得，請同時列出。
+7. 不要把下一季 guidance 寫成最新一季 revenue。
+8. 不要自己發明數字；若官方來源仍不可取得，才寫「未取得」。
+
+請嚴格輸出以下格式，只輸出官方校正後的財報欄位：
+
+【Primary Facts】
+Ticker:
+Company:
+Latest Fiscal Quarter:
+Revenue:
+EPS:
+Gross Margin:
+Guidance:
+Official Earnings Source:
+
+Ticker:
+Company:
+Latest Fiscal Quarter:
+Revenue:
+EPS:
+Gross Margin:
+Guidance:
+Official Earnings Source:
+
+【Conflicts】
+若沒有，寫：無重大衝突。
+
+【Ignored / Low Confidence】
+若沒有，寫：無。";
+
+            return await _service.GenerateAgentAsync(
+                instructions: instructions,
+                userText: query,
+                enableWebSearch: true,
+                maxOutputTokens: 2500,
+                ct: ct);
+        }
+
+        private static IReadOnlyList<string> BuildOfficialFinanceFactRequests(
+            string query)
+        {
+            var requests = new List<string>();
+            var tickers = DetectTickers(query);
+
+            if (tickers.Count == 0)
+                return requests;
+
+            string[] requiredFactTypes =
+            {
+                "latest_fiscal_quarter",
+                "revenue",
+                "eps",
+                "gross_margin",
+                "guidance",
+                "official_earnings_source"
+            };
+
+            foreach (var ticker in tickers)
+            {
+                foreach (var factType in requiredFactTypes)
+                {
+                    requests.Add($"{ticker}: {factType}");
+                }
+            }
+
+            return requests;
+        }
+
+        private static bool HasFinanceFact(
+            IReadOnlyList<VerifiedFactItem> facts,
+            string ticker,
+            string factType)
+        {
+            if (facts == null ||
+                string.IsNullOrWhiteSpace(ticker) ||
+                string.IsNullOrWhiteSpace(factType))
+            {
+                return false;
+            }
+
+            return facts.Any(x =>
+                x != null &&
+                SubjectMatchesTicker(x.Subject, ticker) &&
+                string.Equals(x.FactType, factType, StringComparison.OrdinalIgnoreCase) &&
+                !IsMissingFinanceValue(x.Value));
+        }
+
+        private static bool SubjectMatchesTicker(string subject, string ticker)
+        {
+            if (string.IsNullOrWhiteSpace(subject) ||
+                string.IsNullOrWhiteSpace(ticker))
+            {
+                return false;
+            }
+
+            subject = subject.Trim();
+            ticker = ticker.Trim();
+
+            return string.Equals(subject, ticker, StringComparison.OrdinalIgnoreCase) ||
+                   subject.StartsWith(ticker + " ", StringComparison.OrdinalIgnoreCase) ||
+                   subject.StartsWith(ticker + "(", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static IReadOnlyList<VerifiedFactItem> MergeFinanceFacts(
+            IReadOnlyList<VerifiedFactItem> primaryFacts,
+            IReadOnlyList<VerifiedFactItem> repairedFacts)
+        {
+            var merged = new List<VerifiedFactItem>();
+
+            if (primaryFacts != null)
+                merged.AddRange(primaryFacts.Where(x => x != null));
+
+            if (repairedFacts == null || repairedFacts.Count == 0)
+                return merged;
+
+            foreach (var repaired in repairedFacts.Where(x => x != null))
+            {
+                int existingIndex = merged.FindIndex(x =>
+                    string.Equals(NormalizeSubjectForMerge(x.Subject), NormalizeSubjectForMerge(repaired.Subject), StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(x.FactType, repaired.FactType, StringComparison.OrdinalIgnoreCase));
+
+                if (existingIndex >= 0)
+                {
+                    if (ShouldReplaceFinanceFact(merged[existingIndex], repaired))
+                        merged[existingIndex] = repaired;
+                }
+                else
+                {
+                    merged.Add(repaired);
+                }
+            }
+
+            return merged;
+        }
+
+        private static bool ShouldReplaceFinanceFact(
+            VerifiedFactItem current,
+            VerifiedFactItem repaired)
+        {
+            if (current == null)
+                return true;
+
+            if (repaired == null || IsMissingFinanceValue(repaired.Value))
+                return false;
+
+            if (IsMissingFinanceValue(current.Value))
+                return true;
+
+            bool repairedOfficial =
+                (repaired.SourceTitle ?? "").Contains("official", StringComparison.OrdinalIgnoreCase) ||
+                (repaired.SourceTitle ?? "").Contains("Perplexity Sonar finance research", StringComparison.OrdinalIgnoreCase);
+
+            bool currentOfficial =
+                (current.SourceTitle ?? "").Contains("official", StringComparison.OrdinalIgnoreCase);
+
+            return repairedOfficial && !currentOfficial;
+        }
+
+        private static string NormalizeSubjectForMerge(string subject)
+        {
+            if (string.IsNullOrWhiteSpace(subject))
+                return "";
+
+            string trimmed = subject.Trim();
+            int spaceIndex = trimmed.IndexOf(' ');
+            int parenIndex = trimmed.IndexOf('(');
+
+            int cut = -1;
+            if (spaceIndex > 0)
+                cut = spaceIndex;
+            if (parenIndex > 0 && (cut < 0 || parenIndex < cut))
+                cut = parenIndex;
+
+            return cut > 0
+                ? trimmed.Substring(0, cut)
+                : trimmed;
+        }
+
+        private static string BuildFinanceFactSummary(
+            IReadOnlyList<VerifiedFactItem> facts,
+            string cleanedAnswer)
+        {
+            if (facts == null || facts.Count == 0)
+                return cleanedAnswer ?? "";
+
+            var subjects = facts
+                .Select(x => x.Subject)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return
+                "金融研究已轉成結構化 verified_facts。regular_close_price、after_hours_price、pre_market_price 屬於不同交易時段，不可互相視為資料衝突。"
+                + Environment.NewLine
+                + $"Subjects: {string.Join(", ", subjects)}";
+        }
+
+        private static IReadOnlyList<List<string>> ExtractPrimaryFactBlocks(string text)
+        {
+            var blocks = new List<List<string>>();
+            var current = new List<string>();
+            bool inPrimaryFacts = false;
+
+            foreach (var rawLine in SplitLines(text))
+            {
+                string line = NormalizeFinanceLine(rawLine);
+
+                if (line.Equals("【Primary Facts】", StringComparison.OrdinalIgnoreCase))
+                {
+                    inPrimaryFacts = true;
+                    continue;
+                }
+
+                if (inPrimaryFacts && line.StartsWith("【", StringComparison.Ordinal))
+                    break;
+
+                if (!inPrimaryFacts || string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                if (line.StartsWith("Ticker:", StringComparison.OrdinalIgnoreCase) &&
+                    current.Count > 0)
+                {
+                    blocks.Add(current);
+                    current = new List<string>();
+                }
+
+                current.Add(line);
+            }
+
+            if (current.Count > 0)
+                blocks.Add(current);
+
+            return blocks;
+        }
+
+        private static IEnumerable<string> SplitLines(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return Array.Empty<string>();
+
+            return text
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Split('\n');
+        }
+
+        private static string NormalizeFinanceLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return "";
+
+            line = line.Trim();
+
+            line = line
+                .Replace("：", ":")
+                .Replace("__", "")
+                .Replace("**", "");
+
+            while (line.StartsWith("-", StringComparison.Ordinal) ||
+                   line.StartsWith("*", StringComparison.Ordinal) ||
+                   line.StartsWith("•", StringComparison.Ordinal))
+            {
+                line = line.Substring(1).TrimStart();
+            }
+
+            line = line.Trim('*', ' ', '\t');
+
+            return line.Trim();
+        }
+
+        private static string ReadFinanceField(
+            IReadOnlyList<string> block,
+            params string[] fieldNames)
+        {
+            if (block == null || fieldNames == null || fieldNames.Length == 0)
+                return "";
+
+            foreach (var fieldName in fieldNames)
+            {
+                if (string.IsNullOrWhiteSpace(fieldName))
+                    continue;
+
+                string prefix = NormalizeFinanceLabel(fieldName) + ":";
+
+                var line = block.FirstOrDefault(x =>
+                    NormalizeFinanceLabel(x).StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                int colonIndex = line.IndexOf(':');
+                if (colonIndex < 0 || colonIndex >= line.Length - 1)
+                    return "";
+
+                return CleanFinanceValue(line.Substring(colonIndex + 1));
+            }
+
+            return "";
+        }
+
+        private static string NormalizeFinanceLabel(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+
+            return text
+                .Replace("：", ":")
+                .Replace("__", "")
+                .Replace("**", "")
+                .Trim()
+                .ToLowerInvariant();
+        }
+
+        private static string CleanFinanceValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "";
+
+            return value
+                .Replace("**", "")
+                .Replace("__", "")
+                .Trim()
+                .Trim('*', ' ', '\t');
+        }
+
+        private static void AddFinanceFact(
+            List<VerifiedFactItem> facts,
+            string subject,
+            string factType,
+            string value,
+            string unit,
+            string asOf,
+            string fallbackAsOf)
+        {
+            if (facts == null ||
+                string.IsNullOrWhiteSpace(subject) ||
+                string.IsNullOrWhiteSpace(factType) ||
+                IsMissingFinanceValue(value))
+            {
+                return;
+            }
+
+            facts.Add(new VerifiedFactItem
+            {
+                Subject = subject.Trim(),
+                FactType = factType.Trim(),
+                Value = value.Trim(),
+                Unit = unit ?? "",
+                AsOf = string.IsNullOrWhiteSpace(asOf) ? fallbackAsOf : asOf.Trim(),
+                SourceTitle = "Perplexity Sonar finance research",
+                SourceUrl = "",
+                Confidence = "high"
+            });
+        }
+
+        private static bool IsMissingFinanceValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return true;
+
+            string normalized = value.Trim();
+            return string.Equals(normalized, "未取得", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "N/A", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "NA", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "-", StringComparison.OrdinalIgnoreCase);
         }
 
         private static VerifiedFactPayload BuildVerifiedFacts(

@@ -41,12 +41,12 @@ namespace test
             // ===== Manual：保留原本手動 agent =====
             if (!_main.IsAutoModelSelectionEnabled())
             {
-                var manualTask = ResolveAndPersistTaskMode(node, topText);
+                var manualTaskMode = NodeTaskModeHelper.Normalize(_main.GetNodeTaskMode(node));
 
                 var manualProfile = _agentProfileResolver.Resolve(
                     selectedAgent,
                     preferredModelId: selectedModel,
-                    preferredTaskMode: _main.GetNodeTaskMode(node));
+                    preferredTaskMode: manualTaskMode);
 
                 var manualDecision = new NodeExecutionDecision
                 {
@@ -56,12 +56,12 @@ namespace test
                     RequestedModelId = AiModelHelper.NormalizeNodeModel(manualProfile.RuntimeModelId),
                     ModelId = AiModelHelper.NormalizeNodeModel(manualProfile.RuntimeModelId),
 
-                    TaskMode = manualTask.Mode,
+                    TaskMode = manualTaskMode,
                     ResolverLabel = "Manual",
                     StatusLabel = "Manual",
                     Confidence = 1.0,
-                    ResolverReason = manualTask.Reason,
-                    ResolverKeywords = manualTask.MatchedKeywords ?? Array.Empty<string>(),
+                    ResolverReason = "Manual mode: selected agent/model/task are preserved.",
+                    ResolverKeywords = Array.Empty<string>(),
                     UsedApiResolver = false,
                     UsedFallbackToRules = false,
                     UseStreaming = true
@@ -159,14 +159,6 @@ namespace test
 
             var ruleTask = ResolveAndPersistTaskMode(node, topText);
 
-            var ruleAgentSelection = _agentSelectionResolver.Resolve(
-                topText,
-                ruleTask.Mode,
-                attachments,
-                selectedAgentId);
-
-            var ruleActualAgent = AgentRegistry.Get(ruleAgentSelection.AgentId);
-
             string autoModel = _modelSelection.ResolveRuleAutoModel(
                 ruleTask.Mode,
                 selectedModel);
@@ -174,18 +166,16 @@ namespace test
             var ruleDecision = new NodeExecutionDecision
             {
                 RequestedAgentId = selectedAgent.Id,
-                ActualAgentId = ruleActualAgent.Id,
+                ActualAgentId = selectedAgent.Id,
 
                 RequestedModelId = AiModelHelper.NormalizeNodeModel(autoModel),
                 ModelId = AiModelHelper.NormalizeNodeModel(autoModel),
 
                 TaskMode = ruleTask.Mode,
-                ResolverLabel = "Rules + Agent Rules",
+                ResolverLabel = "Rule Auto Model",
                 StatusLabel = "Rule Auto",
-                Confidence = Math.Max(ruleTask.Confidence, ruleAgentSelection.Confidence),
-                ResolverReason =
-                    $"Agent: {ruleAgentSelection.Reason} / " +
-                    $"Task/Model: {ruleTask.Reason}",
+                Confidence = ruleTask.Confidence,
+                ResolverReason = $"Task/Model: {ruleTask.Reason}. Agent is not changed in Rule Auto mode.",
                 ResolverKeywords = ruleTask.MatchedKeywords ?? Array.Empty<string>(),
                 UsedApiResolver = false,
                 UsedFallbackToRules = false,

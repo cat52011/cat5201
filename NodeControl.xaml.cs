@@ -506,6 +506,9 @@ namespace test
             EnsureModelSelectorLoaded();
             InitializeCommittedModelIfNeeded();
 
+            if (_parent != null && !_parent.IsAutoModelSelectionEnabled() && IsEditing)
+                RevertEditingModelToCommitted();
+
             // 編輯狀態顯示草稿模型；非編輯狀態顯示正式模型
             string displayModel = IsEditing ? _editingModelId : _committedModelId;
             SelectModelInComboBox(displayModel);
@@ -1097,7 +1100,7 @@ namespace test
             TopEditor.Text = text ?? "";
             UpdateAutoTaskPreview();
         }
-        
+
 
         public string GetBottomText() => BottomDisplay.Text ?? "";
 
@@ -1472,7 +1475,7 @@ namespace test
             }
         }
 
-    
+
         private void ThumbBL_DragDelta(object sender, DragDeltaEventArgs e)
         {
             double newWidth = Width - e.HorizontalChange;

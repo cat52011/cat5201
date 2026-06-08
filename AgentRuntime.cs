@@ -107,8 +107,11 @@ namespace test
             }
 
             var runtimeAgent = AgentRegistry.Get(decision.ActualAgentId);
+            bool allowAgentFirstAutomation =
+                _main.IsAutoModelSelectionEnabled() &&
+                _main.IsAdvancedAutoResolverEnabled();
 
-            _main.SetLiveDecisionResolving(request.Node, decision);           
+            _main.SetLiveDecisionResolving(request.Node, decision);
             // 2. capability layer
             string capabilityAugmentedText = topText;
 
@@ -136,7 +139,11 @@ namespace test
                 .Where(c => c != null)
                 .Cast<IAgentCapability>()
                 .ToList();
-            if (!request.SkipCapabilities)
+            bool runCapabilityLayer =
+                allowAgentFirstAutomation &&
+                !request.SkipCapabilities;
+
+            if (runCapabilityLayer)
             {
                 foreach (var capability in orderedCapabilities)
                 {
@@ -410,7 +417,8 @@ namespace test
                     }
                 }
             }
-            if (capabilityPlan.RequiresFreshFacts &&
+            if (runCapabilityLayer &&
+                capabilityPlan.RequiresFreshFacts &&
     !capabilityData.ContainsKey("verified_facts") &&
     !capabilityData.ContainsKey("search_summary"))
             {
@@ -421,7 +429,7 @@ namespace test
             bool parallelExecuted = false;
             AgentParallelExecutionResult? parallelResult = null;
 
-            if (request.DelegationDepth == 0)
+            if (allowAgentFirstAutomation && request.DelegationDepth == 0)
             {
                 var parallelTasks = _parallelPlanner.Plan(
                     runtimeAgent,
@@ -462,11 +470,11 @@ namespace test
                                 }));
                     }
                 }
-            }            
+            }
             // 3. delegation
             IReadOnlyList<AgentDelegationRequest> plans;
 
-            if (request.DelegationDepth >= 2)
+            if (!allowAgentFirstAutomation || request.DelegationDepth >= 2)
             {
                 plans = Array.Empty<AgentDelegationRequest>();
             }
@@ -614,9 +622,9 @@ namespace test
 
             string finalInput = capabilityAugmentedText;
 
-            if(!string.IsNullOrWhiteSpace(capabilityDataBlock) ||
+            if (!string.IsNullOrWhiteSpace(capabilityDataBlock) ||
     !string.IsNullOrWhiteSpace(workspaceBlock))
-{
+            {
                 var parts = new List<string>();
 
                 if (!string.IsNullOrWhiteSpace(workspaceBlock))
@@ -632,14 +640,22 @@ namespace test
 
             if (!string.IsNullOrWhiteSpace(delegatedContext))
             {
-                finalInput =
-                    (!string.IsNullOrWhiteSpace(capabilityDataBlock)
-                        ? capabilityDataBlock + "\n\n"
-                        : "") +
+                var parts = new List<string>();
+
+                if (!string.IsNullOrWhiteSpace(workspaceBlock))
+                    parts.Add(workspaceBlock);
+
+                if (!string.IsNullOrWhiteSpace(capabilityDataBlock))
+                    parts.Add(capabilityDataBlock);
+
+                parts.Add(
                     "以下是其他代理提供的補充資訊：\n" +
-                    delegatedContext +
-                    "\n請基於以上資訊完成目前任務：\n" +
-                    capabilityAugmentedText;
+                    delegatedContext);
+
+                parts.Add("請基於以上資訊完成目前任務：\n" + capabilityAugmentedText);
+
+                finalInput =
+                    string.Join("\n\n", parts);
             }
 
             // 5. execution
@@ -708,7 +724,7 @@ namespace test
                 ForceSingleModel = true
             };
 
-            string workspaceBlock = workspace?.BuildPromptBlock() ?? "";
+            string workspaceBlock = workspace.BuildPromptBlock();
 
             System.Diagnostics.Debug.WriteLine($"[Workspace] Count={workspace.GetAll().Count}");
             System.Diagnostics.Debug.WriteLine(
@@ -729,13 +745,17 @@ namespace test
 3. 只有在 Shared Workspace 完全沒有 Verified Facts、Search Context、search_summary 時，才可以回答資料不足。
 4. Analysis Context、reasoning_analysis、parallel_agent_output、delegate_output 只能用於推論與整理，不可新增或覆蓋任何事實數字。
 5. 若同一項資料有多個來源數字：
+   - regular close、after-hours、pre-market 屬於不同交易時段，不可互相視為資料衝突；請分開標示。
+   - 若 verified_facts 來自 official earnings / official facts repair，且 Search Context 或舊搜尋摘要有不同數字，應以 verified_facts 為準，不要把被 repair 取代的舊數字列為資料衝突。
    - 若數字接近，請合併成簡短區間或代表值。
    - 若數字明顯衝突，請列在「資料衝突」中。
    - 不要把所有來源逐條原封不動列出。
-6. 不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
-7. 不可輸出 citation marker，例如 [1][2][3]。
-8. 不要寫成研究紀錄，不要把 workspace 全部倒出來。請輸出給一般使用者看的精簡結論。
-9. 使用繁體中文。
+6. 若某個 ticker 只有部分欄位缺失，只能標示該欄位缺失；不可因此整體回答「財報核心數字不足」或「資料不足」。
+7. 不要使用「資料批次」「較強的那組資料」「若採用某組資料」這類內部研究口徑；請直接使用最高權威 verified_facts。
+8. 不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
+9. 不可輸出 citation marker，例如 [1][2][3]。
+10. 不要寫成研究紀錄，不要把 workspace 全部倒出來。請輸出給一般使用者看的精簡結論。
+11. 使用繁體中文。
 
 【輸出格式】
 請嚴格使用以下格式：

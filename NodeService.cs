@@ -158,6 +158,7 @@ namespace test
                     UseStreaming = false,
                     OnDelta = null,
                     CancellationToken = ct,
+                    SkipCapabilities = !_main.IsAdvancedAutoResolverEnabled(),
                     Workspace = new AgentWorkspace()
                 });
 
@@ -265,6 +266,7 @@ namespace test
                     UseStreaming = true,
                     OnDelta = onDelta,
                     CancellationToken = ct,
+                    SkipCapabilities = !_main.IsAdvancedAutoResolverEnabled(),
                     Workspace = new AgentWorkspace()
                 });
 
@@ -663,7 +665,7 @@ namespace test
             return _contextStrategyResolver.Resolve(model, taskMode);
         }
 
-        
+
 
         private List<NodeControl> CollectUpstream(NodeControl start, int hops)
         {
