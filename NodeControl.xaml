@@ -556,8 +556,42 @@
 
             <Border Grid.Row="1" Background="#00FFFFFF">
                 <Grid>
+                    <StackPanel x:Name="BottomLoadingOverlay"
+                                Orientation="Horizontal"
+                                Margin="24,16,24,10"
+                                VerticalAlignment="Top"
+                                HorizontalAlignment="Left"
+                                Panel.ZIndex="10"
+                                Visibility="Collapsed"
+                                IsHitTestVisible="False">
+                        <Viewbox Width="18"
+                                 Height="18"
+                                 VerticalAlignment="Center"
+                                 Margin="0,0,8,0">
+                            <Canvas Width="64"
+                                    Height="64"
+                                    RenderTransformOrigin="0.5,0.5">
+                                <Canvas.RenderTransform>
+                                    <RotateTransform x:Name="BottomLoadingSpinnerRotate"
+                                                     Angle="0"/>
+                                </Canvas.RenderTransform>
+                                <Path Stroke="#5F6368"
+                                      StrokeThickness="5"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      Fill="Transparent"
+                                      Data="M 32 8 A 24 24 0 1 1 10 40"/>
+                            </Canvas>
+                        </Viewbox>
+                        <TextBlock Text="AI 正在生成"
+                                   FontSize="15"
+                                   Foreground="#4A4A4A"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
                     <TextBox x:Name="BottomDisplay"
                              Margin="20,10,20,10"
+                             Panel.ZIndex="0"
                              TextWrapping="Wrap"
                              AcceptsReturn="True"
                              FontSize="20"
@@ -570,7 +604,7 @@
                              VerticalScrollBarVisibility="Auto"
                              HorizontalScrollBarVisibility="Disabled"/>
 
-                    
+
                 </Grid>
             </Border>
         </Grid>

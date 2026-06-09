@@ -14,6 +14,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace test
 {
@@ -29,6 +30,7 @@ namespace test
 
         private bool _isTopLocked = false;
         private bool _isGenerating = false;
+        private bool _isShowingLoadingText = false;
 
         private double _fontSize = 20;
 
@@ -76,7 +78,7 @@ namespace test
             public string FileName { get; set; } = "";
             public string RelativePath { get; set; } = "";
             public string Kind { get; set; } = "file";
-            public string KindGlyph => Kind == "image" ? "🖼" : "📄";
+            public string KindGlyph => Kind == "image" ? "??" : "??";
         }
 
         public NodeControl() : this(Guid.NewGuid().ToString()) { }
@@ -1038,16 +1040,18 @@ namespace test
 
             try
             {
-                BottomDisplay.Text = "";
+                StartBottomLoadingAnimation();
 
                 if (_parent == null)
                 {
+                    StopBottomLoadingAnimation(clearIfLoading: true);
                     BottomDisplay.Text = "（找不到 MainWindow，無法呼叫 AI）";
                     return;
                 }
 
                 if (_parent.NodeService == null)
                 {
+                    StopBottomLoadingAnimation(clearIfLoading: true);
                     BottomDisplay.Text = "（NodeService 尚未初始化）";
                     return;
                 }
@@ -1061,11 +1065,16 @@ namespace test
                     {
                         Dispatcher.Invoke(() =>
                         {
+                            if (_isShowingLoadingText)
+                                StopBottomLoadingAnimation(clearIfLoading: true);
+
                             BottomDisplay.AppendText(delta);
                             BottomDisplay.ScrollToEnd();
                         });
                     },
                     cts.Token);
+
+                StopBottomLoadingAnimation(clearIfLoading: string.IsNullOrWhiteSpace(finalReply));
 
                 if (string.IsNullOrWhiteSpace(finalReply))
                 {
@@ -1084,13 +1093,66 @@ namespace test
             }
             catch (Exception ex)
             {
+                StopBottomLoadingAnimation(clearIfLoading: true);
                 BottomDisplay.Text = $"（AI 產生失敗）\n{ex.Message}";
             }
             finally
             {
+                StopBottomLoadingAnimation(clearIfLoading: false);
                 _isGenerating = false;
                 UpdateEditButtons();
             }
+        }
+
+        private void StartBottomLoadingAnimation()
+        {
+            _isShowingLoadingText = true;
+            BottomDisplay.Text = "";
+
+            if (BottomLoadingOverlay != null)
+                BottomLoadingOverlay.Visibility = Visibility.Visible;
+
+            StartSpinnerAnimation();
+        }
+
+        private void StartSpinnerAnimation()
+        {
+            if (BottomLoadingSpinnerRotate == null)
+                return;
+
+            BottomLoadingSpinnerRotate.BeginAnimation(
+                RotateTransform.AngleProperty,
+                null);
+
+            var animation = new DoubleAnimation
+            {
+                From = 0,
+                To = 360,
+                Duration = TimeSpan.FromSeconds(0.85),
+                RepeatBehavior = RepeatBehavior.Forever
+            };
+
+            BottomLoadingSpinnerRotate.BeginAnimation(
+                RotateTransform.AngleProperty,
+                animation);
+        }
+
+        private void StopBottomLoadingAnimation(bool clearIfLoading)
+        {
+            if (BottomLoadingSpinnerRotate != null)
+            {
+                BottomLoadingSpinnerRotate.BeginAnimation(
+                    RotateTransform.AngleProperty,
+                    null);
+            }
+
+            if (BottomLoadingOverlay != null)
+                BottomLoadingOverlay.Visibility = Visibility.Collapsed;
+
+            if (clearIfLoading && _isShowingLoadingText)
+                BottomDisplay.Text = "";
+
+            _isShowingLoadingText = false;
         }
 
         public string GetTopText() => TopEditor.Text ?? "";

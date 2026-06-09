@@ -514,6 +514,7 @@ namespace test
                         OnDelta = null,
                         DelegationDepth = request.DelegationDepth + 1,
                         ForceAgentProfile = true,
+                        SkipCapabilities = true,
                         Workspace = workspace,
                         CancellationToken = request.CancellationToken
                     });
@@ -934,6 +935,13 @@ namespace test
                     continue;
                 }
 
+                if (string.Equals(kv.Key, "code_diff_draft", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(kv.Key, "code_diff", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendCodeDiffArtifact(sb, kv.Value);
+                    continue;
+                }
+
                 if (string.Equals(kv.Key, "task_plan", StringComparison.OrdinalIgnoreCase))
                 {
                     AppendTaskPlan(sb, kv.Value);
@@ -1214,6 +1222,69 @@ namespace test
                 sb.AppendLine("Content:");
                 sb.AppendLine("```");
                 sb.AppendLine(file.Content ?? "");
+                sb.AppendLine("```");
+            }
+        }
+
+        private static void AppendCodeDiffArtifact(StringBuilder sb, object value)
+        {
+            if (sb == null || value == null)
+                return;
+
+            if (value is not CodeDiffArtifactPayload payload)
+            {
+                sb.AppendLine();
+                sb.AppendLine("【Code Diff Artifact】");
+                sb.AppendLine(value.ToString() ?? "");
+                return;
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("【Code Diff Artifact】");
+            sb.AppendLine("以下是 code-capability 建立的 diff artifact。若 Status=draft，代表尚未套用，不能宣稱已修改檔案。");
+
+            if (!string.IsNullOrWhiteSpace(payload.Title))
+                sb.AppendLine($"Title: {payload.Title}");
+
+            if (!string.IsNullOrWhiteSpace(payload.Status))
+                sb.AppendLine($"Status: {payload.Status}");
+
+            if (!string.IsNullOrWhiteSpace(payload.BaseLabel))
+                sb.AppendLine($"Base: {payload.BaseLabel}");
+
+            if (!string.IsNullOrWhiteSpace(payload.TargetLabel))
+                sb.AppendLine($"Target: {payload.TargetLabel}");
+
+            if (payload.Files != null && payload.Files.Count > 0)
+            {
+                sb.AppendLine("Files:");
+                foreach (var file in payload.Files.Take(12))
+                {
+                    if (file == null)
+                        continue;
+
+                    sb.AppendLine($"- {file.ChangeType}: {file.Path} (+{file.AddedLines}/-{file.RemovedLines})");
+
+                    if (!string.IsNullOrWhiteSpace(file.Summary))
+                        sb.AppendLine($"  Summary: {file.Summary}");
+                }
+            }
+
+            if (payload.Notes != null && payload.Notes.Count > 0)
+            {
+                sb.AppendLine("Notes:");
+                foreach (var note in payload.Notes.Take(8))
+                {
+                    if (!string.IsNullOrWhiteSpace(note))
+                        sb.AppendLine($"- {note}");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(payload.UnifiedDiff))
+            {
+                sb.AppendLine("UnifiedDiff:");
+                sb.AppendLine("```diff");
+                sb.AppendLine(payload.UnifiedDiff);
                 sb.AppendLine("```");
             }
         }

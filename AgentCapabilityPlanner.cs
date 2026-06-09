@@ -14,14 +14,17 @@ namespace test
         {
             topText ??= "";
 
+            bool isWorkspaceInternalRequest = IsWorkspaceInternalRequest(topText, hasAttachments);
+
             bool needsFreshFacts =
                 FinanceTaskDetector.RequiresFreshFacts(topText, taskMode) ||
-                ContainsAny(topText,
-                    "最新", "即時", "今天", "現在", "目前",
-                    "股價", "財報", "新聞", "市場", "匯率", "天氣",
-                    "查詢", "搜尋", "查證",
-                    "latest", "current", "today", "news", "stock", "earnings",
-                    "price", "quote", "close", "after-hours", "pre-market");
+                (!isWorkspaceInternalRequest &&
+                    ContainsAny(topText,
+                        "最新", "即時", "今天", "現在", "目前",
+                        "股價", "財報", "新聞", "市場", "匯率", "天氣",
+                        "查詢", "搜尋", "查證",
+                        "latest", "current", "today", "news", "stock", "earnings",
+                        "price", "quote", "close", "after-hours", "pre-market"));
 
             bool needsReasoning =
                 ContainsAny(topText,
@@ -30,7 +33,11 @@ namespace test
 
             bool needsCode =
                 ContainsAny(topText,
-                    "程式", "程式碼", "bug", "debug", "class", "method", "code");
+                    "程式", "程式碼", "bug", "debug", "class", "method", "code") ||
+                (hasAttachments &&
+                    ContainsAny(topText,
+                        "修正", "修改", "改成", "新增", "加入", "重構", "錯誤",
+                        "fix", "modify", "update", "patch", "diff", "refactor"));
 
             var ordered = new List<string>();
             var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +89,22 @@ namespace test
             }
 
             return false;
+        }
+
+        private static bool IsWorkspaceInternalRequest(string text, bool hasAttachments)
+        {
+            if (hasAttachments &&
+                ContainsAny(text,
+                    "程式", "程式碼", "檔案", "附件", "bug", "debug", "修正", "修改",
+                    "說明", "解釋", "一句話", "code", "file", "attachment", "explain"))
+            {
+                return true;
+            }
+
+            return ContainsAny(text,
+                "workspace", "目前 workspace", "當前 workspace",
+                "附件", "附檔", "上傳的檔案", "這個檔案", "這份檔案",
+                "這個程式", "這份程式", "目前的程式分析結果");
         }
     }
 }

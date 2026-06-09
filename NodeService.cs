@@ -401,10 +401,9 @@ namespace test
     bool useStreaming,
     CancellationToken ct)
         {
-            bool allowExpensiveFallbacks = string.Equals(
-                decision.StatusLabel,
-                "Manual",
-                StringComparison.OrdinalIgnoreCase);
+            bool allowExpensiveFallbacks =
+                string.Equals(decision.StatusLabel, "Manual", StringComparison.OrdinalIgnoreCase) &&
+                AiAutoCostPolicy.IsExpensiveAutoModel(decision.ModelId);
 
             var candidates = AiFallbackPlanner.BuildCandidates(
                 decision.ModelId,

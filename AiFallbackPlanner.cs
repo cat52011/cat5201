@@ -9,7 +9,7 @@ namespace test
         public static IReadOnlyList<(string ModelId, string Reason)> BuildCandidates(
             string primaryModelId,
             NodeTaskMode taskMode)
-            => BuildCandidates(primaryModelId, taskMode, allowExpensiveAutoModels: true);
+            => BuildCandidates(primaryModelId, taskMode, allowExpensiveAutoModels: false);
 
         public static IReadOnlyList<(string ModelId, string Reason)> BuildCandidates(
             string primaryModelId,

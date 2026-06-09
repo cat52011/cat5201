@@ -9,7 +9,7 @@ namespace test
 {
     public sealed class FileCapability : IAgentCapability
     {
-        private const int MaxSnapshotCharsPerFile = 20000;
+        private const int MaxSnapshotCharsPerFile = 100000;
 
         public string Id => "file-capability";
 

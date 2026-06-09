@@ -2750,8 +2750,12 @@ namespace test
 
         public IReadOnlyList<AttachmentInfo> GetAttachmentsForNode(NodeControl node)
         {
+            if (node == null)
+                return Array.Empty<AttachmentInfo>();
+
             if (_attachmentsByNode.TryGetValue(node.Id, out var list))
                 return list.ToList();
+
             return Array.Empty<AttachmentInfo>();
         }
 
