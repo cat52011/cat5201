@@ -1563,6 +1563,26 @@ namespace test
                     continue;
                 }
 
+                if (trimmed.StartsWith("Snapshot:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("SnapshotFile:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("SnapshotPreview:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = currentArtifactCard == null ? root : currentArtifactFacts;
+                    target.Children.Add(CreateCodeSnapshotCard(trimmed));
+                    continue;
+                }
+
+                if (trimmed.StartsWith("Diff:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("DiffBase:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("DiffFile:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("UnifiedDiff:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("DiffNote:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = currentArtifactCard == null ? root : currentArtifactFacts;
+                    target.Children.Add(CreateDiffTextCard(trimmed));
+                    continue;
+                }
+
                 if (trimmed.StartsWith("OwnerAgent:", StringComparison.OrdinalIgnoreCase))
                 {
                     var target = currentArtifactCard == null ? root : currentArtifactFacts;
@@ -1631,6 +1651,94 @@ namespace test
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(10),
                 Margin = new Thickness(0, 0, 0, 8),
+                Child = panel
+            };
+        }
+
+        private Border CreateCodeSnapshotCard(string line)
+        {
+            string label = "Snapshot";
+            string body = line;
+
+            int colon = line.IndexOf(':');
+            if (colon >= 0)
+            {
+                label = line.Substring(0, colon).Trim();
+                body = line.Substring(colon + 1).Trim();
+            }
+
+            var panel = new StackPanel();
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 11.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = CreateBrush("#3B4A66", "#3B4A66"),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(body) ? "-" : body,
+                FontSize = 11.5,
+                Foreground = CreateBrush("#43536C", "#43536C"),
+                Margin = new Thickness(0, 3, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            return new Border
+            {
+                Background = CreateBrush("#F4F7FC", "#F4F7FC"),
+                BorderBrush = CreateBrush("#D7E1F0", "#D7E1F0"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 7, 8, 7),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = panel
+            };
+        }
+
+        private Border CreateDiffTextCard(string line)
+        {
+            string label = "Diff";
+            string body = line;
+
+            int colon = line.IndexOf(':');
+            if (colon >= 0)
+            {
+                label = line.Substring(0, colon).Trim();
+                body = line.Substring(colon + 1).Trim();
+            }
+
+            var panel = new StackPanel();
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 11.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = CreateBrush("#2F5F52", "#2F5F52"),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(body) ? "-" : body,
+                FontSize = 11.5,
+                Foreground = CreateBrush("#365950", "#365950"),
+                Margin = new Thickness(0, 3, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            return new Border
+            {
+                Background = CreateBrush("#F0FAF6", "#F0FAF6"),
+                BorderBrush = CreateBrush("#BFE5D7", "#BFE5D7"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 7, 8, 7),
+                Margin = new Thickness(0, 0, 0, 6),
                 Child = panel
             };
         }

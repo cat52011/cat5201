@@ -171,28 +171,7 @@ namespace test
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(text))
-                return false;
-
-            return ContainsAny(
-                text,
-                "股價", "財報", "營收", "毛利率", "EPS", "盤前", "盤後", "收盤", "即時價",
-                "TSM", "MU", "NVDA", "AMD", "TSLA", "AAPL", "MSFT",
-                "stock", "quote", "earnings", "revenue", "guidance", "after-hours", "pre-market");
-        }
-
-        private static bool ContainsAny(string text, params string[] keywords)
-        {
-            foreach (var keyword in keywords)
-            {
-                if (!string.IsNullOrWhiteSpace(keyword) &&
-                    text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return FinanceTaskDetector.IsFinanceLike(text);
         }
 
         private async Task<string> GenerateWithContinuationStreamingAsync(

@@ -17,5 +17,7 @@ namespace test
 
         public IReadOnlyList<MainWindow.AttachmentInfo> Attachments { get; init; }
             = Array.Empty<MainWindow.AttachmentInfo>();
+
+        public string AttachmentsRootDir { get; init; } = "";
     }
 }

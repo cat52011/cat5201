@@ -15,12 +15,13 @@ namespace test
             topText ??= "";
 
             bool needsFreshFacts =
-                taskMode == NodeTaskMode.Research ||
+                FinanceTaskDetector.RequiresFreshFacts(topText, taskMode) ||
                 ContainsAny(topText,
                     "最新", "即時", "今天", "現在", "目前",
                     "股價", "財報", "新聞", "市場", "匯率", "天氣",
                     "查詢", "搜尋", "查證",
-                    "latest", "current", "today", "news", "stock", "earnings");
+                    "latest", "current", "today", "news", "stock", "earnings",
+                    "price", "quote", "close", "after-hours", "pre-market");
 
             bool needsReasoning =
                 ContainsAny(topText,

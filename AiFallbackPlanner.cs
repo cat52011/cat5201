@@ -9,6 +9,12 @@ namespace test
         public static IReadOnlyList<(string ModelId, string Reason)> BuildCandidates(
             string primaryModelId,
             NodeTaskMode taskMode)
+            => BuildCandidates(primaryModelId, taskMode, allowExpensiveAutoModels: true);
+
+        public static IReadOnlyList<(string ModelId, string Reason)> BuildCandidates(
+            string primaryModelId,
+            NodeTaskMode taskMode,
+            bool allowExpensiveAutoModels)
         {
             var result = new List<(string ModelId, string Reason)>();
 
@@ -18,6 +24,9 @@ namespace test
                     return;
 
                 string normalized = AiModelHelper.NormalizeNodeModel(modelId);
+
+                if (!allowExpensiveAutoModels && AiAutoCostPolicy.IsExpensiveAutoModel(normalized))
+                    return;
 
                 if (result.Any(x => string.Equals(x.ModelId, normalized, StringComparison.OrdinalIgnoreCase)))
                     return;

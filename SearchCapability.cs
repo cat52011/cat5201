@@ -52,7 +52,7 @@ namespace test
             string originalQuery = context.TopText ?? "";
 
             bool financeQuery =
-                IsStockFinanceQuery(originalQuery) ||
+                FinanceTaskDetector.IsFinanceLike(originalQuery) ||
                 DetectTickers(originalQuery).Count > 0;
 
             if (financeQuery)
@@ -832,7 +832,7 @@ Quote Source:
 
             while (line.StartsWith("-", StringComparison.Ordinal) ||
                    line.StartsWith("*", StringComparison.Ordinal) ||
-                   line.StartsWith("•", StringComparison.Ordinal))
+                   line.StartsWith("‧", StringComparison.Ordinal))
             {
                 line = line.Substring(1).TrimStart();
             }
@@ -1136,51 +1136,15 @@ Quote Source:
 
         private static bool IsStockFinanceQuery(string text)
         {
-            if (string.IsNullOrWhiteSpace(text))
-                return false;
-
-            return ContainsAny(
-                text,
-                "股價", "美股", "財報", "營收", "EPS", "毛利率", "走勢", "短期", "預測",
-                "stock price", "quote", "earnings", "revenue", "guidance", "outlook",
-                "TSM", "MU", "NVDA", "AMD", "TSLA", "AAPL", "MSFT");
+            return FinanceTaskDetector.IsFinanceLike(text);
         }
 
         private static List<string> DetectTickers(string text)
         {
-            var result = new List<string>();
-
-            AddTickerIfMentioned(result, text, "TSM", "TSM", "台積電", "台積");
-            AddTickerIfMentioned(result, text, "MU", "MU", "美光", "Micron");
-            AddTickerIfMentioned(result, text, "NVDA", "NVDA", "輝達", "NVIDIA");
-            AddTickerIfMentioned(result, text, "AMD", "AMD", "超微");
-            AddTickerIfMentioned(result, text, "TSLA", "TSLA", "Tesla", "特斯拉");
-            AddTickerIfMentioned(result, text, "AAPL", "AAPL", "Apple", "蘋果");
-            AddTickerIfMentioned(result, text, "MSFT", "MSFT", "Microsoft", "微軟");
-
-            return result
+            return FinanceTaskDetector.DetectKnownTickers(text)
+                .Concat(FinanceTaskDetector.DetectCashtags(text))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-        }
-
-        private static void AddTickerIfMentioned(
-            List<string> result,
-            string text,
-            string ticker,
-            params string[] aliases)
-        {
-            if (result == null || string.IsNullOrWhiteSpace(text))
-                return;
-
-            foreach (var alias in aliases)
-            {
-                if (!string.IsNullOrWhiteSpace(alias) &&
-                    text.Contains(alias, StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add(ticker);
-                    return;
-                }
-            }
         }
 
         private static string ExtractKeyPoint(string snippet)

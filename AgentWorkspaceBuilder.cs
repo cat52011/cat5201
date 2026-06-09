@@ -42,6 +42,12 @@ namespace test
             if (value is CodeAnalysisPayload)
                 return "code";
 
+            if (value is CodeFileSnapshotPayload)
+                return "code";
+
+            if (value is CodeDiffArtifactPayload)
+                return "diff";
+
             if (value is ReasoningPayload ||
                 value is TaskDecompositionPayload ||
                 value is DelegateOutputPayload)
@@ -91,6 +97,12 @@ namespace test
 
             if (value is CodeAnalysisPayload)
                 return "code";
+
+            if (value is CodeFileSnapshotPayload)
+                return "code";
+
+            if (value is CodeDiffArtifactPayload)
+                return "diff";
 
             if (value is VerifiedFactPayload ||
                 value is SearchSummaryPayload ||
@@ -144,6 +156,12 @@ namespace test
             if (value is CodeAnalysisPayload code)
                 return $"Code Analysis - {code.RequestType}";
 
+            if (value is CodeFileSnapshotPayload snapshot)
+                return $"Code File Snapshot - {snapshot.Files?.Count ?? 0} file(s)";
+
+            if (value is CodeDiffArtifactPayload diff)
+                return string.IsNullOrWhiteSpace(diff.Title) ? $"Code Diff - {diff.Status}" : diff.Title;
+
             if (value is ReasoningPayload reasoning)
                 return $"Reasoning - {reasoning.ReasoningType}";
 
@@ -182,6 +200,15 @@ namespace test
             if (value is CodeAnalysisPayload code)
                 return code.Guidance ?? "";
 
+            if (value is CodeFileSnapshotPayload snapshot)
+                return snapshot.Summary ?? "";
+
+            if (value is CodeDiffArtifactPayload diff)
+            {
+                int fileCount = diff.Files?.Count ?? 0;
+                return $"Status={diff.Status}, Files={fileCount}, +{CountAddedLines(diff)}/-{CountRemovedLines(diff)}";
+            }
+
             if (value is ReasoningPayload reasoning)
                 return reasoning.OutputGuidance ?? "";
 
@@ -209,6 +236,32 @@ namespace test
             }
 
             return value?.ToString() ?? "";
+        }
+
+        private static int CountAddedLines(CodeDiffArtifactPayload diff)
+        {
+            int total = 0;
+
+            if (diff?.Files == null)
+                return total;
+
+            foreach (var file in diff.Files)
+                total += file?.AddedLines ?? 0;
+
+            return total;
+        }
+
+        private static int CountRemovedLines(CodeDiffArtifactPayload diff)
+        {
+            int total = 0;
+
+            if (diff?.Files == null)
+                return total;
+
+            foreach (var file in diff.Files)
+                total += file?.RemovedLines ?? 0;
+
+            return total;
         }
     }
 }

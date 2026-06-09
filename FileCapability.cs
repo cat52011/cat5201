@@ -9,6 +9,8 @@ namespace test
 {
     public sealed class FileCapability : IAgentCapability
     {
+        private const int MaxSnapshotCharsPerFile = 20000;
+
         public string Id => "file-capability";
 
         public AgentCapability RequiredAgentCapability => AgentCapability.FileTool;
@@ -30,6 +32,7 @@ namespace test
                 return Task.FromResult(AgentCapabilityResult.NotHandled());
 
             var items = new List<FileSummaryItem>();
+            var snapshots = new List<CodeFileSnapshotItem>();
 
             foreach (var a in attachments)
             {
@@ -68,16 +71,28 @@ string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase) ||
 
                 items.Add(new FileSummaryItem
                 {
-                    FileName = fileName,
-                    Kind = kind,
-                    MimeType = mimeType,
-                    RelativePath = relativePath,
+                    FileName = fileName ?? "",
+                    Kind = kind ?? "",
+                    MimeType = mimeType ?? "",
+                    RelativePath = relativePath ?? "",
                     FileType = ResolveFileTypeLabel(ext, mimeType, isImage),
                     IsImage = isImage,
                     IsPdf = isPdf,
                     IsTextLike = isTextLike,
-                    ContentPreview = BuildContentPreview(fileName, kind, mimeType, isImage, isPdf, isTextLike)
+                    ContentPreview = BuildContentPreview(fileName ?? "", kind ?? "", mimeType ?? "", isImage, isPdf, isTextLike)
                 });
+
+                if (isTextLike)
+                {
+                    var snapshot = TryBuildSnapshot(
+                        context.AttachmentsRootDir,
+                        relativePath ?? "",
+                        fileName ?? "",
+                        ResolveFileTypeLabel(ext, mimeType, isImage));
+
+                    if (snapshot != null)
+                        snapshots.Add(snapshot);
+                }
             }
 
             if (items.Count == 0)
@@ -89,8 +104,26 @@ string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase) ||
                 Summary = BuildSummary(items)
             };
 
+            if (snapshots.Count == 0)
+            {
+                return Task.FromResult(
+                    AgentCapabilityResult.WithData("file_summary", payload));
+            }
+
             return Task.FromResult(
-                AgentCapabilityResult.WithData("file_summary", payload));
+                new AgentCapabilityResult
+                {
+                    Handled = true,
+                    Data = new Dictionary<string, object>
+                    {
+                        ["file_summary"] = payload,
+                        ["code_file_snapshot"] = new CodeFileSnapshotPayload
+                        {
+                            Files = snapshots,
+                            Summary = BuildSnapshotSummary(snapshots)
+                        }
+                    }
+                });
         }
 
         private static string ResolveFileTypeLabel(
@@ -131,6 +164,110 @@ string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase) ||
                 return "text";
 
             return "file";
+        }
+
+        private static CodeFileSnapshotItem? TryBuildSnapshot(
+            string attachmentsRootDir,
+            string relativePath,
+            string fileName,
+            string fileType)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(attachmentsRootDir) ||
+                    string.IsNullOrWhiteSpace(relativePath))
+                {
+                    return null;
+                }
+
+                string root = Path.GetFullPath(attachmentsRootDir);
+                string fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
+
+                if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(fullPath))
+                {
+                    return null;
+                }
+
+                string content = File.ReadAllText(fullPath);
+                int originalLength = content.Length;
+                bool truncated = originalLength > MaxSnapshotCharsPerFile;
+
+                if (truncated)
+                    content = content.Substring(0, MaxSnapshotCharsPerFile);
+
+                return new CodeFileSnapshotItem
+                {
+                    FileName = fileName ?? "",
+                    RelativePath = relativePath ?? "",
+                    FileType = fileType ?? "",
+                    Language = ResolveLanguage(fileName ?? "", fileType ?? ""),
+                    CharacterCount = originalLength,
+                    LineCount = CountLines(content),
+                    IsTruncated = truncated,
+                    Content = content
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ResolveLanguage(string fileName, string fileType)
+        {
+            string ext = Path.GetExtension(fileName ?? "") ?? "";
+
+            if (string.Equals(ext, ".cs", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(fileType, "csharp", StringComparison.OrdinalIgnoreCase))
+                return "C#";
+
+            if (string.Equals(ext, ".xaml", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(fileType, "xaml", StringComparison.OrdinalIgnoreCase))
+                return "XAML";
+
+            if (string.Equals(ext, ".py", StringComparison.OrdinalIgnoreCase))
+                return "Python";
+
+            if (string.Equals(ext, ".js", StringComparison.OrdinalIgnoreCase))
+                return "JavaScript";
+
+            if (string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase))
+                return "TypeScript";
+
+            if (string.Equals(ext, ".json", StringComparison.OrdinalIgnoreCase))
+                return "JSON";
+
+            if (string.Equals(ext, ".md", StringComparison.OrdinalIgnoreCase))
+                return "Markdown";
+
+            return fileType ?? "";
+        }
+
+        private static int CountLines(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return 0;
+
+            int lines = 1;
+            foreach (char c in text)
+            {
+                if (c == '\n')
+                    lines++;
+            }
+
+            return lines;
+        }
+
+        private static string BuildSnapshotSummary(IReadOnlyList<CodeFileSnapshotItem> snapshots)
+        {
+            if (snapshots == null || snapshots.Count == 0)
+                return "No readable code/text file snapshots.";
+
+            int totalChars = snapshots.Sum(x => x.CharacterCount);
+            int truncated = snapshots.Count(x => x.IsTruncated);
+
+            return $"Readable file snapshots: {snapshots.Count}; total chars: {totalChars}; truncated: {truncated}.";
         }
 
         private static string BuildContentPreview(

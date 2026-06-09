@@ -148,28 +148,15 @@ namespace test
 
         private static bool IsFinanceLikeTask(string text)
         {
-            if (string.IsNullOrWhiteSpace(text))
-                return false;
-
-            return ContainsAny(
-                text,
-                "股價", "美股", "財報", "營收", "毛利率", "EPS", "盤前", "盤後", "收盤", "即時價",
-                "走勢", "短期", "TSM", "MU", "NVDA", "AMD", "TSLA", "AAPL", "MSFT",
-                "stock", "quote", "earnings", "revenue", "guidance", "pre-market", "after-hours");
+            return FinanceTaskDetector.IsFinanceLike(text);
         }
 
-        private static bool ContainsAny(string text, params string[] keywords)
+        private bool ShouldSkipCapabilities(string topText)
         {
-            foreach (var keyword in keywords)
-            {
-                if (!string.IsNullOrWhiteSpace(keyword) &&
-                    text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
+            if (_main.IsAdvancedAutoResolverEnabled())
+                return false;
 
-            return false;
+            return !IsFinanceLikeTask(topText);
         }
 
         public async Task<string> GenerateAsync(NodeControl node, string topText, CancellationToken ct)
@@ -191,7 +178,7 @@ namespace test
                     UseStreaming = false,
                     OnDelta = null,
                     CancellationToken = ct,
-                    SkipCapabilities = !_main.IsAdvancedAutoResolverEnabled(),
+                    SkipCapabilities = ShouldSkipCapabilities(topText),
                     Workspace = new AgentWorkspace()
                 });
 
@@ -299,7 +286,7 @@ namespace test
                     UseStreaming = true,
                     OnDelta = onDelta,
                     CancellationToken = ct,
-                    SkipCapabilities = !_main.IsAdvancedAutoResolverEnabled(),
+                    SkipCapabilities = ShouldSkipCapabilities(topText),
                     Workspace = new AgentWorkspace()
                 });
 
@@ -414,7 +401,15 @@ namespace test
     bool useStreaming,
     CancellationToken ct)
         {
-            var candidates = AiFallbackPlanner.BuildCandidates(decision.ModelId, decision.TaskMode);
+            bool allowExpensiveFallbacks = string.Equals(
+                decision.StatusLabel,
+                "Manual",
+                StringComparison.OrdinalIgnoreCase);
+
+            var candidates = AiFallbackPlanner.BuildCandidates(
+                decision.ModelId,
+                decision.TaskMode,
+                allowExpensiveFallbacks);
 
             if (decision.ForceSingleModel)
             {
@@ -430,7 +425,10 @@ namespace test
 
                 if (candidates.Count == 0)
                 {
-                    candidates = AiFallbackPlanner.BuildCandidates(decision.ModelId, decision.TaskMode)
+                    candidates = AiFallbackPlanner.BuildCandidates(
+                            decision.ModelId,
+                            decision.TaskMode,
+                            allowExpensiveFallbacks)
                         .Take(1)
                         .ToList();
                 }

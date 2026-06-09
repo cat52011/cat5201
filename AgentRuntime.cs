@@ -128,7 +128,8 @@ namespace test
                 Agent = runtimeAgent,
                 TopText = topText,
                 TaskMode = decision.TaskMode,
-                Attachments = _main.GetAttachmentsForNode(request.Node)
+                Attachments = _main.GetAttachmentsForNode(request.Node),
+                AttachmentsRootDir = _main.GetAttachmentsRootDir()
             };
 
             var capabilityPlan = AgentCapabilityPlanner.Build(
@@ -147,7 +148,6 @@ namespace test
                 .Cast<IAgentCapability>()
                 .ToList();
             bool runCapabilityLayer =
-                allowAgentFirstAutomation &&
                 !request.SkipCapabilities;
 
             if (runCapabilityLayer)
@@ -402,7 +402,8 @@ namespace test
                             Agent = runtimeAgent,
                             TopText = capabilityAugmentedText,
                             TaskMode = decision.TaskMode,
-                            Attachments = _main.GetAttachmentsForNode(request.Node)
+                            Attachments = _main.GetAttachmentsForNode(request.Node),
+                            AttachmentsRootDir = _main.GetAttachmentsRootDir()
                         };
 
                         continue;
@@ -609,7 +610,7 @@ namespace test
                 {
                     synthesisExecution = FinalAnswerSanitizer.Sanitize(
                         synthesisExecution,
-                        enforceSynthesisFormat: true);
+                        enforceSynthesisFormat: workspace.GetByType("verified_facts").Count > 0);
                 }
 
                 if (synthesisExecution != null && synthesisExecution.IsSuccess)
@@ -637,9 +638,7 @@ namespace test
                 capabilityData.ContainsKey("verified_facts") ||
                 workspace.GetByType("verified_facts").Count > 0;
 
-            bool enforceFinalSynthesisFormat =
-                hasVerifiedFacts ||
-                !string.IsNullOrWhiteSpace(workspaceBlock);
+            bool enforceFinalSynthesisFormat = hasVerifiedFacts;
 
             string finalInput = capabilityAugmentedText;
 
@@ -708,7 +707,7 @@ namespace test
             {
                 execution = FinalAnswerSanitizer.Sanitize(
                     synthesisExecution,
-                    enforceSynthesisFormat: true);
+                    enforceSynthesisFormat: enforceFinalSynthesisFormat);
 
                 if (request.UseStreaming && request.OnDelta != null &&
                     !string.IsNullOrWhiteSpace(execution.Text))
@@ -781,6 +780,11 @@ namespace test
             System.Diagnostics.Debug.WriteLine(
                 $"[Workspace Preview]\n{workspaceBlock.Substring(0, Math.Min(1000, workspaceBlock.Length))}");
 
+            bool hasVerifiedFacts = workspace.GetByType("verified_facts").Count > 0;
+            string synthesisInstructions = hasVerifiedFacts
+                ? BuildFinanceFinalSynthesisInstructions()
+                : BuildGeneralFinalSynthesisInstructions();
+
             string synthesisInput =
         $@"你是 final synthesizer。你的任務是把 shared workspace 整理成使用者真正需要看的最終答案。
 
@@ -790,7 +794,23 @@ namespace test
 【Shared Workspace】
 {workspaceBlock}
 
-【最高優先規則】
+{synthesisInstructions}
+
+請現在輸出最終答案：";
+
+            return await _executeWithFallbackAsync(
+                node,
+                synthesisInput,
+                synthesisDecision,
+                null,
+                false,
+                ct);
+        }
+
+        private static string BuildFinanceFinalSynthesisInstructions()
+        {
+            return
+@"【最高優先規則】
 1. 如果 Shared Workspace 中有【Verified Facts】，必須優先使用它作為價格、日期、財報、EPS、營收、毛利率、指引等事實來源。
 2. 如果沒有【Verified Facts】，但有【Search Context】或 research-agent 的 search_summary，才可使用 search_summary 作為事實來源。
 3. 只有在 Shared Workspace 完全沒有 Verified Facts、Search Context、search_summary 時，才可以回答資料不足。
@@ -846,17 +866,23 @@ namespace test
 - 不要重複同一個觀點。
 - 不要把每個來源都展開。
 - 不要用「已知資料 / 合理推論 / 風險」這三段舊格式。
-- 最終答案長度控制在一般回答可讀範圍內。
+- 最終答案長度控制在一般回答可讀範圍內。";
+        }
 
-請現在輸出最終答案：";
+        private static string BuildGeneralFinalSynthesisInstructions()
+        {
+            return
+@"【最高優先規則】
+1. 依照使用者原始任務回答，不要套用金融、股票、短期走勢、資料衝突等格式，除非使用者明確要求。
+2. Shared Workspace 只作為背景與附件內容來源；不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Code File Snapshot、parallel_agent_output、delegate_output。
+3. 若使用者要求一句話，就只輸出一句話。
+4. 若任務是程式摘要或檔案說明，直接說明檔案用途、主要功能與關鍵結構；不要加入不適用的金融段落。
+5. 不可輸出 citation marker，例如 [1][2][3]。
+6. 使用繁體中文。
 
-            return await _executeWithFallbackAsync(
-                node,
-                synthesisInput,
-                synthesisDecision,
-                null,
-                false,
-                ct);
+【風格限制】
+- 簡潔、直接，避免把 workspace 逐條倒出來。
+- 尊重使用者指定的長度、語氣與格式。";
         }
         private static string BuildCapabilityDataBlock(
             IReadOnlyDictionary<string, object> capabilityData)
@@ -899,6 +925,12 @@ namespace test
                 if (string.Equals(kv.Key, "code_analysis", StringComparison.OrdinalIgnoreCase))
                 {
                     AppendCodeAnalysis(sb, kv.Value);
+                    continue;
+                }
+
+                if (string.Equals(kv.Key, "code_file_snapshot", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendCodeFileSnapshot(sb, kv.Value);
                     continue;
                 }
 
@@ -1144,6 +1176,46 @@ namespace test
 
             if (!string.IsNullOrWhiteSpace(payload.Guidance))
                 sb.AppendLine($"Guidance: {payload.Guidance}");
+        }
+
+        private static void AppendCodeFileSnapshot(StringBuilder sb, object value)
+        {
+            if (sb == null || value == null)
+                return;
+
+            if (value is not CodeFileSnapshotPayload payload)
+            {
+                sb.AppendLine();
+                sb.AppendLine("【Code File Snapshot】");
+                sb.AppendLine(value.ToString() ?? "");
+                return;
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("【Code File Snapshot】");
+            sb.AppendLine("以下是使用者附件中的文字/程式檔案快照。回答程式修改或 diff 任務時，只能根據此處內容與使用者要求推論。");
+
+            if (!string.IsNullOrWhiteSpace(payload.Summary))
+                sb.AppendLine(payload.Summary);
+
+            if (payload.Files == null || payload.Files.Count == 0)
+                return;
+
+            foreach (var file in payload.Files.Take(4))
+            {
+                if (file == null)
+                    continue;
+
+                sb.AppendLine();
+                sb.AppendLine($"File: {file.FileName}");
+                sb.AppendLine($"Path: {file.RelativePath}");
+                sb.AppendLine($"Language: {file.Language}");
+                sb.AppendLine($"Chars: {file.CharacterCount}; Lines: {file.LineCount}; Truncated: {file.IsTruncated}");
+                sb.AppendLine("Content:");
+                sb.AppendLine("```");
+                sb.AppendLine(file.Content ?? "");
+                sb.AppendLine("```");
+            }
         }
 
         private static void AppendSearchSummary(StringBuilder sb, object value)

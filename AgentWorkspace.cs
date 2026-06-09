@@ -500,6 +500,18 @@ namespace test
                 size += verified.Query?.Length ?? 0;
                 size += (verified.Facts?.Count ?? 0) * 80;
             }
+            else if (item.Payload is CodeFileSnapshotPayload snapshot)
+            {
+                size += snapshot.Summary?.Length ?? 0;
+                size += snapshot.Files?.Sum(x => x.Content?.Length ?? 0) ?? 0;
+            }
+            else if (item.Payload is CodeDiffArtifactPayload diff)
+            {
+                size += diff.Title?.Length ?? 0;
+                size += diff.UnifiedDiff?.Length ?? 0;
+                size += (diff.Files?.Count ?? 0) * 80;
+                size += (diff.Notes?.Count ?? 0) * 40;
+            }
             else if (item.Payload != null)
             {
                 size += item.Payload.ToString()?.Length ?? 0;
@@ -550,6 +562,46 @@ namespace test
                             lines.Add($"    {ownership}");
                     }
                 }
+                else if (item.Payload is CodeFileSnapshotPayload snapshot)
+                {
+                    lines.Add($"  Snapshot: {Safe(snapshot.Summary)}");
+
+                    foreach (var file in snapshot.Files?.Take(8) ?? Array.Empty<CodeFileSnapshotItem>())
+                    {
+                        if (file == null)
+                            continue;
+
+                        lines.Add($"  SnapshotFile: {Safe(file.FileName)} / {Safe(file.Language)} / lines={file.LineCount} / chars={file.CharacterCount} / truncated={file.IsTruncated}");
+
+                        if (!string.IsNullOrWhiteSpace(file.Content))
+                            lines.Add($"  SnapshotPreview: {Trim(file.Content.Replace("\r\n", "\n").Replace('\r', '\n'), 300)}");
+                    }
+                }
+                else if (item.Payload is CodeDiffArtifactPayload diff)
+                {
+                    string changeSummary = BuildDiffChangeSummary(diff);
+                    lines.Add($"  Diff: Status={Safe(diff.Status)} / Files={diff.Files?.Count ?? 0} / {changeSummary}");
+
+                    if (!string.IsNullOrWhiteSpace(diff.BaseLabel) || !string.IsNullOrWhiteSpace(diff.TargetLabel))
+                        lines.Add($"  DiffBase: {Safe(diff.BaseLabel)} -> {Safe(diff.TargetLabel)}");
+
+                    foreach (var file in diff.Files?.Take(12) ?? Array.Empty<CodeDiffFileChange>())
+                    {
+                        if (file == null)
+                            continue;
+
+                        lines.Add($"  DiffFile: {Safe(file.ChangeType)} / {Safe(file.Path)} / +{file.AddedLines} -{file.RemovedLines} / {Trim(file.Summary, 180)}");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(diff.UnifiedDiff))
+                        lines.Add($"  UnifiedDiff: {Trim(diff.UnifiedDiff, 360)}");
+
+                    foreach (var note in diff.Notes?.Take(5) ?? Array.Empty<string>())
+                    {
+                        if (!string.IsNullOrWhiteSpace(note))
+                            lines.Add($"  DiffNote: {Trim(note, 180)}");
+                    }
+                }
                 else if (!string.IsNullOrWhiteSpace(item.TextSummary))
                 {
                     lines.Add($"  Summary: {Trim(item.TextSummary, 260)}");
@@ -560,6 +612,26 @@ namespace test
                 lines.Add($"Artifact list truncated: {items.Count - 20} more item(s).");
 
             return lines;
+        }
+
+        private static string BuildDiffChangeSummary(CodeDiffArtifactPayload diff)
+        {
+            if (diff?.Files == null || diff.Files.Count == 0)
+                return "+0 -0";
+
+            int added = 0;
+            int removed = 0;
+
+            foreach (var file in diff.Files)
+            {
+                if (file == null)
+                    continue;
+
+                added += file.AddedLines;
+                removed += file.RemovedLines;
+            }
+
+            return $"+{added} -{removed}";
         }
 
         private static string NormalizeKey(string? text)
