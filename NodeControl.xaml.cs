@@ -1037,6 +1037,7 @@ namespace test
         {
             _isGenerating = true;
             UpdateEditButtons();
+            TimeSpan executionTimeout = ResolveExecutionTimeout(topText);
 
             try
             {
@@ -1056,7 +1057,7 @@ namespace test
                     return;
                 }
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+                using var cts = new CancellationTokenSource(executionTimeout);
 
                 string finalReply = await _parent.NodeService.GenerateStreamAsync(
                     this,
@@ -1091,6 +1092,12 @@ namespace test
                 UpdateAutoTaskPreview();
                 ContentChanged?.Invoke(this, EventArgs.Empty);
             }
+            catch (OperationCanceledException)
+            {
+                StopBottomLoadingAnimation(clearIfLoading: true);
+                BottomDisplay.Text =
+                    $"（AI 產生逾時）\n這次任務超過 {FormatTimeout(executionTimeout)}，已自動取消。";
+            }
             catch (Exception ex)
             {
                 StopBottomLoadingAnimation(clearIfLoading: true);
@@ -1102,6 +1109,32 @@ namespace test
                 _isGenerating = false;
                 UpdateEditButtons();
             }
+        }
+
+        private TimeSpan ResolveExecutionTimeout(string topText)
+        {
+            bool hasAttachments = _attachments.Count > 0;
+            string text = topText ?? "";
+
+            bool codePatchTask =
+                ContainsAny(text, text.ToLowerInvariant(),
+                    "bug", "debug", "修正", "修改", "修好", "patch", "diff", "重構", "程式", "程式碼");
+
+            if (hasAttachments && codePatchTask)
+                return TimeSpan.FromMinutes(10);
+
+            if (hasAttachments)
+                return TimeSpan.FromMinutes(6);
+
+            return TimeSpan.FromMinutes(3);
+        }
+
+        private static string FormatTimeout(TimeSpan timeout)
+        {
+            if (timeout.TotalMinutes >= 1)
+                return $"{(int)Math.Round(timeout.TotalMinutes)} 分鐘";
+
+            return $"{(int)Math.Round(timeout.TotalSeconds)} 秒";
         }
 
         private void StartBottomLoadingAnimation()

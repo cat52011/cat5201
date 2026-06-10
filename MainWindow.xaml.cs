@@ -1448,6 +1448,11 @@ namespace test
 
             cardBorder.Child = contentPanel;
 
+            AttachCopyContextMenu(
+                cardBorder,
+                "複製此決策區塊",
+                () => BuildDecisionStepCopyText(step, index));
+
             if (step.IsExpandable)
             {
                 cardBorder.MouseLeftButtonUp += (_, __) =>
@@ -1507,6 +1512,33 @@ namespace test
             return string.Equals(step?.Title, "Workspace", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static string BuildDecisionStepCopyText(
+            NodeDecisionStepViewData step,
+            int index)
+        {
+            if (step == null)
+                return "";
+
+            var lines = new List<string>
+            {
+                $"{index + 1}. {SafeCopy(step.Title)}",
+                $"State: {step.State}" + (step.IsActive ? " / Running" : ""),
+                $"Detail: {SafeCopy(step.Detail)}"
+            };
+
+            if (step.DetailLines != null && step.DetailLines.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("Details:");
+                lines.AddRange(step.DetailLines.Where(x => !string.IsNullOrWhiteSpace(x)));
+            }
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        private static string SafeCopy(string? text)
+            => string.IsNullOrWhiteSpace(text) ? "-" : text.Trim();
+
         private FrameworkElement CreateWorkspaceInspector(IReadOnlyList<string> lines)
         {
             var root = new StackPanel();
@@ -1523,6 +1555,7 @@ namespace test
             };
 
             Border? currentArtifactCard = null;
+            List<string>? currentArtifactLines = null;
 
             foreach (var raw in lines)
             {
@@ -1539,18 +1572,25 @@ namespace test
 
                 if (trimmed.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase))
                 {
+                    currentArtifactLines = new List<string> { trimmed };
+
                     currentArtifactFacts = new StackPanel
                     {
                         Margin = new Thickness(0, 8, 0, 0)
                     };
 
-                    currentArtifactCard = CreateArtifactCard(trimmed, currentArtifactFacts);
+                    currentArtifactCard = CreateArtifactCard(
+                        trimmed,
+                        currentArtifactFacts,
+                        () => string.Join(Environment.NewLine, currentArtifactLines ?? new List<string>()));
+
                     root.Children.Add(currentArtifactCard);
                     continue;
                 }
 
                 if (trimmed.StartsWith("VerifiedFacts:", StringComparison.OrdinalIgnoreCase))
                 {
+                    currentArtifactLines?.Add(trimmed);
                     var target = currentArtifactCard == null ? root : currentArtifactFacts;
                     target.Children.Add(CreateWorkspaceTextCard(trimmed, muted: true));
                     continue;
@@ -1558,6 +1598,7 @@ namespace test
 
                 if (trimmed.StartsWith("Fact:", StringComparison.OrdinalIgnoreCase))
                 {
+                    currentArtifactLines?.Add(trimmed);
                     var target = currentArtifactCard == null ? root : currentArtifactFacts;
                     target.Children.Add(CreateFactCard(trimmed));
                     continue;
@@ -1567,6 +1608,7 @@ namespace test
                     trimmed.StartsWith("SnapshotFile:", StringComparison.OrdinalIgnoreCase) ||
                     trimmed.StartsWith("SnapshotPreview:", StringComparison.OrdinalIgnoreCase))
                 {
+                    currentArtifactLines?.Add(trimmed);
                     var target = currentArtifactCard == null ? root : currentArtifactFacts;
                     target.Children.Add(CreateCodeSnapshotCard(trimmed));
                     continue;
@@ -1578,6 +1620,7 @@ namespace test
                     trimmed.StartsWith("UnifiedDiff:", StringComparison.OrdinalIgnoreCase) ||
                     trimmed.StartsWith("DiffNote:", StringComparison.OrdinalIgnoreCase))
                 {
+                    currentArtifactLines?.Add(trimmed);
                     var target = currentArtifactCard == null ? root : currentArtifactFacts;
                     target.Children.Add(CreateDiffTextCard(trimmed));
                     continue;
@@ -1585,11 +1628,13 @@ namespace test
 
                 if (trimmed.StartsWith("OwnerAgent:", StringComparison.OrdinalIgnoreCase))
                 {
+                    currentArtifactLines?.Add(trimmed);
                     var target = currentArtifactCard == null ? root : currentArtifactFacts;
                     target.Children.Add(CreateOwnershipTags(trimmed));
                     continue;
                 }
 
+                currentArtifactLines?.Add(trimmed);
                 root.Children.Add(CreateWorkspaceTextCard(trimmed, muted: true));
             }
 
@@ -1608,7 +1653,10 @@ namespace test
             };
         }
 
-        private Border CreateArtifactCard(string line, StackPanel factsHost)
+        private Border CreateArtifactCard(
+            string line,
+            StackPanel factsHost,
+            Func<string> copyTextProvider)
         {
             var parts = line.Substring("Artifact:".Length).Trim()
                 .Split('/')
@@ -1643,7 +1691,7 @@ namespace test
 
             panel.Children.Add(factsHost);
 
-            return new Border
+            var card = new Border
             {
                 Background = CreateBrush("#FFFFFF", "#FFFFFF"),
                 BorderBrush = CreateBrush("#DDE7F2", "#DDE7F2"),
@@ -1653,6 +1701,13 @@ namespace test
                 Margin = new Thickness(0, 0, 0, 8),
                 Child = panel
             };
+
+            AttachCopyContextMenu(
+                card,
+                "複製此主題區塊",
+                copyTextProvider);
+
+            return card;
         }
 
         private Border CreateCodeSnapshotCard(string line)
@@ -1877,6 +1932,45 @@ namespace test
                     TextWrapping = TextWrapping.Wrap
                 }
             };
+        }
+
+        private void AttachCopyContextMenu(
+            FrameworkElement target,
+            string menuText,
+            Func<string> copyTextProvider)
+        {
+            if (target == null || copyTextProvider == null)
+                return;
+
+            var item = new MenuItem
+            {
+                Header = string.IsNullOrWhiteSpace(menuText) ? "複製" : menuText,
+                Style = TryFindResource("FileMenuItemStyle") as Style
+            };
+
+            item.Click += (_, __) =>
+            {
+                string text = copyTextProvider() ?? "";
+                if (string.IsNullOrWhiteSpace(text))
+                    return;
+
+                try
+                {
+                    Clipboard.SetText(text);
+                }
+                catch
+                {
+                    // Clipboard may be temporarily locked by another process.
+                }
+            };
+
+            var menu = new ContextMenu
+            {
+                Style = TryFindResource("FileContextMenuStyle") as Style
+            };
+
+            menu.Items.Add(item);
+            target.ContextMenu = menu;
         }
 
         private SolidColorBrush GetStepBrush(NodeDecisionStepState state)

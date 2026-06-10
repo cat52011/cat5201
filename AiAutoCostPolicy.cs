@@ -6,6 +6,16 @@ namespace test
     {
         public static string NormalizeForAuto(string? modelId)
         {
+            string raw = (modelId ?? "").Trim();
+            if (string.Equals(raw, "sonar-deep-research", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase))
+            {
+                return AiModels.Perplexity_Sonar;
+            }
+
+            if (string.Equals(raw, AiModels.Claude_Opus46, StringComparison.OrdinalIgnoreCase))
+                return AiModels.Claude_Sonnet46;
+
             string normalized = AiModelHelper.NormalizeNodeModel(modelId);
             var def = AiModelRegistry.Find(normalized);
 

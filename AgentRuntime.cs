@@ -10,6 +10,12 @@ namespace test
 {
     public sealed class AgentRuntime
     {
+        private const int MaxCodeSnapshotPromptCharsTotal = 24000;
+        private const int MaxCodeSnapshotPromptCharsPerFile = 18000;
+        private const int MaxCodeSourceOutlineCharsPerFile = 2500;
+        private const int MaxRepairPreviousOutputChars = 2500;
+        private const int MaxRepairDiffChars = 14000;
+
         private readonly MainWindow _main;
         private readonly NodeExecutionDecisionResolver _decisionResolver;
         private readonly Func<NodeControl, string, NodeExecutionDecision, Action<string>?, bool, CancellationToken, Task<AiFallbackExecutionResult>> _executeWithFallbackAsync;
@@ -118,6 +124,8 @@ namespace test
                 _main.IsAutoModelSelectionEnabled() &&
                 _main.IsAdvancedAutoResolverEnabled();
 
+            ApplyAutoCostPolicyToDecision(decision);
+
             _main.SetLiveDecisionResolving(request.Node, decision);
             // 2. capability layer
             string capabilityAugmentedText = topText;
@@ -137,6 +145,22 @@ namespace test
     topText,
     decision.TaskMode,
     capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
+
+            var orchestrationPlan = OrchestrationPlanner.Build(
+                topText,
+                decision,
+                runtimeAgent,
+                capabilityPlan,
+                _main.IsAutoModelSelectionEnabled(),
+                capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    request.Node,
+                    runtimeAgent.Id,
+                    "orchestration_plan",
+                    orchestrationPlan));
 
             System.Diagnostics.Debug.WriteLine(
                 $"[CapabilityPlan] Agent={runtimeAgent.Id} Required={string.Join(", ", capabilityPlan.RequiredCapabilityIds)} Order={string.Join(" -> ", capabilityPlan.OrderedCapabilityIds)} Reason={capabilityPlan.Reason}");
@@ -433,11 +457,13 @@ namespace test
                 throw new InvalidOperationException(
                     "This task requires fresh facts, but search-capability did not produce verified_facts or search_summary.");
             }
+
             // 2.5 parallel multi-agent execution
             bool parallelExecuted = false;
             AgentParallelExecutionResult? parallelResult = null;
 
-            if (allowAgentFirstAutomation && request.DelegationDepth == 0)
+            if (allowAgentFirstAutomation &&
+                request.DelegationDepth == 0)
             {
                 var parallelTasks = _parallelPlanner.Plan(
                     runtimeAgent,
@@ -638,8 +664,12 @@ namespace test
             bool hasVerifiedFacts =
                 capabilityData.ContainsKey("verified_facts") ||
                 workspace.GetByType("verified_facts").Count > 0;
+            bool hasCodeDiffDraft =
+                capabilityData.ContainsKey("code_diff_draft") ||
+                workspace.GetByType("code_diff_draft").Count > 0;
 
-            bool enforceFinalSynthesisFormat = hasVerifiedFacts;
+            bool isFinanceTask = FinanceTaskDetector.IsFinanceLike(capabilityAugmentedText);
+            bool enforceFinalSynthesisFormat = hasVerifiedFacts && isFinanceTask;
 
             string finalInput = capabilityAugmentedText;
 
@@ -656,6 +686,9 @@ namespace test
 
                 if (enforceFinalSynthesisFormat)
                     parts.Add(BuildFinalOutputFormatBlock());
+
+                if (hasCodeDiffDraft)
+                    parts.Add(BuildCodeDiffOutputInstructionBlock());
 
                 parts.Add("【目前任務】\n" + capabilityAugmentedText);
 
@@ -674,6 +707,9 @@ namespace test
 
                 if (enforceFinalSynthesisFormat)
                     parts.Add(BuildFinalOutputFormatBlock());
+
+                if (hasCodeDiffDraft)
+                    parts.Add(BuildCodeDiffOutputInstructionBlock());
 
                 parts.Add(
                     "以下是其他代理提供的補充資訊：\n" +
@@ -694,7 +730,10 @@ namespace test
                 if (!string.IsNullOrWhiteSpace(capabilityDataBlock))
                     parts.Add(capabilityDataBlock);
 
-                parts.Add(BuildFinalOutputFormatBlock());
+                if (enforceFinalSynthesisFormat)
+                    parts.Add(BuildFinalOutputFormatBlock());
+                if (hasCodeDiffDraft)
+                    parts.Add(BuildCodeDiffOutputInstructionBlock());
                 parts.Add("【Delegated Analysis Omitted】\nDelegated/parallel agent text was omitted because structured verified_facts exist. Use delegated analysis only as internal reasoning, not as a source for numeric facts.");
                 parts.Add("【目前任務】\n" + capabilityAugmentedText);
 
@@ -703,6 +742,7 @@ namespace test
 
             // 5. execution
             AiFallbackExecutionResult execution;
+            bool useStreamingForFinalExecution = request.UseStreaming && !hasCodeDiffDraft;
 
             if (synthesisExecution != null && synthesisExecution.IsSuccess)
             {
@@ -722,13 +762,130 @@ namespace test
                     request.Node,
                     finalInput,
                     decision,
-                    request.OnDelta,
-                    request.UseStreaming,
+                    useStreamingForFinalExecution ? request.OnDelta : null,
+                    useStreamingForFinalExecution,
                     request.CancellationToken);
 
                 execution = FinalAnswerSanitizer.Sanitize(
                     execution,
                     enforceSynthesisFormat: enforceFinalSynthesisFormat);
+            }
+
+            if (hasCodeDiffDraft)
+            {
+                CodeDiffArtifactPayload? readyDiffForValidation = null;
+                CodeDiffValidationPayload? validationForReadyDiff = null;
+
+                var readyDiff = CodeDiffArtifactExtractor.TryExtractReadyDiff(
+                    execution.Text,
+                    capabilityAugmentedText);
+
+                if (readyDiff != null)
+                {
+                    workspace.Add(
+                        AgentWorkspaceBuilder.FromCapabilityData(
+                            workspace,
+                            request.Node,
+                            runtimeAgent.Id,
+                            "code_diff",
+                            readyDiff));
+
+                    var snapshot = capabilityData.TryGetValue("code_file_snapshot", out var snapshotValue)
+                        ? snapshotValue as CodeFileSnapshotPayload
+                        : workspace.GetByType("code_file_snapshot")
+                            .Select(x => x.Payload as CodeFileSnapshotPayload)
+                            .FirstOrDefault(x => x != null);
+
+                    var validation = CodeDiffDryRunValidator.Validate(
+                        readyDiff,
+                        snapshot);
+
+                    workspace.Add(
+                        AgentWorkspaceBuilder.FromCapabilityData(
+                            workspace,
+                            request.Node,
+                            runtimeAgent.Id,
+                            "code_diff_validation",
+                            validation));
+
+                    readyDiffForValidation = readyDiff;
+                    validationForReadyDiff = validation;
+                }
+
+                if (readyDiffForValidation != null &&
+                    validationForReadyDiff != null &&
+                    string.Equals(validationForReadyDiff.Status, "invalid", StringComparison.OrdinalIgnoreCase))
+                {
+                    var repairedExecution = await TryRepairInvalidCodeDiffAsync(
+                        request.Node,
+                        finalInput,
+                        capabilityAugmentedText,
+                        execution,
+                        readyDiffForValidation,
+                        validationForReadyDiff,
+                        decision,
+                        request.CancellationToken);
+
+                    if (repairedExecution != null)
+                    {
+                        var repairedDiff = CodeDiffArtifactExtractor.TryExtractReadyDiff(
+                            repairedExecution.Text,
+                            capabilityAugmentedText);
+
+                        if (repairedDiff != null)
+                        {
+                            workspace.Add(
+                                AgentWorkspaceBuilder.FromCapabilityData(
+                                    workspace,
+                                    request.Node,
+                                    runtimeAgent.Id,
+                                    "code_diff",
+                                    repairedDiff));
+
+                            var snapshot = capabilityData.TryGetValue("code_file_snapshot", out var snapshotValue)
+                                ? snapshotValue as CodeFileSnapshotPayload
+                                : workspace.GetByType("code_file_snapshot")
+                                    .Select(x => x.Payload as CodeFileSnapshotPayload)
+                                    .FirstOrDefault(x => x != null);
+
+                            var repairedValidation = CodeDiffDryRunValidator.Validate(
+                                repairedDiff,
+                                snapshot);
+
+                            workspace.Add(
+                                AgentWorkspaceBuilder.FromCapabilityData(
+                                    workspace,
+                                    request.Node,
+                                    runtimeAgent.Id,
+                                    "code_diff_validation",
+                                    repairedValidation));
+
+                            execution = repairedExecution;
+
+                            if (string.Equals(repairedValidation.Status, "invalid", StringComparison.OrdinalIgnoreCase))
+                            {
+                                execution = WithSafeInvalidPatchMessage(
+                                    execution,
+                                    repairedValidation);
+                            }
+                        }
+                    }
+                }
+                else if (validationForReadyDiff != null &&
+                    string.Equals(validationForReadyDiff.Status, "invalid", StringComparison.OrdinalIgnoreCase))
+                {
+                    execution = WithSafeInvalidPatchMessage(
+                        execution,
+                        validationForReadyDiff);
+                }
+
+                if (request.UseStreaming &&
+                    request.OnDelta != null &&
+                    !useStreamingForFinalExecution &&
+                    !string.IsNullOrWhiteSpace(execution.Text))
+                {
+                    request.OnDelta(execution.Text);
+                }
             }
 
             // 6. finalize
@@ -782,7 +939,8 @@ namespace test
                 $"[Workspace Preview]\n{workspaceBlock.Substring(0, Math.Min(1000, workspaceBlock.Length))}");
 
             bool hasVerifiedFacts = workspace.GetByType("verified_facts").Count > 0;
-            string synthesisInstructions = hasVerifiedFacts
+            bool isFinanceTask = FinanceTaskDetector.IsFinanceLike(originalInput);
+            string synthesisInstructions = hasVerifiedFacts && isFinanceTask
                 ? BuildFinanceFinalSynthesisInstructions()
                 : BuildGeneralFinalSynthesisInstructions();
 
@@ -806,6 +964,316 @@ namespace test
                 null,
                 false,
                 ct);
+        }
+
+        private void ApplyAutoCostPolicyToDecision(NodeExecutionDecision decision)
+        {
+            if (decision == null || !_main.IsAutoModelSelectionEnabled())
+                return;
+
+            string requested = AiModelHelper.NormalizeNodeModel(decision.ModelId);
+            string resolved = AiAutoCostPolicy.NormalizeForAuto(requested);
+
+            if (string.Equals(requested, resolved, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            decision.ModelId = resolved;
+            decision.CapabilityResolvedModelId = resolved;
+            decision.CapabilityAdjusted = true;
+
+            string costReason = $"Auto cost policy: {requested} → {resolved}";
+            decision.CapabilityReason = string.IsNullOrWhiteSpace(decision.CapabilityReason)
+                ? costReason
+                : decision.CapabilityReason + " / " + costReason;
+
+            decision.ResolverReason = string.IsNullOrWhiteSpace(decision.ResolverReason)
+                ? costReason
+                : decision.ResolverReason + " / " + costReason;
+
+            if (!string.IsNullOrWhiteSpace(decision.ResolverLabel) &&
+                !decision.ResolverLabel.Contains("Auto Cost Policy", StringComparison.OrdinalIgnoreCase))
+            {
+                decision.ResolverLabel += " + Auto Cost Policy";
+            }
+        }
+
+        private async Task<AiFallbackExecutionResult?> TryRepairInvalidCodeDiffAsync(
+            NodeControl node,
+            string originalFinalInput,
+            string userGoal,
+            AiFallbackExecutionResult previousExecution,
+            CodeDiffArtifactPayload invalidDiff,
+            CodeDiffValidationPayload validation,
+            NodeExecutionDecision decision,
+            CancellationToken ct)
+        {
+            if (invalidDiff == null || validation == null)
+                return null;
+
+            string repairInput = BuildInvalidCodeDiffRepairPrompt(
+                originalFinalInput,
+                userGoal,
+                previousExecution?.Text ?? "",
+                invalidDiff,
+                validation);
+
+            var repairDecision = new NodeExecutionDecision
+            {
+                RequestedAgentId = decision.ActualAgentId,
+                ActualAgentId = decision.ActualAgentId,
+                RequestedModelId = decision.ModelId,
+                ModelId = decision.ModelId,
+                ActualModelId = "",
+                TaskMode = decision.TaskMode,
+                ResolverLabel = "Code Diff Repair",
+                ResolverReason = "Previous model-generated diff failed dry-run validation; requesting one repair attempt.",
+                StatusLabel = decision.StatusLabel,
+                ForceSingleModel = decision.ForceSingleModel,
+                UseStreaming = false
+            };
+
+            var repaired = await _executeWithFallbackAsync(
+                node,
+                repairInput,
+                repairDecision,
+                null,
+                false,
+                ct);
+
+            repaired = FinalAnswerSanitizer.Sanitize(
+                repaired,
+                enforceSynthesisFormat: false);
+
+            if (string.IsNullOrWhiteSpace(repaired.Text))
+                return null;
+
+            return repaired;
+        }
+
+        private static AiFallbackExecutionResult WithSafeInvalidPatchMessage(
+            AiFallbackExecutionResult execution,
+            CodeDiffValidationPayload validation)
+        {
+            var lines = new List<string>
+            {
+                "我找到可能的修改方向，但產生的 patch 沒有通過 dry-run validation，因此目前不應套用。",
+                "",
+                "驗證結果：",
+                validation?.Summary ?? "Diff validation failed."
+            };
+
+            foreach (var file in validation?.Files ?? Array.Empty<CodeDiffValidationFileResult>())
+            {
+                if (file == null)
+                    continue;
+
+                lines.Add($"- {file.Path}: {file.Message}");
+            }
+
+            lines.Add("");
+            lines.Add("建議下一步：改用更小範圍的修正請求，或讓系統先列出可確認的 bug，再逐項產生 patch。");
+
+            return new AiFallbackExecutionResult
+            {
+                IsSuccess = execution.IsSuccess,
+                Text = string.Join(Environment.NewLine, lines),
+                ActualModelId = execution.ActualModelId,
+                UsedFallback = execution.UsedFallback,
+                Summary = execution.Summary,
+                ErrorMessage = execution.ErrorMessage,
+                Attempts = execution.Attempts
+            };
+        }
+
+        private static string BuildInvalidCodeDiffRepairPrompt(
+            string originalFinalInput,
+            string userGoal,
+            string previousOutput,
+            CodeDiffArtifactPayload invalidDiff,
+            CodeDiffValidationPayload validation)
+        {
+            var validationLines = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(validation.Summary))
+                validationLines.Add(validation.Summary);
+
+            foreach (var file in validation.Files ?? Array.Empty<CodeDiffValidationFileResult>())
+            {
+                if (file == null)
+                    continue;
+
+                validationLines.Add(
+                    $"{file.Status}: {file.Path} (+{file.AddedLines}/-{file.RemovedLines}) - {file.Message}");
+            }
+
+            foreach (var message in validation.Messages ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                    validationLines.Add(message);
+            }
+
+            return
+$@"你剛剛輸出的 unified diff 沒有通過 dry-run validation。請只做一次修復，重新輸出一份可以對上附件 snapshot 的 unified diff。
+
+【使用者目標】
+{TrimForPrompt(userGoal, 1200)}
+
+【原始任務摘要】
+{BuildCompactOriginalTaskSummary(originalFinalInput)}
+
+【上一版輸出】
+{TrimForPrompt(previousOutput, MaxRepairPreviousOutputChars)}
+
+【上一版 diff】
+```diff
+{TrimForPrompt(invalidDiff.UnifiedDiff, MaxRepairDiffChars)}
+```
+
+【Validation 失敗原因】
+{string.Join("\n", validationLines)}
+
+【修復規則】
+1. 必須根據附件 snapshot 內實際存在的原始碼行產生 diff。
+2. 不要使用 validation 已指出找不到的 source line。
+3. 必須輸出 fenced unified diff，格式為 ```diff。
+4. 不要宣稱已套用檔案。
+5. 如果無法安全修復，請直接說明無法修復的原因，不要輸出假 diff。";
+        }
+
+        private static bool IsLargeBroadCodePatchRequest(
+            string userGoal,
+            IReadOnlyDictionary<string, object> capabilityData,
+            AgentWorkspace workspace)
+        {
+            if (!IsBroadCodePatchGoal(userGoal))
+                return false;
+
+            var snapshot = capabilityData.TryGetValue("code_file_snapshot", out var snapshotValue)
+                ? snapshotValue as CodeFileSnapshotPayload
+                : workspace.GetByType("code_file_snapshot")
+                    .Select(x => x.Payload as CodeFileSnapshotPayload)
+                    .FirstOrDefault(x => x != null);
+
+            if (snapshot?.Files == null || snapshot.Files.Count == 0)
+                return false;
+
+            int totalChars = snapshot.Files
+                .Where(x => x != null)
+                .Sum(x => x.CharacterCount);
+
+            int totalLines = snapshot.Files
+                .Where(x => x != null)
+                .Sum(x => x.LineCount);
+
+            return totalChars >= 30000 || totalLines >= 700;
+        }
+
+        private static bool IsBroadCodePatchGoal(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            string normalized = text.Trim().ToLowerInvariant();
+
+            return ContainsAnyInvariant(normalized,
+                "把看到的 bug 都修好",
+                "看到的 bug 都修好",
+                "看到的bug都修好",
+                "所有 bug",
+                "all bugs",
+                "fix all",
+                "fix every",
+                "全部修好",
+                "都修好",
+                "全面修",
+                "整份",
+                "整個程式",
+                "whole file",
+                "entire file");
+        }
+
+        private static string BuildLargeBroadCodePatchGuardMessage(
+            string userGoal,
+            IReadOnlyDictionary<string, object> capabilityData,
+            AgentWorkspace workspace)
+        {
+            var snapshot = capabilityData.TryGetValue("code_file_snapshot", out var snapshotValue)
+                ? snapshotValue as CodeFileSnapshotPayload
+                : workspace.GetByType("code_file_snapshot")
+                    .Select(x => x.Payload as CodeFileSnapshotPayload)
+                    .FirstOrDefault(x => x != null);
+
+            var files = snapshot?.Files?
+                .Where(x => x != null)
+                .Take(5)
+                .Select(x => $"- {x.FileName}：{x.LineCount} 行 / {x.CharacterCount} 字元")
+                .ToList() ?? new List<string>();
+
+            string fileText = files.Count == 0
+                ? "- 已偵測到大型程式附件。"
+                : string.Join(Environment.NewLine, files);
+
+            return
+$@"這個請求目前先不直接產生 patch，因為它是大型檔案的全檔泛修任務，直接丟給模型會很貴，而且容易產生無法套用的假 diff。
+
+已建立附件快照：
+{fileText}
+
+建議下一步：
+1. 先要求「列出可疑 bug 與對應方法/行號」，不產生 patch。
+2. 選其中一個 bug 或一個方法，再要求產生 unified diff。
+3. 系統會對該小範圍 patch 做 dry-run validation，通過後再顯示為可用 diff。
+
+目前不應對這種任務使用「把看到的 bug 都修好」的一次性全檔 patch 流程，否則會繼續浪費 token 並得到不可靠結果。";
+        }
+
+        private static bool ContainsAnyInvariant(string text, params string[] needles)
+        {
+            if (string.IsNullOrWhiteSpace(text) || needles == null || needles.Length == 0)
+                return false;
+
+            foreach (var needle in needles)
+            {
+                if (!string.IsNullOrWhiteSpace(needle) &&
+                    text.Contains(needle.ToLowerInvariant(), StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string TrimForPrompt(string? text, int max)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+
+            string trimmed = text.Trim();
+            return trimmed.Length <= max ? trimmed : trimmed.Substring(0, max) + "...";
+        }
+
+        private static string BuildCompactOriginalTaskSummary(string? originalFinalInput)
+        {
+            if (string.IsNullOrWhiteSpace(originalFinalInput))
+                return "原始任務內容未提供。";
+
+            var lines = originalFinalInput
+                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+                .Where(line =>
+                    !line.Contains("Content:", StringComparison.OrdinalIgnoreCase) &&
+                    !line.StartsWith("```", StringComparison.Ordinal) &&
+                    !line.Contains("import ", StringComparison.Ordinal) &&
+                    !line.Contains("public class ", StringComparison.Ordinal) &&
+                    !line.Contains("private ", StringComparison.Ordinal) &&
+                    !line.Contains("protected ", StringComparison.Ordinal) &&
+                    !line.Contains("void ", StringComparison.Ordinal))
+                .Take(80);
+
+            var compact = string.Join(Environment.NewLine, lines).Trim();
+            if (string.IsNullOrWhiteSpace(compact))
+                return "原始任務包含大型附件 snapshot。為控制 token，repair 階段不重貼完整原始碼；請只根據上一版 diff 與 validation 失敗原因修正 patch。";
+
+            return TrimForPrompt(compact, 3000) +
+                   "\n\n注意：完整附件 snapshot 保留在 workspace 供 dry-run validation 使用；repair prompt 不重貼完整原始碼，以避免大型檔案重複消耗 token。";
         }
 
         private static string BuildFinanceFinalSynthesisInstructions()
@@ -1051,6 +1519,30 @@ namespace test
 總結一句話
 - 用一句話收束。";
         }
+
+        private static string BuildCodeDiffOutputInstructionBlock()
+        {
+            return
+@"【Code Diff Output - Required When Fixing Code】
+目前 workspace 中已有 code_diff_draft。若使用者要求修正、修改、重構或產生 patch，且你能根據已提供的實際原始碼內容安全產生修正，最終回答應包含一個 fenced unified diff：
+
+```diff
+diff --git a/path/to/file b/path/to/file
+--- a/path/to/file
++++ b/path/to/file
+@@
+- old line
++ new line
+```
+
+規則：
+1. diff 必須根據附件 snapshot 中的實際內容產生，不可捏造不存在的檔案。
+2. 若資訊不足以安全產生 diff，請明確說明缺少什麼，不要輸出假 diff。
+3. 不要宣稱已修改或已套用檔案；目前只能提出 patch。
+4. 若 Code File Snapshot 顯示 PromptTruncated=True，代表你只看到低成本摘錄，不可宣稱已完整檢查整份檔案。
+5. 對「把所有 bug 都修好」這類大範圍任務，若只能看到部分內容，只能提出可被摘錄內容支持的有限修正；若無法確認，請要求縮小範圍或先列候選區域。
+6. 除了 diff，可以用短句說明修了什麼，但不要輸出 workspace 內部標記。";
+        }
         private static void AppendReasoningAnalysis(StringBuilder sb, object value)
         {
             if (sb == null || value == null)
@@ -1209,21 +1701,113 @@ namespace test
             if (payload.Files == null || payload.Files.Count == 0)
                 return;
 
+            int remainingPromptChars = MaxCodeSnapshotPromptCharsTotal;
             foreach (var file in payload.Files.Take(4))
             {
                 if (file == null)
                     continue;
+
+                string content = file.Content ?? "";
+                int promptLimit = Math.Min(MaxCodeSnapshotPromptCharsPerFile, remainingPromptChars);
+                string promptContent = promptLimit > 0
+                    ? TrimForPrompt(content, promptLimit)
+                    : "";
+                bool promptTruncated = promptContent.Length < content.Trim().Length;
+                string sourceOutline = BuildCodeSourceOutline(content, MaxCodeSourceOutlineCharsPerFile);
+                remainingPromptChars = Math.Max(0, remainingPromptChars - promptContent.Length);
 
                 sb.AppendLine();
                 sb.AppendLine($"File: {file.FileName}");
                 sb.AppendLine($"Path: {file.RelativePath}");
                 sb.AppendLine($"Language: {file.Language}");
                 sb.AppendLine($"Chars: {file.CharacterCount}; Lines: {file.LineCount}; Truncated: {file.IsTruncated}");
-                sb.AppendLine("Content:");
+                sb.AppendLine($"PromptChars: {promptContent.Length}; PromptTruncated: {promptTruncated}");
+                if (promptTruncated)
+                {
+                    sb.AppendLine("Note: Full snapshot is kept in workspace for validation, but only a compact outline and excerpt are sent to the model to control token cost.");
+                    sb.AppendLine("Do not claim a comprehensive whole-file fix when PromptTruncated=True. Prefer a narrow, evidence-backed patch or explain that targeted follow-up is required.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(sourceOutline))
+                {
+                    sb.AppendLine("SourceOutline:");
+                    sb.AppendLine("```");
+                    sb.AppendLine(sourceOutline);
+                    sb.AppendLine("```");
+                }
+
+                sb.AppendLine("PromptExcerpt:");
                 sb.AppendLine("```");
-                sb.AppendLine(file.Content ?? "");
+                sb.AppendLine(promptContent);
                 sb.AppendLine("```");
+
+                if (remainingPromptChars <= 0)
+                {
+                    sb.AppendLine("Additional snapshot content omitted from prompt because the code prompt budget was reached.");
+                    break;
+                }
             }
+        }
+
+        private static string BuildCodeSourceOutline(string? content, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(content) || maxChars <= 0)
+                return "";
+
+            var outline = new List<string>();
+            string[] lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+            for (int index = 0; index < lines.Length && outline.Count < 120; index++)
+            {
+                string raw = lines[index] ?? "";
+                string line = raw.Trim();
+
+                if (line.Length == 0)
+                    continue;
+
+                bool interesting =
+                    line.StartsWith("package ", StringComparison.Ordinal) ||
+                    line.StartsWith("import ", StringComparison.Ordinal) ||
+                    line.Contains(" class ", StringComparison.Ordinal) ||
+                    line.StartsWith("class ", StringComparison.Ordinal) ||
+                    IsLikelyMemberSignature(line) ||
+                    line.Contains("TODO", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("FIXME", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("bug", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("Exception", StringComparison.Ordinal);
+
+                if (!interesting)
+                    continue;
+
+                outline.Add($"{index + 1}: {TrimForPrompt(line, 220)}");
+            }
+
+            return TrimForPrompt(string.Join(Environment.NewLine, outline), maxChars);
+        }
+
+        private static bool IsLikelyMemberSignature(string line)
+        {
+            if (!line.Contains("(", StringComparison.Ordinal) ||
+                !line.Contains(")", StringComparison.Ordinal))
+                return false;
+
+            if (line.StartsWith("if ", StringComparison.Ordinal) ||
+                line.StartsWith("if(", StringComparison.Ordinal) ||
+                line.StartsWith("for ", StringComparison.Ordinal) ||
+                line.StartsWith("for(", StringComparison.Ordinal) ||
+                line.StartsWith("while ", StringComparison.Ordinal) ||
+                line.StartsWith("while(", StringComparison.Ordinal) ||
+                line.StartsWith("switch ", StringComparison.Ordinal) ||
+                line.StartsWith("switch(", StringComparison.Ordinal) ||
+                line.StartsWith("catch ", StringComparison.Ordinal) ||
+                line.StartsWith("catch(", StringComparison.Ordinal))
+                return false;
+
+            return line.Contains("public ", StringComparison.Ordinal) ||
+                   line.Contains("private ", StringComparison.Ordinal) ||
+                   line.Contains("protected ", StringComparison.Ordinal) ||
+                   line.Contains("static ", StringComparison.Ordinal) ||
+                   line.Contains("@Override", StringComparison.Ordinal);
         }
 
         private static void AppendCodeDiffArtifact(StringBuilder sb, object value)

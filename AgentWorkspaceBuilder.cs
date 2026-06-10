@@ -48,12 +48,18 @@ namespace test
             if (value is CodeDiffArtifactPayload)
                 return "diff";
 
+            if (value is CodeDiffValidationPayload)
+                return "sandbox";
+
             if (value is ReasoningPayload ||
                 value is TaskDecompositionPayload ||
                 value is DelegateOutputPayload)
             {
                 return "analysis";
             }
+
+            if (value is OrchestrationPlanPayload)
+                return "workflow";
 
             if (value is FinalSynthesisPayload)
                 return "final";
@@ -104,11 +110,15 @@ namespace test
             if (value is CodeDiffArtifactPayload)
                 return "diff";
 
+            if (value is CodeDiffValidationPayload)
+                return "markdown";
+
             if (value is VerifiedFactPayload ||
                 value is SearchSummaryPayload ||
                 value is FileSummaryPayload ||
                 value is ReasoningPayload ||
                 value is TaskDecompositionPayload ||
+                value is OrchestrationPlanPayload ||
                 value is FinalSynthesisPayload ||
                 value is DelegateOutputPayload)
             {
@@ -162,11 +172,18 @@ namespace test
             if (value is CodeDiffArtifactPayload diff)
                 return string.IsNullOrWhiteSpace(diff.Title) ? $"Code Diff - {diff.Status}" : diff.Title;
 
+            if (value is CodeDiffValidationPayload validation)
+                return $"Code Diff Validation - {validation.Status}";
+
             if (value is ReasoningPayload reasoning)
                 return $"Reasoning - {reasoning.ReasoningType}";
 
             if (value is TaskDecompositionPayload)
                 return "Task Plan";
+
+            if (value is OrchestrationPlanPayload orchestration)
+                return $"Orchestration Plan - {orchestration.PipelineId}";
+
             if (value is FinalSynthesisPayload final)
             {
                 string model = string.IsNullOrWhiteSpace(final.ModelId)
@@ -209,11 +226,21 @@ namespace test
                 return $"Status={diff.Status}, Files={fileCount}, +{CountAddedLines(diff)}/-{CountRemovedLines(diff)}";
             }
 
+            if (value is CodeDiffValidationPayload validation)
+                return validation.Summary ?? "";
+
             if (value is ReasoningPayload reasoning)
                 return reasoning.OutputGuidance ?? "";
 
             if (value is TaskDecompositionPayload task)
                 return task.Summary ?? "";
+
+            if (value is OrchestrationPlanPayload orchestration)
+            {
+                int stageCount = orchestration.Stages?.Count ?? 0;
+                return $"TaskType={orchestration.TaskType}, Pipeline={orchestration.PipelineId}, Stages={stageCount}, Status={orchestration.Status}";
+            }
+
             if (value is FinalSynthesisPayload final)
             {
                 string model = string.IsNullOrWhiteSpace(final.ModelId)

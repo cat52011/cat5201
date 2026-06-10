@@ -512,6 +512,12 @@ namespace test
                 size += (diff.Files?.Count ?? 0) * 80;
                 size += (diff.Notes?.Count ?? 0) * 40;
             }
+            else if (item.Payload is CodeDiffValidationPayload validation)
+            {
+                size += validation.Summary?.Length ?? 0;
+                size += (validation.Files?.Count ?? 0) * 80;
+                size += (validation.Messages?.Count ?? 0) * 80;
+            }
             else if (item.Payload != null)
             {
                 size += item.Payload.ToString()?.Length ?? 0;
@@ -601,6 +607,41 @@ namespace test
                         if (!string.IsNullOrWhiteSpace(note))
                             lines.Add($"  DiffNote: {Trim(note, 180)}");
                     }
+                }
+                else if (item.Payload is CodeDiffValidationPayload validation)
+                {
+                    lines.Add($"  Validation: Status={Safe(validation.Status)} / {Safe(validation.Summary)}");
+
+                    foreach (var file in validation.Files?.Take(12) ?? Array.Empty<CodeDiffValidationFileResult>())
+                    {
+                        if (file == null)
+                            continue;
+
+                        lines.Add($"  ValidationFile: {Safe(file.Status)} / {Safe(file.Path)} / +{file.AddedLines} -{file.RemovedLines} / {Trim(file.Message, 180)}");
+                    }
+
+                    foreach (var message in validation.Messages?.Take(5) ?? Array.Empty<string>())
+                    {
+                        if (!string.IsNullOrWhiteSpace(message))
+                            lines.Add($"  ValidationNote: {Trim(message, 180)}");
+                    }
+                }
+                else if (item.Payload is OrchestrationPlanPayload orchestration)
+                {
+                    lines.Add($"  Orchestration: Status={Safe(orchestration.Status)} / TaskType={orchestration.TaskType} / Pipeline={Safe(orchestration.PipelineId)}");
+                    lines.Add($"  OrchestrationRoute: Mode={Safe(orchestration.TaskMode)} / Agent={Safe(orchestration.RuntimeAgentId)} / Model={Safe(orchestration.ModelId)} / Auto={orchestration.AutoMode}");
+                    lines.Add($"  OrchestrationCapabilities: {string.Join(", ", orchestration.CapabilityOrder ?? Array.Empty<string>())}");
+
+                    foreach (var stage in orchestration.Stages?.Take(12) ?? Array.Empty<OrchestrationStagePayload>())
+                    {
+                        if (stage == null)
+                            continue;
+
+                        lines.Add($"  OrchestrationStage: {stage.Order}. {Safe(stage.Label)} / {Safe(stage.Id)} / {Safe(stage.Owner)} / {Safe(stage.Status)}");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(orchestration.Reason))
+                        lines.Add($"  Summary: {Trim(orchestration.Reason, 260)}");
                 }
                 else if (!string.IsNullOrWhiteSpace(item.TextSummary))
                 {
