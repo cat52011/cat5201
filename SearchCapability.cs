@@ -355,7 +355,16 @@ Quote Source:
                 AddFinanceFact(facts, subject, "key_market_drivers", ReadFinanceField(block, "Key Market Drivers", "Market Drivers", "Drivers"), "", now, now);
                 AddFinanceFact(facts, subject, "official_earnings_source", ReadFinanceField(block, "Official Earnings Source", "Earnings Source", "Official Source"), "", now, now);
                 AddFinanceFact(facts, subject, "quote_source", ReadFinanceField(block, "Quote Source", "Price Source"), "", now, now);
-                AddQuoteAvailabilityFact(facts, subject, regularClosePrice, afterHoursPrice, preMarketPrice, now);
+                AddQuoteAvailabilityFact(
+                    facts,
+                    subject,
+                    regularClosePrice,
+                    regularCloseTime,
+                    afterHoursPrice,
+                    afterHoursTime,
+                    preMarketPrice,
+                    preMarketTime,
+                    now);
             }
 
             if (facts.Count > 0)
@@ -935,8 +944,11 @@ Quote Source:
             List<VerifiedFactItem> facts,
             string subject,
             string regularClosePrice,
+            string regularCloseTime,
             string afterHoursPrice,
+            string afterHoursTime,
             string preMarketPrice,
+            string preMarketTime,
             string now)
         {
             if (facts == null || string.IsNullOrWhiteSpace(subject))
@@ -995,7 +1007,12 @@ Quote Source:
                 return true;
 
             string normalized = value.Trim();
-            return string.Equals(normalized, "未取得", StringComparison.OrdinalIgnoreCase) ||
+            string lower = normalized.ToLowerInvariant();
+
+            return normalized.Contains("未取得", StringComparison.OrdinalIgnoreCase) ||
+                   normalized.Contains("非盤前", StringComparison.OrdinalIgnoreCase) ||
+                   lower.Contains("not available") ||
+                   lower.Contains("not_available") ||
                    string.Equals(normalized, "N/A", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(normalized, "NA", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(normalized, "-", StringComparison.OrdinalIgnoreCase);

@@ -61,10 +61,10 @@ namespace test
             if (ContainsAny(normalized, "簡報", "投影片", "ppt", "pptx", "slides", "slide deck"))
                 return OrchestrationTaskType.Presentation;
 
-            if (ContainsAny(normalized, "pdf", "文件", "報告", "匯出", "輸出成", "export", "docx", "word"))
+            if (ContainsAny(normalized, "pdf", "文件", "檔案", "匯出", "產出", "export", "docx", "word"))
                 return OrchestrationTaskType.GenerateFile;
 
-            if (ContainsAny(normalized, "圖片", "生成圖", "畫一張", "image", "generate image", "繪圖"))
+            if (ContainsAny(normalized, "圖片", "圖像", "生成圖", "image", "generate image"))
                 return OrchestrationTaskType.ImageGeneration;
 
             if (ContainsAny(normalized, "影片", "生成影片", "video", "generate video"))
@@ -73,7 +73,7 @@ namespace test
             if (ContainsAny(normalized, "自動", "下游節點", "工作流", "流程", "workflow", "pipeline"))
                 return OrchestrationTaskType.Workflow;
 
-            if (ContainsAny(normalized, "計畫", "規劃", "讀書計畫", "學習計畫", "安排", "行動計畫", "plan", "planning", "schedule"))
+            if (ContainsAny(normalized, "計劃", "規劃", "待辦", "時程", "里程碑", "排程", "plan", "planning", "schedule"))
                 return OrchestrationTaskType.Planning;
 
             return mode switch
