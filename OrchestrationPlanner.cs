@@ -58,23 +58,53 @@ namespace test
         {
             string normalized = (text ?? "").Trim().ToLowerInvariant();
 
-            if (ContainsAny(normalized, "簡報", "投影片", "ppt", "pptx", "slides", "slide deck"))
+            if (ContainsAny(
+                    normalized,
+                    "簡報", "投影片", "做成ppt", "做成 ppt", "生成ppt", "生成 ppt",
+                    "ppt", "pptx", "slides", "slide deck", "presentation"))
+            {
                 return OrchestrationTaskType.Presentation;
+            }
 
-            if (ContainsAny(normalized, "pdf", "文件", "檔案", "匯出", "產出", "export", "docx", "word"))
+            if (ContainsAny(
+                    normalized,
+                    "pdf", "文件", "文檔", "報告", "匯出", "輸出成", "生成檔案",
+                    "export", "docx", "word", "file output", "generate file"))
+            {
                 return OrchestrationTaskType.GenerateFile;
+            }
 
-            if (ContainsAny(normalized, "圖片", "圖像", "生成圖", "image", "generate image"))
+            if (ContainsAny(
+                    normalized,
+                    "圖片", "圖像", "生成圖片", "產生圖片", "畫一張",
+                    "image", "generate image"))
+            {
                 return OrchestrationTaskType.ImageGeneration;
+            }
 
-            if (ContainsAny(normalized, "影片", "生成影片", "video", "generate video"))
+            if (ContainsAny(
+                    normalized,
+                    "影片", "視頻", "生成影片", "產生影片",
+                    "video", "generate video"))
+            {
                 return OrchestrationTaskType.VideoGeneration;
+            }
 
-            if (ContainsAny(normalized, "自動", "下游節點", "工作流", "流程", "workflow", "pipeline"))
+            if (ContainsAny(
+                    normalized,
+                    "工作流", "自動流程", "自動生成下游節點", "下游節點", "自動往下跑",
+                    "workflow", "pipeline", "downstream node", "auto flow"))
+            {
                 return OrchestrationTaskType.Workflow;
+            }
 
-            if (ContainsAny(normalized, "計劃", "規劃", "待辦", "時程", "里程碑", "排程", "plan", "planning", "schedule"))
+            if (ContainsAny(
+                    normalized,
+                    "計畫", "規劃", "安排", "排程", "讀書計畫", "訓練計畫", "學習計畫",
+                    "plan", "planning", "schedule"))
+            {
                 return OrchestrationTaskType.Planning;
+            }
 
             return mode switch
             {
