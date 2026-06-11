@@ -58,8 +58,12 @@ namespace test
                 return "analysis";
             }
 
-            if (value is OrchestrationPlanPayload)
+            if (value is OrchestrationPlanPayload ||
+                value is WorkflowPlanPayload ||
+                value is DownstreamNodePlanPayload)
+            {
                 return "workflow";
+            }
 
             if (value is FinalSynthesisPayload)
                 return "final";
@@ -119,6 +123,8 @@ namespace test
                 value is ReasoningPayload ||
                 value is TaskDecompositionPayload ||
                 value is OrchestrationPlanPayload ||
+                value is WorkflowPlanPayload ||
+                value is DownstreamNodePlanPayload ||
                 value is FinalSynthesisPayload ||
                 value is DelegateOutputPayload)
             {
@@ -184,6 +190,12 @@ namespace test
             if (value is OrchestrationPlanPayload orchestration)
                 return $"Orchestration Plan - {orchestration.PipelineId}";
 
+            if (value is WorkflowPlanPayload workflow)
+                return $"Workflow Plan - {workflow.PipelineId}";
+
+            if (value is DownstreamNodePlanPayload downstream)
+                return $"Downstream Node Plan - {downstream.PipelineId}";
+
             if (value is FinalSynthesisPayload final)
             {
                 string model = string.IsNullOrWhiteSpace(final.ModelId)
@@ -239,6 +251,20 @@ namespace test
             {
                 int stageCount = orchestration.Stages?.Count ?? 0;
                 return $"TaskType={orchestration.TaskType}, Pipeline={orchestration.PipelineId}, Stages={stageCount}, Status={orchestration.Status}";
+            }
+
+            if (value is WorkflowPlanPayload workflow)
+            {
+                int nodeCount = workflow.Nodes?.Count ?? 0;
+                int edgeCount = workflow.Edges?.Count ?? 0;
+                return $"TaskType={workflow.TaskType}, Pipeline={workflow.PipelineId}, Nodes={nodeCount}, Edges={edgeCount}, Status={workflow.Status}";
+            }
+
+            if (value is DownstreamNodePlanPayload downstream)
+            {
+                int nodeCount = downstream.ProposedNodes?.Count ?? 0;
+                int edgeCount = downstream.ProposedEdges?.Count ?? 0;
+                return $"TaskType={downstream.TaskType}, Pipeline={downstream.PipelineId}, ProposedNodes={nodeCount}, ProposedEdges={edgeCount}, Status={downstream.Status}";
             }
 
             if (value is FinalSynthesisPayload final)

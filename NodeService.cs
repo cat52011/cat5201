@@ -161,6 +161,9 @@ namespace test
 
         public async Task<string> GenerateAsync(NodeControl node, string topText, CancellationToken ct)
         {
+            if (_main.TryBuildInputFromFirstUpstream(node, out var injectedTopText))
+                topText = injectedTopText;
+
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 
@@ -269,6 +272,9 @@ namespace test
             Action<string> onDelta,
             CancellationToken ct)
         {
+            if (_main.TryBuildInputFromFirstUpstream(node, out var injectedTopText))
+                topText = injectedTopText;
+
             if (string.IsNullOrWhiteSpace(topText))
                 return "";
 

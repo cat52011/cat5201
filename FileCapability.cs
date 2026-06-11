@@ -75,7 +75,7 @@ string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase) ||
                     Kind = kind ?? "",
                     MimeType = mimeType ?? "",
                     RelativePath = relativePath ?? "",
-                    FileType = ResolveFileTypeLabel(ext, mimeType, isImage),
+                    FileType = ResolveFileTypeLabel(ext, mimeType ?? "", isImage),
                     IsImage = isImage,
                     IsPdf = isPdf,
                     IsTextLike = isTextLike,
@@ -88,7 +88,7 @@ string.Equals(ext, ".ts", StringComparison.OrdinalIgnoreCase) ||
                         context.AttachmentsRootDir,
                         relativePath ?? "",
                         fileName ?? "",
-                        ResolveFileTypeLabel(ext, mimeType, isImage));
+                        ResolveFileTypeLabel(ext, mimeType ?? "", isImage));
 
                     if (snapshot != null)
                         snapshots.Add(snapshot);

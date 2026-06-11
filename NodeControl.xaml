@@ -301,6 +301,14 @@
                       Header="字體大小…"
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="FontSizeMenuItem_Click"/>
+            <MenuItem x:Name="RunWorkflowMenuItem"
+                      Header="執行此節點與下游"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="RunWorkflowMenuItem_Click"/>
+            <MenuItem x:Name="DryRunWorkflowMenuItem"
+                      Header="Dry run 此節點與下游"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="DryRunWorkflowMenuItem_Click"/>
             <Separator Style="{StaticResource NodeMenuSeparatorStyle}"/>
             <MenuItem x:Name="DeleteMenuItem"
                       Header="刪除"

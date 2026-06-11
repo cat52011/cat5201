@@ -40,9 +40,6 @@ namespace test
             if (request == null)
                 throw new ArgumentNullException(nameof(request));
 
-            if (request.Node == null)
-                throw new InvalidOperationException("AgentExecutionRequest.Node 不可為 null。");
-
             if (request.Agent == null)
                 throw new InvalidOperationException("AgentExecutionRequest.Agent 不可為 null。");
 
@@ -54,6 +51,7 @@ namespace test
             }
 
             var workspace = request.Workspace;
+            var node = request.Node ?? throw new InvalidOperationException("AgentExecutionRequest.Node 不可為 null。");
             var parallelRunner = new AgentParallelRunner(ExecuteAsync);
             if (string.IsNullOrWhiteSpace(topText))
             {
@@ -81,7 +79,7 @@ namespace test
 
             // 1. resolve decision
             var decision = await _decisionResolver.ResolveAsync(
-                request.Node,
+                node,
                 topText,
                 request.CancellationToken);
 
@@ -126,17 +124,17 @@ namespace test
 
             ApplyAutoCostPolicyToDecision(decision);
 
-            _main.SetLiveDecisionResolving(request.Node, decision);
+            _main.SetLiveDecisionResolving(node, decision);
             // 2. capability layer
             string capabilityAugmentedText = topText;
 
             var capabilityContext = new AgentExecutionContext
             {
-                Node = request.Node,
+                Node = node,
                 Agent = runtimeAgent,
                 TopText = topText,
                 TaskMode = decision.TaskMode,
-                Attachments = _main.GetAttachmentsForNode(request.Node),
+                Attachments = _main.GetAttachmentsForNode(node),
                 AttachmentsRootDir = _main.GetAttachmentsRootDir()
             };
 
@@ -157,10 +155,35 @@ namespace test
             workspace.Add(
                 AgentWorkspaceBuilder.FromCapabilityData(
                     workspace,
-                    request.Node,
+                    node,
                     runtimeAgent.Id,
                     "orchestration_plan",
                     orchestrationPlan));
+
+            var workflowPlan = WorkflowPlanBuilder.FromOrchestrationPlan(
+                orchestrationPlan,
+                node.Id.ToString(),
+                topText);
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent.Id,
+                    "workflow_plan",
+                    workflowPlan));
+
+            var downstreamNodePlan = DownstreamNodePlanBuilder.FromWorkflowPlan(workflowPlan);
+            if (downstreamNodePlan.ProposedNodes.Count > 0)
+            {
+                workspace.Add(
+                    AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace,
+                        node,
+                        runtimeAgent.Id,
+                        "downstream_node_plan",
+                        downstreamNodePlan));
+            }
 
             System.Diagnostics.Debug.WriteLine(
                 $"[CapabilityPlan] Agent={runtimeAgent.Id} Required={string.Join(", ", capabilityPlan.RequiredCapabilityIds)} Order={string.Join(" -> ", capabilityPlan.OrderedCapabilityIds)} Reason={capabilityPlan.Reason}");
@@ -337,7 +360,7 @@ namespace test
                             workspace.Add(
                                 AgentWorkspaceBuilder.FromCapabilityData(
                                     workspace,
-                                    request.Node,
+                                    node,
                                     runtimeAgent.Id,
                                     kv.Key,
                                     kv.Value));
@@ -422,11 +445,11 @@ namespace test
 
                         capabilityContext = new AgentExecutionContext
                         {
-                            Node = request.Node,
+                            Node = node,
                             Agent = runtimeAgent,
                             TopText = capabilityAugmentedText,
                             TaskMode = decision.TaskMode,
-                            Attachments = _main.GetAttachmentsForNode(request.Node),
+                            Attachments = _main.GetAttachmentsForNode(node),
                             AttachmentsRootDir = _main.GetAttachmentsRootDir()
                         };
 
@@ -475,7 +498,7 @@ namespace test
                     parallelResult = await parallelRunner.RunAsync(
                         new AgentParallelExecutionRequest
                         {
-                            Node = request.Node,
+                            Node = node,
                             OriginalInput = capabilityAugmentedText,
                             Tasks = parallelTasks,
                             Workspace = workspace
@@ -487,21 +510,21 @@ namespace test
                     foreach (var r in parallelResult.Results)
                     {
                         workspace.Add(
-                            AgentWorkspaceBuilder.FromCapabilityData(
-                                workspace,
-                                request.Node,
-                                r.AgentId,
-                                "parallel_agent_output",
-                                new DelegateOutputPayload
-                                {
-                                    FromAgentId = runtimeAgent.Id,
-                                    ToAgentId = r.AgentId,
-                                    Instruction = "parallel execution",
-                                    Output = r.Output,
-                                    Success = r.Success,
-                                    ActualModelId = r.ModelId,
-                                    ErrorMessage = r.ErrorMessage
-                                }));
+                                AgentWorkspaceBuilder.FromCapabilityData(
+                                    workspace,
+                                    node,
+                                    r.AgentId,
+                                    "parallel_agent_output",
+                                    new DelegateOutputPayload
+                                    {
+                                        FromAgentId = runtimeAgent.Id,
+                                        ToAgentId = r.AgentId,
+                                        Instruction = "parallel execution",
+                                        Output = r.Output,
+                                        Success = r.Success,
+                                        ActualModelId = r.ModelId,
+                                        ErrorMessage = r.ErrorMessage
+                                    }));
                     }
                 }
             }
@@ -533,7 +556,7 @@ namespace test
                 {
                     var subResult = await ExecuteAsync(new AgentExecutionRequest
                     {
-                        Node = request.Node,
+                        Node = node,
                         Agent = subAgent,
                         TopText = plan.Instruction,
                         UseStreaming = false,
@@ -567,7 +590,7 @@ namespace test
                     workspace.Add(
     AgentWorkspaceBuilder.FromCapabilityData(
         workspace,
-        request.Node,
+        node,
         runtimeAgent.Id,
         "delegate_output",
        new DelegateOutputPayload
@@ -603,7 +626,7 @@ namespace test
                     workspace.Add(
     AgentWorkspaceBuilder.FromCapabilityData(
         workspace,
-        request.Node,
+        node,
         runtimeAgent.Id,
         "delegate_output",
         new DelegateOutputPayload
@@ -626,7 +649,7 @@ namespace test
             if (parallelExecuted && request.DelegationDepth == 0)
             {
                 synthesisExecution = await RunFinalSynthesisAsync(
-                    request.Node,
+                    node,
                     runtimeAgent,
                     capabilityAugmentedText,
                     workspace,
@@ -645,7 +668,7 @@ namespace test
                     workspace.Add(
                         AgentWorkspaceBuilder.FromCapabilityData(
                             workspace,
-                            request.Node,
+                            node,
                             "general-agent",
                             "final_synthesis",
                             new FinalSynthesisPayload
@@ -759,7 +782,7 @@ namespace test
             else
             {
                 execution = await _executeWithFallbackAsync(
-                    request.Node,
+                    node,
                     finalInput,
                     decision,
                     useStreamingForFinalExecution ? request.OnDelta : null,
@@ -785,7 +808,7 @@ namespace test
                     workspace.Add(
                         AgentWorkspaceBuilder.FromCapabilityData(
                             workspace,
-                            request.Node,
+                            node,
                             runtimeAgent.Id,
                             "code_diff",
                             readyDiff));
@@ -803,7 +826,7 @@ namespace test
                     workspace.Add(
                         AgentWorkspaceBuilder.FromCapabilityData(
                             workspace,
-                            request.Node,
+                            node,
                             runtimeAgent.Id,
                             "code_diff_validation",
                             validation));
@@ -817,7 +840,7 @@ namespace test
                     string.Equals(validationForReadyDiff.Status, "invalid", StringComparison.OrdinalIgnoreCase))
                 {
                     var repairedExecution = await TryRepairInvalidCodeDiffAsync(
-                        request.Node,
+                        node,
                         finalInput,
                         capabilityAugmentedText,
                         execution,
@@ -837,7 +860,7 @@ namespace test
                             workspace.Add(
                                 AgentWorkspaceBuilder.FromCapabilityData(
                                     workspace,
-                                    request.Node,
+                                    node,
                                     runtimeAgent.Id,
                                     "code_diff",
                                     repairedDiff));
@@ -855,7 +878,7 @@ namespace test
                             workspace.Add(
                                 AgentWorkspaceBuilder.FromCapabilityData(
                                     workspace,
-                                    request.Node,
+                                    node,
                                     runtimeAgent.Id,
                                     "code_diff_validation",
                                     repairedValidation));

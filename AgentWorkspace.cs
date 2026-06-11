@@ -518,6 +518,21 @@ namespace test
                 size += (validation.Files?.Count ?? 0) * 80;
                 size += (validation.Messages?.Count ?? 0) * 80;
             }
+            else if (item.Payload is WorkflowPlanPayload workflow)
+            {
+                size += workflow.PipelineId?.Length ?? 0;
+                size += workflow.UserInputPreview?.Length ?? 0;
+                size += (workflow.Nodes?.Count ?? 0) * 160;
+                size += (workflow.Edges?.Count ?? 0) * 40;
+                size += (workflow.Notes?.Count ?? 0) * 60;
+            }
+            else if (item.Payload is DownstreamNodePlanPayload downstream)
+            {
+                size += downstream.PipelineId?.Length ?? 0;
+                size += (downstream.ProposedNodes?.Count ?? 0) * 160;
+                size += (downstream.ProposedEdges?.Count ?? 0) * 40;
+                size += (downstream.Notes?.Count ?? 0) * 60;
+            }
             else if (item.Payload != null)
             {
                 size += item.Payload.ToString()?.Length ?? 0;
@@ -642,6 +657,75 @@ namespace test
 
                     if (!string.IsNullOrWhiteSpace(orchestration.Reason))
                         lines.Add($"  Summary: {Trim(orchestration.Reason, 260)}");
+                }
+                else if (item.Payload is WorkflowPlanPayload workflow)
+                {
+                    lines.Add($"  Workflow: Status={Safe(workflow.Status)} / TaskType={workflow.TaskType} / Pipeline={Safe(workflow.PipelineId)}");
+                    lines.Add($"  WorkflowSource: Node={Safe(workflow.SourceNodeId)} / Input={Trim(workflow.UserInputPreview, 180)}");
+                    lines.Add($"  WorkflowCapabilities: creates_canvas_nodes={workflow.CreatesCanvasNodes}; replay={workflow.ReplaySupported}; rerun={workflow.RerunSupported}; resume={workflow.ResumeSupported}");
+                    lines.Add($"  WorkflowShape: Nodes={workflow.Nodes?.Count ?? 0} / Edges={workflow.Edges?.Count ?? 0}");
+
+                    foreach (var node in workflow.Nodes?.Take(12) ?? Array.Empty<WorkflowNodePayload>())
+                    {
+                        if (node == null)
+                            continue;
+
+                        lines.Add($"  WorkflowNode: {Safe(node.Id)} / {Safe(node.Label)} / Agent={Safe(node.AgentId)} / Capability={Safe(node.CapabilityId)} / Status={Safe(node.Status)}");
+
+                        if (!string.IsNullOrWhiteSpace(node.InputPreview))
+                            lines.Add($"    Input: {Trim(node.InputPreview, 180)}");
+
+                        if (!string.IsNullOrWhiteSpace(node.OutputPreview))
+                            lines.Add($"    Output: {Trim(node.OutputPreview, 180)}");
+                    }
+
+                    foreach (var edge in workflow.Edges?.Take(12) ?? Array.Empty<WorkflowEdgePayload>())
+                    {
+                        if (edge == null)
+                            continue;
+
+                        lines.Add($"  WorkflowEdge: {Safe(edge.FromNodeId)} -> {Safe(edge.ToNodeId)} / {Safe(edge.Kind)}");
+                    }
+
+                    foreach (var note in workflow.Notes?.Take(5) ?? Array.Empty<string>())
+                    {
+                        if (!string.IsNullOrWhiteSpace(note))
+                            lines.Add($"  WorkflowNote: {Trim(note, 180)}");
+                    }
+                }
+                else if (item.Payload is DownstreamNodePlanPayload downstream)
+                {
+                    lines.Add($"  DownstreamPlan: Status={Safe(downstream.Status)} / TaskType={downstream.TaskType} / Pipeline={Safe(downstream.PipelineId)}");
+                    lines.Add($"  DownstreamCapabilities: creates_canvas_nodes={downstream.CreatesCanvasNodes}");
+                    lines.Add($"  DownstreamShape: ProposedNodes={downstream.ProposedNodes?.Count ?? 0} / ProposedEdges={downstream.ProposedEdges?.Count ?? 0}");
+
+                    foreach (var proposedNode in downstream.ProposedNodes?.Take(12) ?? Array.Empty<DownstreamNodeProposalPayload>())
+                    {
+                        if (proposedNode == null)
+                            continue;
+
+                        lines.Add($"  DownstreamNode: {Safe(proposedNode.Id)} / {Safe(proposedNode.Label)} / Agent={Safe(proposedNode.AgentId)} / Capability={Safe(proposedNode.CapabilityId)} / Status={Safe(proposedNode.Status)}");
+
+                        if (!string.IsNullOrWhiteSpace(proposedNode.InputSource))
+                            lines.Add($"    InputSource: {Trim(proposedNode.InputSource, 180)}");
+
+                        if (!string.IsNullOrWhiteSpace(proposedNode.ExpectedOutput))
+                            lines.Add($"    ExpectedOutput: {Trim(proposedNode.ExpectedOutput, 180)}");
+                    }
+
+                    foreach (var proposedEdge in downstream.ProposedEdges?.Take(12) ?? Array.Empty<DownstreamNodeEdgeProposalPayload>())
+                    {
+                        if (proposedEdge == null)
+                            continue;
+
+                        lines.Add($"  DownstreamEdge: {Safe(proposedEdge.FromNodeId)} -> {Safe(proposedEdge.ToNodeId)} / {Safe(proposedEdge.Kind)}");
+                    }
+
+                    foreach (var note in downstream.Notes?.Take(5) ?? Array.Empty<string>())
+                    {
+                        if (!string.IsNullOrWhiteSpace(note))
+                            lines.Add($"  DownstreamNote: {Trim(note, 180)}");
+                    }
                 }
                 else if (!string.IsNullOrWhiteSpace(item.TextSummary))
                 {

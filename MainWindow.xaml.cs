@@ -55,6 +55,7 @@ namespace test
 
         private readonly Dictionary<Guid, string> _autoFlowTemplatesByNode = new();
         private readonly Dictionary<Guid, NodeAutoFlowPolicy> _autoFlowPoliciesByNode = new();
+        private readonly HashSet<Guid> _unsupportedDownstreamNodeIds = new();
 
         public enum EditReason
         {
@@ -279,7 +280,8 @@ namespace test
     double FontSize,
     string? AgentId = null,
     string? NodeModel = null,
-    string? TaskMode = null
+    string? TaskMode = null,
+    bool UnsupportedDownstreamNode = false
 );
 
         private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
@@ -1207,6 +1209,11 @@ namespace test
         {
             string safeTitle = step?.Title ?? "";
             string safeDetail = step?.Detail ?? "";
+            var safeState = step?.State ?? NodeDecisionStepState.Info;
+            bool safeHighlight = step?.Highlight == true;
+            bool safeIsActive = step?.IsActive == true;
+            bool safeIsExpandable = step?.IsExpandable == true;
+            var safeDetailLines = step?.DetailLines ?? Array.Empty<string>();
             string stepKey = $"{index}:{safeTitle}:{safeDetail}";
             bool isExpanded = _expandedDecisionStepKeys.Contains(stepKey);
 
@@ -1247,7 +1254,7 @@ namespace test
                 Height = 14,
                 CornerRadius = new CornerRadius(999),
                 Background = CreateBrush("#FFFFFF", "#FFFFFF"),
-                BorderBrush = GetStepBrush(step.State),
+                BorderBrush = GetStepBrush(safeState),
                 BorderThickness = new Thickness(2),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
@@ -1259,7 +1266,7 @@ namespace test
                 Width = 6,
                 Height = 6,
                 CornerRadius = new CornerRadius(999),
-                Background = GetStepBrush(step.State),
+                Background = GetStepBrush(safeState),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -1287,22 +1294,22 @@ namespace test
             // ===== 右側卡片 =====
             var cardBorder = new Border
             {
-                Background = step.Highlight
+                Background = safeHighlight
                     ? CreateBrush("#F6FAFF", "#F6FAFF")
                     : CreateBrush("#FFFFFF", "#FFFFFF"),
-                BorderBrush = GetStepBorderBrush(step.State, step.Highlight || step.IsActive),
-                BorderThickness = new Thickness(step.IsActive ? 1.6 : 1),
+                BorderBrush = GetStepBorderBrush(safeState, safeHighlight || safeIsActive),
+                BorderThickness = new Thickness(safeIsActive ? 1.6 : 1),
                 CornerRadius = new CornerRadius(14),
                 Padding = new Thickness(12, 10, 12, 10),
-                Cursor = step.IsExpandable ? Cursors.Hand : Cursors.Arrow
+                Cursor = safeIsExpandable ? Cursors.Hand : Cursors.Arrow
             };
 
             var shadow = new DropShadowEffect
             {
-                BlurRadius = step.IsActive ? 20 : (step.Highlight ? 14 : 10),
+                BlurRadius = safeIsActive ? 20 : (safeHighlight ? 14 : 10),
                 ShadowDepth = 0,
-                Opacity = step.IsActive ? 0.18 : (step.Highlight ? 0.14 : 0.08),
-                Color = step.IsActive ? GetStepBrush(step.State).Color : Colors.Black
+                Opacity = safeIsActive ? 0.18 : (safeHighlight ? 0.14 : 0.08),
+                Color = safeIsActive ? GetStepBrush(safeState).Color : Colors.Black
             };
             cardBorder.Effect = shadow;
 
@@ -1320,7 +1327,7 @@ namespace test
 
             var indexBadge = new Border
             {
-                Background = GetStepSoftBrush(step.State),
+                Background = GetStepSoftBrush(safeState),
                 CornerRadius = new CornerRadius(999),
                 Padding = new Thickness(7, 2, 7, 2),
                 Margin = new Thickness(0, 0, 8, 0),
@@ -1329,14 +1336,14 @@ namespace test
                     Text = (index + 1).ToString(),
                     FontSize = 11,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = GetStepBrush(step.State),
+                    Foreground = GetStepBrush(safeState),
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
 
             var titleText = new TextBlock
             {
-                Text = string.IsNullOrWhiteSpace(step.Title) ? "-" : step.Title,
+                Text = string.IsNullOrWhiteSpace(safeTitle) ? "-" : safeTitle,
                 FontSize = 12.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = CreateBrush("#232323", "#232323"),
@@ -1352,16 +1359,16 @@ namespace test
 
             var stateBadge = new Border
             {
-                Background = GetStepSoftBrush(step.State),
+                Background = GetStepSoftBrush(safeState),
                 CornerRadius = new CornerRadius(999),
                 Padding = new Thickness(8, 3, 8, 3),
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = new TextBlock
                 {
-                    Text = step.IsActive ? "Running" : GetStepStateLabel(step.State),
+                    Text = safeIsActive ? "Running" : GetStepStateLabel(safeState),
                     FontSize = 11,
                     FontWeight = FontWeights.Medium,
-                    Foreground = GetStepBrush(step.State)
+                    Foreground = GetStepBrush(safeState)
                 }
             };
 
@@ -1372,7 +1379,7 @@ namespace test
 
             var detailText = new TextBlock
             {
-                Text = string.IsNullOrWhiteSpace(step.Detail) ? "-" : step.Detail,
+                Text = string.IsNullOrWhiteSpace(safeDetail) ? "-" : safeDetail,
                 FontSize = 12,
                 Margin = new Thickness(0, 8, 0, 0),
                 Foreground = CreateBrush("#5D5D5D", "#5D5D5D"),
@@ -1380,7 +1387,7 @@ namespace test
             };
             contentPanel.Children.Add(detailText);
 
-            if (step.IsExpandable)
+            if (safeIsExpandable)
             {
                 var actionRow = new DockPanel
                 {
@@ -1401,7 +1408,7 @@ namespace test
                 contentPanel.Children.Add(actionRow);
             }
 
-            if (isExpanded && step.DetailLines != null && step.DetailLines.Count > 0)
+            if (isExpanded && safeDetailLines.Count > 0)
             {
                 var detailHost = new StackPanel
                 {
@@ -1418,11 +1425,11 @@ namespace test
 
                 if (IsWorkspaceStep(step))
                 {
-                    detailHost.Children.Add(CreateWorkspaceInspector(step.DetailLines));
+                    detailHost.Children.Add(CreateWorkspaceInspector(safeDetailLines));
                 }
                 else
                 {
-                    foreach (var line in step.DetailLines)
+                    foreach (var line in safeDetailLines)
                     {
                         detailHost.Children.Add(new Border
                         {
@@ -1453,7 +1460,7 @@ namespace test
                 "複製此決策區塊",
                 () => BuildDecisionStepCopyText(step, index));
 
-            if (step.IsExpandable)
+            if (safeIsExpandable)
             {
                 cardBorder.MouseLeftButtonUp += (_, __) =>
                 {
@@ -1469,9 +1476,9 @@ namespace test
 
                 cardBorder.MouseEnter += (_, __) =>
                 {
-                    if (!step.IsActive)
+                    if (!safeIsActive)
                     {
-                        cardBorder.Background = step.Highlight
+                        cardBorder.Background = safeHighlight
                             ? CreateBrush("#F0F7FF", "#F0F7FF")
                             : CreateBrush("#FAFAFA", "#FAFAFA");
                     }
@@ -1479,20 +1486,20 @@ namespace test
 
                 cardBorder.MouseLeave += (_, __) =>
                 {
-                    if (!step.IsActive)
+                    if (!safeIsActive)
                     {
-                        cardBorder.Background = step.Highlight
+                        cardBorder.Background = safeHighlight
                             ? CreateBrush("#F6FAFF", "#F6FAFF")
                             : CreateBrush("#FFFFFF", "#FFFFFF");
                     }
                 };
             }
 
-            if (step.IsActive)
+            if (safeIsActive)
             {
-                ApplyActiveTimelineVisual(cardBorder, dotOuter, dotInner, step.State);
+                ApplyActiveTimelineVisual(cardBorder, dotOuter, dotInner, safeState);
 
-                cardBorder.Background = step.Highlight
+                cardBorder.Background = safeHighlight
                     ? CreateBrush("#EEF6FF", "#EEF6FF")
                     : CreateBrush("#F8FBFF", "#F8FBFF");
             }
@@ -1507,13 +1514,13 @@ namespace test
             return root;
         }
 
-        private static bool IsWorkspaceStep(NodeDecisionStepViewData step)
+        private static bool IsWorkspaceStep(NodeDecisionStepViewData? step)
         {
             return string.Equals(step?.Title, "Workspace", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string BuildDecisionStepCopyText(
-            NodeDecisionStepViewData step,
+            NodeDecisionStepViewData? step,
             int index)
         {
             if (step == null)
@@ -1572,7 +1579,8 @@ namespace test
 
                 if (trimmed.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase))
                 {
-                    currentArtifactLines = new List<string> { trimmed };
+                    var artifactLines = new List<string> { trimmed };
+                    currentArtifactLines = artifactLines;
 
                     currentArtifactFacts = new StackPanel
                     {
@@ -1582,7 +1590,11 @@ namespace test
                     currentArtifactCard = CreateArtifactCard(
                         trimmed,
                         currentArtifactFacts,
-                        () => string.Join(Environment.NewLine, currentArtifactLines ?? new List<string>()));
+                        () => string.Join(Environment.NewLine, artifactLines),
+                        trimmed.Contains("Type: downstream_node_plan", StringComparison.OrdinalIgnoreCase)
+                            ? () => TryMaterializeDownstreamNodePlanFromText(
+                                string.Join(Environment.NewLine, artifactLines))
+                            : null);
 
                     root.Children.Add(currentArtifactCard);
                     continue;
@@ -1656,7 +1668,8 @@ namespace test
         private Border CreateArtifactCard(
             string line,
             StackPanel factsHost,
-            Func<string> copyTextProvider)
+            Func<string> copyTextProvider,
+            Action? applyDownstreamPlan = null)
         {
             var parts = line.Substring("Artifact:".Length).Trim()
                 .Split('/')
@@ -1705,7 +1718,8 @@ namespace test
             AttachCopyContextMenu(
                 card,
                 "複製此主題區塊",
-                copyTextProvider);
+                copyTextProvider,
+                applyDownstreamPlan);
 
             return card;
         }
@@ -1937,7 +1951,8 @@ namespace test
         private void AttachCopyContextMenu(
             FrameworkElement target,
             string menuText,
-            Func<string> copyTextProvider)
+            Func<string> copyTextProvider,
+            Action? applyDownstreamPlan = null)
         {
             if (target == null || copyTextProvider == null)
                 return;
@@ -1970,6 +1985,22 @@ namespace test
             };
 
             menu.Items.Add(item);
+
+            if (applyDownstreamPlan != null)
+            {
+                var sepStyle = TryFindResource("FileSeparatorStyle") as Style;
+                var applyItem = new MenuItem
+                {
+                    Header = "套用到畫布",
+                    Style = TryFindResource("FileMenuItemStyle") as Style
+                };
+
+                applyItem.Click += (_, __) => applyDownstreamPlan();
+
+                menu.Items.Add(new Separator { Style = sepStyle });
+                menu.Items.Add(applyItem);
+            }
+
             target.ContextMenu = menu;
         }
 
@@ -2719,6 +2750,467 @@ namespace test
             SaveState();
         }
 
+        public IReadOnlyList<NodeControl> MaterializeDownstreamNodePlan(
+            NodeControl sourceNode,
+            DownstreamNodePlanPayload plan)
+        {
+            if (sourceNode == null || plan?.ProposedNodes == null || plan.ProposedNodes.Count == 0)
+                return Array.Empty<NodeControl>();
+
+            var created = new List<NodeControl>();
+            double sourceLeft = Canvas.GetLeft(sourceNode);
+            double sourceTop = Canvas.GetTop(sourceNode);
+
+            if (double.IsNaN(sourceLeft))
+                sourceLeft = 0;
+
+            if (double.IsNaN(sourceTop))
+                sourceTop = 0;
+
+            const double downstreamNodeSpacingX = 340;
+            const double downstreamNodeOffsetY = 80;
+            const double downstreamNodeRowGap = 360;
+            double x = sourceLeft + sourceNode.Width + 130;
+            double y = ResolveAvailableDownstreamRowY(
+                sourceNode,
+                x,
+                sourceTop + downstreamNodeOffsetY,
+                plan.ProposedNodes.Count,
+                downstreamNodeSpacingX,
+                downstreamNodeRowGap);
+            NodeControl previousNode = sourceNode;
+            int index = 0;
+
+            foreach (var proposal in plan.ProposedNodes.Where(x => x != null))
+            {
+                var node = new NodeControl();
+                Canvas.SetLeft(node, SafeFinite(x + index * downstreamNodeSpacingX, 0));
+                Canvas.SetTop(node, SafeFinite(y, 0));
+                Canvas.SetZIndex(node, GetNextZIndex());
+
+                HookNode(node);
+                MainCanvas.Children.Add(node);
+
+                string requestedAgent = proposal.AgentId ?? "";
+                string effectiveAgent = AgentRegistry.IsKnown(requestedAgent)
+                    ? requestedAgent
+                    : GetDefaultAgentId();
+                bool requiresFutureAgent = !string.Equals(requestedAgent, effectiveAgent, StringComparison.OrdinalIgnoreCase);
+
+                SetNodeSelectedAgent(node, effectiveAgent);
+
+                var agent = AgentRegistry.Get(effectiveAgent);
+                _nodeModelsById[node.Id] = AiModelHelper.NormalizeNodeModel(agent.DefaultModelId);
+                _nodeTaskModesById[node.Id] = ResolveTaskModeForDownstreamProposal(proposal, agent);
+
+                if (requiresFutureAgent)
+                    _unsupportedDownstreamNodeIds.Add(node.Id);
+                else
+                    _unsupportedDownstreamNodeIds.Remove(node.Id);
+
+                node.SetTopText(BuildDownstreamNodePrompt(proposal));
+                node.SetBottomText("");
+                node.SetTopLocked(false);
+                SetNodeAutoFlowPolicy(node, new NodeAutoFlowPolicy
+                {
+                    AutoRunEnabled = false,
+                    WaitForAllInputs = false,
+                    StopFlowOnError = true,
+                    AllowPartialInput = false
+                });
+                SyncAutoFlowTemplate(node, node.GetTopText());
+
+                CreateCurve(previousNode, "ThumbTR", node, "ThumbTL");
+
+                created.Add(node);
+                previousNode = node;
+                index++;
+            }
+
+            RefreshConnectionsAfterLayout(new[] { sourceNode }.Concat(created).ToList());
+            SaveState();
+            return created;
+        }
+
+        private double ResolveAvailableDownstreamRowY(
+            NodeControl sourceNode,
+            double startX,
+            double preferredY,
+            int nodeCount,
+            double spacingX,
+            double rowGap)
+        {
+            if (nodeCount <= 0)
+                return preferredY;
+
+            const double probeWidth = 260;
+            const double probeHeight = 250;
+            const double padding = 24;
+
+            var existingRects = MainCanvas.Children
+                .OfType<NodeControl>()
+                .Where(x => !ReferenceEquals(x, sourceNode))
+                .Select(GetNodeCanvasRect)
+                .Where(x => x.Width > 0 && x.Height > 0)
+                .ToList();
+
+            for (int attempt = 0; attempt < 12; attempt++)
+            {
+                double y = preferredY + attempt * rowGap;
+                bool overlaps = false;
+
+                for (int i = 0; i < nodeCount; i++)
+                {
+                    var probe = new Rect(
+                        startX + i * spacingX - padding,
+                        y - padding,
+                        probeWidth + padding * 2,
+                        probeHeight + padding * 2);
+
+                    if (existingRects.Any(existing => existing.IntersectsWith(probe)))
+                    {
+                        overlaps = true;
+                        break;
+                    }
+                }
+
+                if (!overlaps)
+                    return y;
+            }
+
+            return preferredY + 12 * rowGap;
+        }
+
+        private static Rect GetNodeCanvasRect(NodeControl node)
+        {
+            if (node == null)
+                return Rect.Empty;
+
+            double left = Canvas.GetLeft(node);
+            double top = Canvas.GetTop(node);
+
+            if (double.IsNaN(left))
+                left = 0;
+
+            if (double.IsNaN(top))
+                top = 0;
+
+            double width = node.ActualWidth > 0
+                ? node.ActualWidth
+                : (!double.IsNaN(node.Width) && node.Width > 0 ? node.Width : 260);
+
+            double height = node.ActualHeight > 0
+                ? node.ActualHeight
+                : (!double.IsNaN(node.Height) && node.Height > 0 ? node.Height : 250);
+
+            return new Rect(left, top, width, height);
+        }
+
+        private void RefreshConnectionsAfterLayout(IReadOnlyList<NodeControl> nodes)
+        {
+            if (nodes == null || nodes.Count == 0)
+                return;
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                MainCanvas.UpdateLayout();
+
+                foreach (var node in nodes.Where(x => x != null && MainCanvas.Children.Contains(x)))
+                    UpdateConnectionsFor(node);
+
+                SaveState();
+            }), DispatcherPriority.Loaded);
+        }
+
+        private void TryMaterializeDownstreamNodePlanFromText(string artifactText)
+        {
+            if (string.IsNullOrWhiteSpace(artifactText))
+                return;
+
+            var sourceNode = _lastDecisionNode;
+            if (sourceNode == null || !MainCanvas.Children.Contains(sourceNode))
+            {
+                sourceNode = _hoveredDecisionNode;
+            }
+
+            if (sourceNode == null || !MainCanvas.Children.Contains(sourceNode))
+            {
+                sourceNode = _initialNode;
+            }
+
+            if (sourceNode == null || !MainCanvas.Children.Contains(sourceNode))
+            {
+                sourceNode = MainCanvas.Children.OfType<NodeControl>().FirstOrDefault();
+            }
+
+            if (sourceNode == null || !MainCanvas.Children.Contains(sourceNode))
+                return;
+
+            var plan = TryParseDownstreamNodePlan(artifactText, sourceNode.Id.ToString());
+            if (plan == null || plan.ProposedNodes.Count == 0)
+                return;
+
+            var created = MaterializeDownstreamNodePlan(sourceNode, plan);
+            if (created.Count > 0)
+                FocusDecisionNode(created[0]);
+        }
+
+        private static double GetNodeLayoutHeight(NodeControl node)
+        {
+            if (node == null)
+                return 0;
+
+            if (node.ActualHeight > 0)
+                return node.ActualHeight;
+
+            if (node.Height > 0 && !double.IsNaN(node.Height))
+                return node.Height;
+
+            return 360;
+        }
+
+        private static DownstreamNodePlanPayload? TryParseDownstreamNodePlan(
+            string text,
+            string sourceNodeId)
+        {
+            var lines = (text ?? "")
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Split('\n')
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            if (!lines.Any(x => x.StartsWith("DownstreamPlan:", StringComparison.OrdinalIgnoreCase)))
+                return null;
+
+            string pipelineId = "";
+            var taskType = OrchestrationTaskType.Workflow;
+            var mutableNodes = new List<MutableDownstreamNodeProposal>();
+            MutableDownstreamNodeProposal? currentNode = null;
+
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("DownstreamPlan:", StringComparison.OrdinalIgnoreCase))
+                {
+                    pipelineId = ExtractSlashField(line, "Pipeline");
+                    string taskTypeText = ExtractSlashField(line, "TaskType");
+                    if (Enum.TryParse(taskTypeText, true, out OrchestrationTaskType parsed))
+                        taskType = parsed;
+
+                    continue;
+                }
+
+                if (line.StartsWith("DownstreamNode:", StringComparison.OrdinalIgnoreCase))
+                {
+                    string body = line.Substring("DownstreamNode:".Length).Trim();
+                    var parts = body
+                        .Split('/')
+                        .Select(x => x.Trim())
+                        .ToList();
+
+                    currentNode = new MutableDownstreamNodeProposal
+                    {
+                        Id = parts.Count > 0 ? parts[0] : "",
+                        Label = parts.Count > 1 ? parts[1] : "",
+                        AgentId = ExtractSlashField(line, "Agent"),
+                        CapabilityId = ExtractSlashField(line, "Capability"),
+                        Status = ExtractSlashField(line, "Status")
+                    };
+
+                    mutableNodes.Add(currentNode);
+                    continue;
+                }
+
+                if (currentNode != null &&
+                    line.StartsWith("InputSource:", StringComparison.OrdinalIgnoreCase))
+                {
+                    currentNode.InputSource = line.Substring("InputSource:".Length).Trim();
+                    continue;
+                }
+
+                if (currentNode != null &&
+                    line.StartsWith("ExpectedOutput:", StringComparison.OrdinalIgnoreCase))
+                {
+                    currentNode.ExpectedOutput = line.Substring("ExpectedOutput:".Length).Trim();
+                }
+            }
+
+            var nodes = mutableNodes
+                .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+                .Select(x => new DownstreamNodeProposalPayload
+                {
+                    Id = x.Id,
+                    Label = x.Label,
+                    AgentId = x.AgentId,
+                    CapabilityId = x.CapabilityId,
+                    InputSource = x.InputSource,
+                    ExpectedOutput = x.ExpectedOutput,
+                    Status = string.IsNullOrWhiteSpace(x.Status) ? "proposed" : x.Status
+                })
+                .ToList();
+
+            if (nodes.Count == 0)
+                return null;
+
+            var edges = new List<DownstreamNodeEdgeProposalPayload>();
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                edges.Add(new DownstreamNodeEdgeProposalPayload
+                {
+                    FromNodeId = nodes[i - 1].Id,
+                    ToNodeId = nodes[i].Id
+                });
+            }
+
+            return new DownstreamNodePlanPayload
+            {
+                Status = "proposal",
+                PipelineId = pipelineId,
+                TaskType = taskType,
+                SourceNodeId = sourceNodeId ?? "",
+                CreatesCanvasNodes = false,
+                ProposedNodes = nodes,
+                ProposedEdges = edges,
+                Notes = new[]
+                {
+                    "Materialized from workspace downstream_node_plan card.",
+                    "Created nodes do not auto-run by default."
+                }
+            };
+        }
+
+        private static string ExtractSlashField(string line, string key)
+        {
+            if (string.IsNullOrWhiteSpace(line) || string.IsNullOrWhiteSpace(key))
+                return "";
+
+            var match = Regex.Match(
+                line,
+                $@"(?:^|/)\s*{Regex.Escape(key)}\s*=\s*(?<value>[^/]+)",
+                RegexOptions.IgnoreCase);
+
+            return match.Success
+                ? match.Groups["value"].Value.Trim()
+                : "";
+        }
+
+        private sealed class MutableDownstreamNodeProposal
+        {
+            public string Id { get; set; } = "";
+            public string Label { get; set; } = "";
+            public string AgentId { get; set; } = "";
+            public string CapabilityId { get; set; } = "";
+            public string InputSource { get; set; } = "";
+            public string ExpectedOutput { get; set; } = "";
+            public string Status { get; set; } = "proposed";
+        }
+
+        private static NodeTaskMode ResolveTaskModeForDownstreamProposal(
+            DownstreamNodeProposalPayload proposal,
+            AgentDefinition agent)
+        {
+            string capability = proposal?.CapabilityId ?? "";
+            string label = proposal?.Label ?? "";
+
+            if (capability.Contains("search", StringComparison.OrdinalIgnoreCase) ||
+                label.Contains("research", StringComparison.OrdinalIgnoreCase))
+            {
+                return NodeTaskMode.Research;
+            }
+
+            if (capability.Contains("generation", StringComparison.OrdinalIgnoreCase) ||
+                capability.Contains("planning", StringComparison.OrdinalIgnoreCase))
+            {
+                return NodeTaskMode.Summarize;
+            }
+
+            return NodeTaskModeHelper.Normalize(agent.DefaultTaskMode);
+        }
+
+        private static string BuildDownstreamNodePrompt(
+            DownstreamNodeProposalPayload proposal)
+        {
+            string label = BuildDownstreamNodeShortLabel(proposal);
+            string detailLabel = string.IsNullOrWhiteSpace(proposal?.Label)
+                ? "Downstream step"
+                : proposal.Label.Trim();
+
+            return
+                $"{label}｜{TranslateDownstreamStepLabel(detailLabel)}\n\n" +
+                "{{input}}";
+        }
+
+        private static string TranslateDownstreamStepLabel(string label)
+        {
+            string value = label?.Trim() ?? "";
+
+            if (value.Contains("Research", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("source facts", StringComparison.OrdinalIgnoreCase))
+                return "搜尋並驗證資料";
+
+            if (value.Contains("outline", StringComparison.OrdinalIgnoreCase))
+                return "建立大綱";
+
+            if (value.Contains("deck", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("presentation", StringComparison.OrdinalIgnoreCase))
+                return "生成簡報";
+
+            if (value.Contains("export", StringComparison.OrdinalIgnoreCase))
+                return "匯出檔案";
+
+            if (value.Contains("draft", StringComparison.OrdinalIgnoreCase))
+                return "撰寫草稿";
+
+            if (value.Contains("execute", StringComparison.OrdinalIgnoreCase))
+                return "執行步驟";
+
+            if (value.Contains("synthesize", StringComparison.OrdinalIgnoreCase))
+                return "整合結果";
+
+            return string.IsNullOrWhiteSpace(value) ? "下游步驟" : value;
+        }
+
+        private static string BuildDownstreamNodeShortLabel(DownstreamNodeProposalPayload proposal)
+        {
+            string id = proposal?.Id?.Trim() ?? "";
+
+            if (id.Equals("research", StringComparison.OrdinalIgnoreCase))
+                return "Research";
+
+            if (id.Equals("outline", StringComparison.OrdinalIgnoreCase))
+                return "Outline";
+
+            if (id.Equals("deck", StringComparison.OrdinalIgnoreCase))
+                return "Deck";
+
+            if (id.Equals("export", StringComparison.OrdinalIgnoreCase))
+                return "Export";
+
+            if (id.Equals("draft", StringComparison.OrdinalIgnoreCase))
+                return "Draft";
+
+            if (id.Equals("synthesize", StringComparison.OrdinalIgnoreCase))
+                return "Synthesize";
+
+            if (id.Equals("execute", StringComparison.OrdinalIgnoreCase))
+                return "Execute";
+
+            if (id.Equals("prompt", StringComparison.OrdinalIgnoreCase))
+                return "Prompt";
+
+            if (id.Equals("image", StringComparison.OrdinalIgnoreCase))
+                return "Image";
+
+            if (id.Equals("video", StringComparison.OrdinalIgnoreCase))
+                return "Video";
+
+            if (!string.IsNullOrWhiteSpace(proposal?.Label))
+                return proposal.Label.Trim();
+
+            return string.IsNullOrWhiteSpace(id) ? "Step" : id;
+        }
+
         private void UpdateConnectionsFor(NodeControl node)
         {
             foreach (var c in _connections)
@@ -2984,7 +3476,8 @@ namespace test
     fontSize,
     GetNodeSelectedAgent(child),
     GetNodeSelectedModel(child),
-    GetNodeTaskModeStorageValue(child)
+    GetNodeTaskModeStorageValue(child),
+    _unsupportedDownstreamNodeIds.Contains(child.Id)
 ));
             }
 
@@ -3087,6 +3580,7 @@ namespace test
             _nodeTaskModesById.Clear();
             _executionLogService.ClearAll();
             _nodeAgentsById.Clear();
+            _unsupportedDownstreamNodeIds.Clear();
 
             _hoveredDecisionNode = null;
             _lastDecisionNode = null;
@@ -3154,6 +3648,9 @@ namespace test
                         ? NodeTaskModeHelper.Normalize(loadedAgent.DefaultTaskMode)
                         : ParseNodeTaskMode(n.TaskMode);
 
+                    if (n.UnsupportedDownstreamNode)
+                        _unsupportedDownstreamNodeIds.Add(node.Id);
+
                     node.SetCommittedModelId(loadedModel, syncEditingModel: true);
 
                     node.SetTopText(n.TopText ?? "");
@@ -3219,6 +3716,7 @@ namespace test
             _executionLogService.ClearAll();
             _autoFlowTemplatesByNode.Clear();
             _autoFlowPoliciesByNode.Clear();
+            _unsupportedDownstreamNodeIds.Clear();
             _nodeAgentsById.Clear();
             _editingNode = null;
             _editingReason = EditReason.None;
@@ -3694,6 +4192,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 _nodeTaskModesById.Remove(n.Id);
                 _autoFlowTemplatesByNode.Remove(n.Id);
                 _autoFlowPoliciesByNode.Remove(n.Id);
+                _unsupportedDownstreamNodeIds.Remove(n.Id);
                 ClearExecutionLogs(n);
             }
 
@@ -4553,6 +5052,38 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
         public bool TryPrepareAutoFlowInput(NodeControl fromNode, NodeControl toNode)
         {
+            if (!TryBuildAutoFlowInjectedPrompt(fromNode, toNode, out var injected))
+                return false;
+
+            toNode.SetTopText(injected);
+            toNode.RefreshModelSelectionUI();
+            RefreshDecisionForNode(toNode);
+            return true;
+        }
+
+        public bool TryBuildInputFromFirstUpstream(NodeControl node, out string injectedPrompt)
+        {
+            injectedPrompt = "";
+
+            if (node == null)
+                return false;
+
+            var incoming = GetConnectionsForContext()
+                .Where(c => ReferenceEquals(c.EndNode, node))
+                .Select(c => c.StartNode)
+                .Where(n => n != null)
+                .FirstOrDefault();
+
+            return incoming != null && TryBuildAutoFlowInjectedPrompt(incoming, node, out injectedPrompt);
+        }
+
+        private bool TryBuildAutoFlowInjectedPrompt(
+            NodeControl fromNode,
+            NodeControl toNode,
+            out string injectedPrompt)
+        {
+            injectedPrompt = "";
+
             if (fromNode == null || toNode == null)
                 return false;
 
@@ -4577,10 +5108,26 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             if (string.IsNullOrWhiteSpace(injected))
                 return false;
 
-            toNode.SetTopText(injected);
-            toNode.RefreshModelSelectionUI();
-            RefreshDecisionForNode(toNode);
+            injectedPrompt = injected;
             return true;
+        }
+
+        public bool TryPrepareInputFromFirstUpstream(NodeControl node)
+        {
+            if (node == null)
+                return false;
+
+            string topText = node.GetTopText() ?? "";
+            if (!topText.Contains("{{input}}", StringComparison.Ordinal))
+                return false;
+
+            var incoming = GetConnectionsForContext()
+                .Where(c => ReferenceEquals(c.EndNode, node))
+                .Select(c => c.StartNode)
+                .Where(n => n != null)
+                .FirstOrDefault();
+
+            return incoming != null && TryPrepareAutoFlowInput(incoming, node);
         }
 
         public void FocusDecisionNode(NodeControl node)
@@ -4617,6 +5164,143 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         public bool IsNodeAutoRunEnabled(NodeControl node)
         {
             return GetNodeAutoFlowPolicy(node).AutoRunEnabled;
+        }
+
+        public async Task RunManualWorkflowChainAsync(NodeControl startNode)
+        {
+            if (startNode == null || !MainCanvas.Children.Contains(startNode))
+                return;
+
+            var visited = new HashSet<Guid>();
+            var current = startNode;
+
+            for (int step = 0; step < 12; step++)
+            {
+                if (current == null || !MainCanvas.Children.Contains(current))
+                    return;
+
+                if (!visited.Add(current.Id))
+                    return;
+
+                FocusDecisionNode(current);
+
+                if (ShouldStopBeforeUnsupportedDownstreamNode(current))
+                {
+                    current.SetBottomText(
+                        "（此下游節點需要尚未接上的專用代理，已停止以避免不必要的 token 消耗。）\n" +
+                        "目前可先使用前一個節點的結果；等 presentation/file/media/workflow agent 完成後再啟用此步。");
+                    return;
+                }
+
+                bool success = await current.RunCurrentTopTextAsync();
+                if (!success)
+                    return;
+
+                current = GetFirstDownstreamNode(current);
+                if (current == null)
+                    return;
+            }
+        }
+
+        public void RunDryWorkflowChain(NodeControl startNode)
+        {
+            if (startNode == null || !MainCanvas.Children.Contains(startNode))
+                return;
+
+            var visited = new HashSet<Guid>();
+            var current = startNode;
+            string upstreamText = (startNode.GetBottomText() ?? "").Trim();
+
+            for (int step = 0; step < 12; step++)
+            {
+                if (current == null || !MainCanvas.Children.Contains(current))
+                    return;
+
+                if (!visited.Add(current.Id))
+                {
+                    current.SetBottomText("（Dry run 停止：偵測到循環連線。）");
+                    FocusDecisionNode(current);
+                    return;
+                }
+
+                FocusDecisionNode(current);
+
+                if (ShouldStopBeforeUnsupportedDownstreamNode(current))
+                {
+                    current.SetBottomText(
+                        "（Dry run 停止：此節點需要尚未接上的專用代理。）\n" +
+                        "真實執行時也會在此停止，以避免不必要的 token 消耗。");
+                    return;
+                }
+
+                string label = ExtractWorkflowStepLabel(current.GetTopText());
+                string inputSummary = string.IsNullOrWhiteSpace(upstreamText)
+                    ? "無上游輸出或由本節點原始輸入開始。"
+                    : SummarizeForDryRun(upstreamText);
+
+                current.SetBottomText(
+                    $"（Dry run，未呼叫模型）\n" +
+                    $"Step: {label}\n" +
+                    $"Input: {inputSummary}\n" +
+                    $"Output: simulated result for downstream wiring test.");
+
+                upstreamText = current.GetBottomText();
+                current = GetFirstDownstreamNode(current);
+                if (current == null)
+                    return;
+            }
+        }
+
+        private static string ExtractWorkflowStepLabel(string? topText)
+        {
+            string text = topText ?? "";
+            foreach (var rawLine in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                var line = rawLine.Trim();
+                if (line.StartsWith("Step:", StringComparison.OrdinalIgnoreCase))
+                    return line.Substring("Step:".Length).Trim();
+            }
+
+            var first = text.Replace("\r\n", "\n").Replace('\r', '\n')
+                .Split('\n')
+                .Select(x => x.Trim())
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+            if (string.IsNullOrWhiteSpace(first))
+                return "workflow step";
+
+            int pipeIndex = first.IndexOf('｜');
+            return pipeIndex >= 0 && pipeIndex < first.Length - 1
+                ? first.Substring(pipeIndex + 1).Trim()
+                : first;
+        }
+
+        private static string SummarizeForDryRun(string text)
+        {
+            string normalized = Regex.Replace(text ?? "", @"\s+", " ").Trim();
+            if (normalized.Length <= 90)
+                return normalized;
+
+            return normalized.Substring(0, 90) + "...";
+        }
+
+        private bool ShouldStopBeforeUnsupportedDownstreamNode(NodeControl node)
+        {
+            if (node != null && _unsupportedDownstreamNodeIds.Contains(node.Id))
+                return true;
+
+            string top = node?.GetTopText() ?? "";
+            if (string.IsNullOrWhiteSpace(top))
+                return false;
+
+            bool isFutureTarget = top.Contains("(future target:", StringComparison.OrdinalIgnoreCase);
+            if (!isFutureTarget)
+                return false;
+
+            return top.Contains("future target: presentation-agent", StringComparison.OrdinalIgnoreCase) ||
+                   top.Contains("future target: file-agent", StringComparison.OrdinalIgnoreCase) ||
+                   top.Contains("future target: media-agent", StringComparison.OrdinalIgnoreCase) ||
+                   top.Contains("future target: workflow-agent", StringComparison.OrdinalIgnoreCase);
         }
 
         public IReadOnlyList<NodeControl> GetDownstreamNodes(NodeControl node)

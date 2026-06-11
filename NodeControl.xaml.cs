@@ -898,6 +898,8 @@ namespace test
             DeleteMenuItem.IsEnabled = !_parent.IsInitialNode(this);
             EditMenuItem.IsEnabled = true;
             FontSizeMenuItem.IsEnabled = true;
+            RunWorkflowMenuItem.IsEnabled = !_isGenerating && !string.IsNullOrWhiteSpace(GetTopText());
+            DryRunWorkflowMenuItem.IsEnabled = !_isGenerating && !string.IsNullOrWhiteSpace(GetTopText());
         }
 
         private void EditMenuItem_Click(object sender, RoutedEventArgs e)
@@ -919,6 +921,22 @@ namespace test
             bool? ok = dlg.ShowDialog();
             if (ok == true) SetFontSize(dlg.SelectedValue);
             else ApplyFontSize(_fontSize);
+        }
+
+        private async void RunWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_parent == null || _isGenerating)
+                return;
+
+            await _parent.RunManualWorkflowChainAsync(this);
+        }
+
+        private void DryRunWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_parent == null || _isGenerating)
+                return;
+
+            _parent.RunDryWorkflowChain(this);
         }
 
         private void DeleteMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1015,11 +1033,13 @@ namespace test
             var top = TopEditor.Text ?? "";
             if (string.IsNullOrWhiteSpace(top)) return;
 
+            string runTop = BuildPromptForCurrentRun(top);
+
             // 送出前，將目前草稿模型正式提交為本次送出模型
             // 自動模式下取當前文字實際推算出的模型；手動模式下取 editingModel
             if (_parent != null && _parent.IsAutoModelSelectionEnabled())
             {
-                _editingModelId = NormalizeSafeModelId(_parent.GetEffectiveNodeModel(this, top));
+                _editingModelId = NormalizeSafeModelId(_parent.GetEffectiveNodeModel(this, runTop));
             }
 
             CommitEditingModel();
@@ -1030,7 +1050,7 @@ namespace test
             ContentChanged?.Invoke(this, EventArgs.Empty);
             _parent?.NotifyNodeSubmitted(this);
 
-            await GenerateBottomReplyFromTopAsync(top);
+            await GenerateBottomReplyFromTopAsync(runTop);
         }
 
         private async Task GenerateBottomReplyFromTopAsync(string topText)
@@ -1042,6 +1062,7 @@ namespace test
             try
             {
                 StartBottomLoadingAnimation();
+                await Dispatcher.Yield(DispatcherPriority.Render);
 
                 if (_parent == null)
                 {
@@ -1109,6 +1130,49 @@ namespace test
                 _isGenerating = false;
                 UpdateEditButtons();
             }
+        }
+
+        public async Task<bool> RunCurrentTopTextAsync()
+        {
+            if (_isGenerating)
+                return false;
+
+            string top = GetTopText() ?? "";
+            if (string.IsNullOrWhiteSpace(top))
+                return false;
+
+            string runTop = BuildPromptForCurrentRun(top);
+
+            if (_parent != null && _parent.IsAutoModelSelectionEnabled())
+                _editingModelId = NormalizeSafeModelId(_parent.GetEffectiveNodeModel(this, runTop));
+
+            CommitEditingModel();
+            _isTopLocked = true;
+            EndEditBecauseSent();
+            ContentChanged?.Invoke(this, EventArgs.Empty);
+            _parent?.NotifyNodeSubmitted(this);
+
+            await GenerateBottomReplyFromTopAsync(runTop);
+
+            string bottom = GetBottomText() ?? "";
+            return !string.IsNullOrWhiteSpace(bottom) &&
+                   !bottom.TrimStart().StartsWith("（AI 產生失敗）", StringComparison.Ordinal) &&
+                   !bottom.TrimStart().StartsWith("（AI 產生逾時）", StringComparison.Ordinal) &&
+                   !bottom.TrimStart().StartsWith("（AI 沒有回傳文字）", StringComparison.Ordinal);
+        }
+
+        private string BuildPromptForCurrentRun(string topText)
+        {
+            string prompt = topText ?? "";
+
+            if (_parent != null &&
+                _parent.TryBuildInputFromFirstUpstream(this, out var injectedPrompt) &&
+                !string.IsNullOrWhiteSpace(injectedPrompt))
+            {
+                prompt = injectedPrompt;
+            }
+
+            return prompt;
         }
 
         private TimeSpan ResolveExecutionTimeout(string topText)
