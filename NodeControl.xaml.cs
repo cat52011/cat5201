@@ -81,6 +81,17 @@ namespace test
             public string KindGlyph => Kind == "image" ? "??" : "??";
         }
 
+        // 本次執行產生的可開啟檔案（報告 / 簡報 deck 等），顯示在輸出區下方。
+        private readonly ObservableCollection<OutputFileVm> _outputFiles = new();
+        // 完整絕對路徑，用於 ClearOutputFiles 時刪除磁碟實體檔案。
+        private readonly List<string> _pendingFilePaths = new();
+
+        private sealed class OutputFileVm
+        {
+            public string FileName { get; set; } = "";
+            public string FullPath { get; set; } = "";
+        }
+
         public NodeControl() : this(Guid.NewGuid().ToString()) { }
 
         private void InitializeHoverVisualObjects()
@@ -279,6 +290,7 @@ namespace test
             };
 
             AttachmentItems.ItemsSource = _attachments;
+            OutputFileItems.ItemsSource = _outputFiles;
 
             Loaded += (s, e) =>
             {
@@ -826,6 +838,77 @@ namespace test
             }
         }
 
+        private void OutputFileItem_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_parent == null) return;
+
+            if (sender is FrameworkElement fe && fe.Tag is OutputFileVm vm)
+            {
+                _parent.OpenGeneratedFile(vm.FullPath);
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>
+        /// 清掉輸出檔案連結，並刪除磁碟上對應的實體檔案。
+        /// 重跑 / 清除輸出文字 / 刪除節點時呼叫。可從背景執行緒呼叫。
+        /// </summary>
+        public void ClearOutputFiles()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ClearOutputFiles);
+                return;
+            }
+
+            foreach (var path in _pendingFilePaths)
+            {
+                try
+                {
+                    if (System.IO.File.Exists(path))
+                        System.IO.File.Delete(path);
+                }
+                catch { }
+            }
+            _pendingFilePaths.Clear();
+
+            _outputFiles.Clear();
+            if (OutputFileHost != null)
+                OutputFileHost.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>設定本次執行產生、可在輸出區點擊開啟的檔案。可從背景執行緒呼叫。</summary>
+        public void SetOutputFiles(IReadOnlyList<GeneratedFilePayload> files)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetOutputFiles(files));
+                return;
+            }
+
+            _outputFiles.Clear();
+            _pendingFilePaths.Clear();
+
+            if (files != null)
+            {
+                foreach (var f in files)
+                {
+                    if (f == null || !f.Success || string.IsNullOrWhiteSpace(f.FilePath))
+                        continue;
+
+                    _outputFiles.Add(new OutputFileVm
+                    {
+                        FileName = f.FileName,
+                        FullPath = f.FilePath
+                    });
+                    _pendingFilePaths.Add(f.FilePath);
+                }
+            }
+
+            if (OutputFileHost != null)
+                OutputFileHost.Visibility = _outputFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         private void AttachmentDelete_Click(object sender, RoutedEventArgs e)
         {
             if (_parent == null) return;
@@ -1057,6 +1140,7 @@ namespace test
         {
             _isGenerating = true;
             UpdateEditButtons();
+            ClearOutputFiles();
             TimeSpan executionTimeout = ResolveExecutionTimeout(topText);
 
             try
@@ -1187,7 +1271,8 @@ namespace test
 
             bool reportTask =
                 ContainsAny(text, lower,
-                    "報告", "report", "分析", "研究", "財報", "匯出", "export", "生成檔", "生成報", "generate");
+                    "報告", "report", "分析", "研究", "財報", "匯出", "export", "生成檔", "生成報", "generate",
+                    "簡報", "投影片", "ppt", "pptx", "slides", "slide", "presentation");
 
             if (hasAttachments && codePatchTask)
                 return TimeSpan.FromMinutes(10);
@@ -1278,6 +1363,7 @@ namespace test
 
         public void ClearBottomText()
         {
+            ClearOutputFiles();
             BottomDisplay.Text = "";
         }
 

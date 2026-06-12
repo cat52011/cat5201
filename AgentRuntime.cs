@@ -152,12 +152,16 @@ namespace test
                 _main.IsAutoModelSelectionEnabled(),
                 capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
 
+            // Sub-agents (DelegationDepth > 0) write internal orchestration_plans only;
+            // the root agent's plan is the authoritative visible one.
+            bool isRootRun = request.DelegationDepth == 0;
             var orchestrationItem = AgentWorkspaceBuilder.FromCapabilityData(
                 workspace,
                 node,
                 runtimeAgent.Id,
                 "orchestration_plan",
-                orchestrationPlan);
+                orchestrationPlan,
+                isUserVisibleOverride: isRootRun ? (bool?)null : false);
             workspace.Add(orchestrationItem);
 
             // Orchestrator v1：執行狀態機。規劃階段在 Build 當下已完成，直接記為 success。
@@ -732,7 +736,7 @@ namespace test
                 capabilityData.ContainsKey("code_diff_draft") ||
                 workspace.GetByType("code_diff_draft").Count > 0;
 
-            bool isFinanceTask = FinanceTaskDetector.IsFinanceLike(capabilityAugmentedText);
+            bool isFinanceTask = FinanceTaskDetector.IsFinanceFocused(capabilityAugmentedText);
             bool enforceFinalSynthesisFormat = hasVerifiedFacts && isFinanceTask;
 
             string finalInput = capabilityAugmentedText;
@@ -977,6 +981,22 @@ namespace test
                     orchestration);
             }
 
+            // Presentation Agent v1：Presentation 任務在最終答案後輸出投影片大綱 + Marp Markdown deck。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.Presentation &&
+                request.DelegationDepth == 0 &&
+                !string.IsNullOrWhiteSpace(execution.Text))
+            {
+                execution = GeneratePresentation(
+                    node,
+                    runtimeAgent,
+                    capabilityAugmentedText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration);
+            }
+
             orchestration.MarkSuccess("write_workspace", $"artifacts: {workspace.GetAll().Count}");
             orchestration.CompleteRun(execution.IsSuccess, execution.ErrorMessage);
             orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
@@ -1050,19 +1070,32 @@ namespace test
                     "generated_file",
                     generated));
 
+            // Also generate .docx (non-critical: failure does not affect the .md report)
+            try
+            {
+                byte[] docxBytes = DocxReportBuilder.Build(markdown);
+                var docxGenerated = GeneratedFileWriter.WriteDocx(
+                    _main.GetGeneratedFilesDir(),
+                    title: ExtractReportTitle(userInput),
+                    content: docxBytes,
+                    sourceSummary: sourceSummary);
+
+                if (docxGenerated.Success)
+                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace, node, runtimeAgent?.Id ?? "file-agent",
+                        "generated_file", docxGenerated));
+            }
+            catch { }
+
             if (generated.Success)
             {
                 orchestration.MarkSuccess("generate_file", generated.FileName);
 
-                string note =
-                    "\n\n---\n" +
-                    $"已生成檔案：{generated.FileName}\n" +
-                    $"位置：{generated.FilePath}";
-
+                // 檔案資訊由輸出區下方的 chip 顯示，答案文字不再重複列出路徑。
                 return new AiFallbackExecutionResult
                 {
                     IsSuccess = execution.IsSuccess,
-                    Text = (execution.Text ?? "").TrimEnd() + note,
+                    Text = execution.Text ?? "",
                     ActualModelId = execution.ActualModelId ?? "",
                     UsedFallback = execution.UsedFallback,
                     Summary = execution.Summary ?? "",
@@ -1082,6 +1115,92 @@ namespace test
                 return "報告";
 
             return text.Length > 40 ? text.Substring(0, 40).Trim() : text;
+        }
+
+        /// <summary>
+        /// Presentation Agent v1：把最終答案拆解成投影片大綱，加入 PresentationOutline artifact，
+        /// 渲染成 Marp Markdown deck 並寫檔（同時產生 GeneratedFile artifact），最後在答案尾端附上說明。
+        /// 寫檔失敗不影響主答案，只把 presentation_outline 階段標記為 failed。
+        /// </summary>
+        private AiFallbackExecutionResult GeneratePresentation(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration)
+        {
+            orchestration.MarkRunning("presentation_outline");
+
+            int factCount = workspace.GetByType("verified_facts")
+                .Select(x => x.Payload)
+                .OfType<VerifiedFactPayload>()
+                .Sum(p => p.Facts?.Count ?? 0);
+
+            string sourceSummary = factCount > 0
+                ? $"{orchestrationPlan.PipelineId} / {factCount} 筆 verified_facts"
+                : orchestrationPlan.PipelineId;
+
+            var outline = PresentationOutlineBuilder.Build(new PresentationOutlineBuilder.Request
+            {
+                UserInput = userInput,
+                FinalAnswer = execution.Text ?? "",
+                Workspace = workspace,
+                PipelineId = orchestrationPlan.PipelineId,
+                ModelId = execution.ActualModelId ?? orchestrationPlan.ModelId,
+                AgentId = runtimeAgent?.Id ?? ""
+            });
+
+            // 結構化大綱 artifact（slide plan）。
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "presentation-agent",
+                    "presentation_outline",
+                    outline));
+
+            string deck = PresentationOutlineBuilder.RenderMarkdownDeck(outline);
+
+            var generated = GeneratedFileWriter.WriteMarkdown(
+                _main.GetGeneratedFilesDir(),
+                title: outline.Title,
+                content: deck,
+                sourceSummary: sourceSummary);
+
+            // 寫出的 deck 檔也作為 GeneratedFile artifact 暴露。
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "presentation-agent",
+                    "generated_file",
+                    generated));
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess(
+                    "presentation_outline",
+                    $"{outline.SlideCount} 張 / {generated.FileName}");
+
+                // 檔案資訊由輸出區下方的 chip 顯示，答案文字只保留張數摘要。
+                string note = $"\n\n已生成簡報大綱：{outline.SlideCount} 張投影片。";
+
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + note,
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            orchestration.MarkFailed("presentation_outline", generated.ErrorMessage);
+            return execution;
         }
 
         private async Task<AiFallbackExecutionResult> RunFinalSynthesisAsync(
@@ -1115,7 +1234,7 @@ namespace test
                 $"[Workspace Preview]\n{workspaceBlock.Substring(0, Math.Min(1000, workspaceBlock.Length))}");
 
             bool hasVerifiedFacts = workspace.GetByType("verified_facts").Count > 0;
-            bool isFinanceTask = FinanceTaskDetector.IsFinanceLike(originalInput);
+            bool isFinanceTask = FinanceTaskDetector.IsFinanceFocused(originalInput);
             string synthesisInstructions = hasVerifiedFacts && isFinanceTask
                 ? BuildFinanceFinalSynthesisInstructions()
                 : BuildGeneralFinalSynthesisInstructions();
@@ -1480,21 +1599,20 @@ $@"這個請求目前先不直接產生 patch，因為它是大型檔案的全�
 13. 使用繁體中文。
 
 【輸出格式】
-請嚴格使用以下格式：
+請嚴格使用以下格式。只針對使用者詢問的標的輸出，不得自行加入未被詢問的股票或比較項目：
 
 結論
-- 用 2～4 點直接回答。
-- 先說 TSM 與 MU 各自短期判斷。
-- 若兩者相比，直接說哪個較穩、哪個彈性較大、哪個風險較高。
+- 用 2～4 點直接回答使用者任務。
+- 針對每個被詢問的標的給出短期判斷。
+- 若使用者要求比較多個標的，直接說哪個較穩、哪個彈性較大、哪個風險較高。
+- 若使用者只詢問單一標的，只回答該標的，不要加入其他標的的「資料不足」備注。
 
 關鍵資料
-- TSM：只列最重要的股價、財報或市場資料。最多 5 點。
-- MU：只列最重要的股價、財報或市場資料。最多 5 點。
+- 只列被詢問標的最重要的股價、財報或市場資料，每個標的最多 5 點。
 - 如果資料來源衝突，不要在這裡展開；只簡短標示「報價來源有衝突，詳見資料衝突」。
 
 短期走勢判斷
-- 分開寫 TSM 與 MU。
-- 每檔最多 1 段。
+- 只針對被詢問的標的，每個標的最多 1 段。
 - 必須清楚區分「已知資料」與「合理推論」。
 - 不要保證漲跌。
 

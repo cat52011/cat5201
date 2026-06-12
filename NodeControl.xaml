@@ -564,7 +564,13 @@
 
             <Border Grid.Row="1" Background="#00FFFFFF">
                 <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
                     <StackPanel x:Name="BottomLoadingOverlay"
+                                Grid.Row="0"
                                 Orientation="Horizontal"
                                 Margin="24,16,24,10"
                                 VerticalAlignment="Top"
@@ -598,6 +604,7 @@
                     </StackPanel>
 
                     <TextBox x:Name="BottomDisplay"
+                             Grid.Row="0"
                              Margin="20,10,20,10"
                              Panel.ZIndex="0"
                              TextWrapping="Wrap"
@@ -612,6 +619,43 @@
                              VerticalScrollBarVisibility="Auto"
                              HorizontalScrollBarVisibility="Disabled"/>
 
+                    <!-- 生成檔案連結：垂直排列，「檔案：[可點擊藍色底線檔名]」 -->
+                    <StackPanel x:Name="OutputFileHost"
+                                Grid.Row="1"
+                                Margin="20,0,20,10"
+                                Visibility="Collapsed">
+                        <ItemsControl x:Name="OutputFileItems">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Vertical"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Tag="{Binding}"
+                                            Cursor="Hand"
+                                            Padding="0,3,0,3"
+                                            Background="Transparent"
+                                            ToolTip="點擊開啟檔案"
+                                            MouseLeftButtonDown="OutputFileItem_MouseLeftButtonDown">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="檔案："
+                                                       FontSize="14"
+                                                       Foreground="#9E9E9E"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding FileName}"
+                                                       FontSize="14"
+                                                       Foreground="#1565C0"
+                                                       TextDecorations="Underline"
+                                                       VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
 
                 </Grid>
             </Border>

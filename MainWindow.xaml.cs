@@ -3395,6 +3395,38 @@ namespace test
             }
         }
 
+        /// <summary>用系統預設程式開啟生成的檔案（報告 / 簡報 deck）。限制只能開啟 _generated 資料夾內的檔案。</summary>
+        public void OpenGeneratedFile(string fullPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+                {
+                    MessageBox.Show("找不到生成的檔案（可能已被移動或刪除）。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                // 安全檢查：只允許開啟 _generated 資料夾內的檔案。
+                string rootFull = System.IO.Path.GetFullPath(GeneratedFilesDir);
+                string targetFull = System.IO.Path.GetFullPath(fullPath);
+                if (!targetFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show("檔案不在允許開啟的範圍內。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = targetFull,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"開啟檔案失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         public void RemoveAttachment(NodeControl node, string relativePath)
         {
             if (!_attachmentsByNode.TryGetValue(node.Id, out var list))
@@ -4212,6 +4244,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
             foreach (var n in nodesToDelete)
             {
+                n.ClearOutputFiles();
                 ClearEditingIfDeleted(n);
                 MainCanvas.Children.Remove(n);
                 _attachmentsByNode.Remove(n.Id);

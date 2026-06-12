@@ -39,6 +39,10 @@ namespace test
             if (taskType == OrchestrationTaskType.GenerateFile)
                 AddStage(stages, "generate_file", "Generate file", "file-writer");
 
+            // Presentation Agent v1：Presentation 任務在最終答案之後，多一個產生投影片大綱 / deck 階段。
+            if (taskType == OrchestrationTaskType.Presentation)
+                AddStage(stages, "presentation_outline", "Build presentation outline", "presentation-agent");
+
             return new OrchestrationPlanPayload
             {
                 Status = "pending",

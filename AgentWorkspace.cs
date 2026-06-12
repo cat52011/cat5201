@@ -742,6 +742,21 @@ namespace test
                         lines.Add($"  GeneratedFile: FAILED / {Trim(generated.ErrorMessage, 180)}");
                     }
                 }
+                else if (item.Payload is PresentationOutlinePayload presentation)
+                {
+                    string requested = presentation.RequestedSlideCount > 0
+                        ? $" / requested={presentation.RequestedSlideCount}"
+                        : "";
+                    lines.Add($"  Presentation: {Safe(presentation.Title)} / slides={presentation.SlideCount}{requested}");
+
+                    foreach (var slide in presentation.Slides?.Take(12) ?? Array.Empty<PresentationSlidePayload>())
+                    {
+                        if (slide == null)
+                            continue;
+
+                        lines.Add($"    Slide {slide.Order} [{Safe(slide.Kind)}]: {Trim(slide.Heading, 80)} ({slide.Bullets?.Count ?? 0} bullets)");
+                    }
+                }
                 else if (!string.IsNullOrWhiteSpace(item.TextSummary))
                 {
                     lines.Add($"  Summary: {Trim(item.TextSummary, 260)}");

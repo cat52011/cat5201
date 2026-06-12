@@ -38,6 +38,10 @@ namespace test
             "latest", "current", "today", "now", "search", "research"
         };
 
+        /// <summary>
+        /// 廣義：這個任務「牽涉公司 / 需要外部研究」。公司名（如 台積電）即算數。
+        /// 用於決定要不要跑 search-capability、要不要 fresh facts。
+        /// </summary>
         public static bool IsFinanceLike(string? text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -45,6 +49,20 @@ namespace test
 
             return HasFinanceIntent(text) ||
                    DetectKnownTickers(text).Count > 0 ||
+                   DetectCashtags(text).Count > 0;
+        }
+
+        /// <summary>
+        /// 狹義：這個任務「真的在問財經 / 報價」。需要真正的財經意圖（財報、股價、營收…）
+        /// 或明確的 cashtag（$TSM）；單純提到公司名（例如「介紹台積電的簡報」）不算。
+        /// 用於決定要不要啟用「報價卡財經研究模式」與「財經格式最終合成」。
+        /// </summary>
+        public static bool IsFinanceFocused(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return HasFinanceIntent(text) ||
                    DetectCashtags(text).Count > 0;
         }
 
