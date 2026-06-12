@@ -1,11 +1,13 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace test
 {
     public sealed class OrchestrationPlanPayload
     {
-        public string Status { get; init; } = "planned";
+        // pending / running / success / failed / partial（由 OrchestrationStateMachine 維護）
+        public string Status { get; set; } = "pending";
 
         public OrchestrationTaskType TaskType { get; init; } = OrchestrationTaskType.Chat;
 
@@ -32,6 +34,16 @@ namespace test
         public IReadOnlyList<OrchestrationStagePayload> Stages { get; init; } = Array.Empty<OrchestrationStagePayload>();
 
         public string Reason { get; init; } = "";
+
+        public bool IsCapabilityRequired(string capabilityId)
+        {
+            if (string.IsNullOrWhiteSpace(capabilityId))
+                return false;
+
+            return RequiredCapabilities != null &&
+                   RequiredCapabilities.Any(x =>
+                       string.Equals(x, capabilityId, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     public sealed class OrchestrationStagePayload
@@ -42,7 +54,11 @@ namespace test
 
         public string Label { get; init; } = "";
 
-        public string Status { get; init; } = "planned";
+        // pending / running / success / failed / partial / skipped（由 OrchestrationStateMachine 維護）
+        public string Status { get; set; } = "pending";
+
+        // 補充說明：失敗原因、跳過原因、產出摘要等
+        public string Detail { get; set; } = "";
 
         public string Owner { get; init; } = "";
     }

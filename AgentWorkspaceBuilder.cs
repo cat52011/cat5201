@@ -68,6 +68,9 @@ namespace test
             if (value is FinalSynthesisPayload)
                 return "final";
 
+            if (value is GeneratedFilePayload)
+                return "file";
+
             if (key.Contains("patch", StringComparison.OrdinalIgnoreCase))
                 return "patch";
 
@@ -126,6 +129,7 @@ namespace test
                 value is WorkflowPlanPayload ||
                 value is DownstreamNodePlanPayload ||
                 value is FinalSynthesisPayload ||
+                value is GeneratedFilePayload ||
                 value is DelegateOutputPayload)
             {
                 return "markdown";
@@ -196,6 +200,13 @@ namespace test
             if (value is DownstreamNodePlanPayload downstream)
                 return $"Downstream Node Plan - {downstream.PipelineId}";
 
+            if (value is GeneratedFilePayload generated)
+            {
+                return generated.Success
+                    ? $"Generated File - {generated.FileName}"
+                    : $"Generated File - failed";
+            }
+
             if (value is FinalSynthesisPayload final)
             {
                 string model = string.IsNullOrWhiteSpace(final.ModelId)
@@ -216,7 +227,7 @@ namespace test
             return key;
         }
 
-        private static string BuildTextSummary(object value)
+        public static string BuildTextSummary(object value)
         {
             if (value is VerifiedFactPayload verified)
                 return $"Verified Facts - {verified.Query}";
@@ -265,6 +276,13 @@ namespace test
                 int nodeCount = downstream.ProposedNodes?.Count ?? 0;
                 int edgeCount = downstream.ProposedEdges?.Count ?? 0;
                 return $"TaskType={downstream.TaskType}, Pipeline={downstream.PipelineId}, ProposedNodes={nodeCount}, ProposedEdges={edgeCount}, Status={downstream.Status}";
+            }
+
+            if (value is GeneratedFilePayload generated)
+            {
+                return generated.Success
+                    ? $"Format={generated.Format}, File={generated.FileName}, {generated.CharacterCount} chars, {generated.ByteCount} bytes"
+                    : $"Generation failed: {generated.ErrorMessage}";
             }
 
             if (value is FinalSynthesisPayload final)

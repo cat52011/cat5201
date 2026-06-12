@@ -108,6 +108,8 @@ namespace test
 
         private string SavesDir => @"D:\desk\college\final\file";
         private string AttachmentsRootDir => System.IO.Path.Combine(SavesDir, "_attachments");
+        private string GeneratedFilesDir => System.IO.Path.Combine(SavesDir, "_generated");
+        internal string GetGeneratedFilesDir() => GeneratedFilesDir;
 
         private string? _currentFilePath;
         private bool _hasStarted = false;
@@ -3146,27 +3148,46 @@ namespace test
             string value = label?.Trim() ?? "";
 
             if (value.Contains("Research", StringComparison.OrdinalIgnoreCase) ||
-                value.Contains("source facts", StringComparison.OrdinalIgnoreCase))
+                value.Contains("source facts", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("supporting facts", StringComparison.OrdinalIgnoreCase))
                 return "搜尋並驗證資料";
 
             if (value.Contains("outline", StringComparison.OrdinalIgnoreCase))
                 return "建立大綱";
 
+            // export 要先於 deck 判斷，否則 "Export deck" 會被翻成「生成簡報」。
+            if (value.Contains("export", StringComparison.OrdinalIgnoreCase))
+                return "匯出檔案";
+
             if (value.Contains("deck", StringComparison.OrdinalIgnoreCase) ||
                 value.Contains("presentation", StringComparison.OrdinalIgnoreCase))
                 return "生成簡報";
 
-            if (value.Contains("export", StringComparison.OrdinalIgnoreCase))
-                return "匯出檔案";
-
             if (value.Contains("draft", StringComparison.OrdinalIgnoreCase))
                 return "撰寫草稿";
+
+            if (value.Contains("decompose", StringComparison.OrdinalIgnoreCase))
+                return "拆解任務";
 
             if (value.Contains("execute", StringComparison.OrdinalIgnoreCase))
                 return "執行步驟";
 
             if (value.Contains("synthesize", StringComparison.OrdinalIgnoreCase))
                 return "整合結果";
+
+            // prompt 要先於 image 判斷（"Refine image prompt" 兩者都含）；
+            // brief 要先於 video 判斷（"Create video brief" 兩者都含）。
+            if (value.Contains("prompt", StringComparison.OrdinalIgnoreCase))
+                return "優化圖片提示";
+
+            if (value.Contains("image", StringComparison.OrdinalIgnoreCase))
+                return "生成圖片";
+
+            if (value.Contains("brief", StringComparison.OrdinalIgnoreCase))
+                return "建立影片企劃";
+
+            if (value.Contains("video", StringComparison.OrdinalIgnoreCase))
+                return "生成影片";
 
             return string.IsNullOrWhiteSpace(value) ? "下游步驟" : value;
         }
@@ -3193,6 +3214,9 @@ namespace test
             if (id.Equals("synthesize", StringComparison.OrdinalIgnoreCase))
                 return "Synthesize";
 
+            if (id.Equals("decompose", StringComparison.OrdinalIgnoreCase))
+                return "Decompose";
+
             if (id.Equals("execute", StringComparison.OrdinalIgnoreCase))
                 return "Execute";
 
@@ -3201,6 +3225,9 @@ namespace test
 
             if (id.Equals("image", StringComparison.OrdinalIgnoreCase))
                 return "Image";
+
+            if (id.Equals("brief", StringComparison.OrdinalIgnoreCase))
+                return "Brief";
 
             if (id.Equals("video", StringComparison.OrdinalIgnoreCase))
                 return "Video";

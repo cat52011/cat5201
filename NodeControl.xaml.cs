@@ -1179,16 +1179,24 @@ namespace test
         {
             bool hasAttachments = _attachments.Count > 0;
             string text = topText ?? "";
+            string lower = text.ToLowerInvariant();
 
             bool codePatchTask =
-                ContainsAny(text, text.ToLowerInvariant(),
+                ContainsAny(text, lower,
                     "bug", "debug", "修正", "修改", "修好", "patch", "diff", "重構", "程式", "程式碼");
+
+            bool reportTask =
+                ContainsAny(text, lower,
+                    "報告", "report", "分析", "研究", "財報", "匯出", "export", "生成檔", "生成報", "generate");
 
             if (hasAttachments && codePatchTask)
                 return TimeSpan.FromMinutes(10);
 
             if (hasAttachments)
                 return TimeSpan.FromMinutes(6);
+
+            if (reportTask)
+                return TimeSpan.FromMinutes(8);
 
             return TimeSpan.FromMinutes(3);
         }

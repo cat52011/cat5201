@@ -35,9 +35,13 @@ namespace test
             AddStage(stages, "write_workspace", "Write workspace", "workspace");
             AddStage(stages, "final_synthesis", "Final synthesis", runtimeAgent?.Id ?? "");
 
+            // File Generation v1：GenerateFile 任務在最終答案之後，多一個寫檔階段。
+            if (taskType == OrchestrationTaskType.GenerateFile)
+                AddStage(stages, "generate_file", "Generate file", "file-writer");
+
             return new OrchestrationPlanPayload
             {
-                Status = "planned",
+                Status = "pending",
                 TaskType = taskType,
                 PipelineId = pipelineId,
                 TaskMode = (decision?.TaskMode ?? NodeTaskMode.Chat).ToString(),
@@ -163,7 +167,7 @@ namespace test
                 Id = id,
                 Label = label,
                 Owner = owner,
-                Status = "planned"
+                Status = "pending"
             });
         }
 

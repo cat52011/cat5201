@@ -27,7 +27,8 @@ namespace test
 
         public object? Payload { get; init; }
 
-        public string TextSummary { get; init; } = "";
+        // settable：orchestration_plan 等長生命週期 artifact 會在執行結束時刷新摘要
+        public string TextSummary { get; set; } = "";
 
         public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
     }

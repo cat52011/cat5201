@@ -152,13 +152,20 @@ namespace test
                 _main.IsAutoModelSelectionEnabled(),
                 capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
 
-            workspace.Add(
-                AgentWorkspaceBuilder.FromCapabilityData(
-                    workspace,
-                    node,
-                    runtimeAgent.Id,
-                    "orchestration_plan",
-                    orchestrationPlan));
+            var orchestrationItem = AgentWorkspaceBuilder.FromCapabilityData(
+                workspace,
+                node,
+                runtimeAgent.Id,
+                "orchestration_plan",
+                orchestrationPlan);
+            workspace.Add(orchestrationItem);
+
+            // Orchestrator v1：執行狀態機。規劃階段在 Build 當下已完成，直接記為 success。
+            var orchestration = new OrchestrationStateMachine(orchestrationPlan);
+            orchestration.MarkSuccess("detect_task", $"TaskType={orchestrationPlan.TaskType}");
+            orchestration.MarkSuccess("select_pipeline", orchestrationPlan.PipelineId);
+            orchestration.MarkSuccess("select_agent", runtimeAgent.Id);
+            orchestration.MarkSuccess("select_model", decision.ModelId);
 
             var workflowPlan = WorkflowPlanBuilder.FromOrchestrationPlan(
                 orchestrationPlan,
@@ -188,7 +195,9 @@ namespace test
             System.Diagnostics.Debug.WriteLine(
                 $"[CapabilityPlan] Agent={runtimeAgent.Id} Required={string.Join(", ", capabilityPlan.RequiredCapabilityIds)} Order={string.Join(" -> ", capabilityPlan.OrderedCapabilityIds)} Reason={capabilityPlan.Reason}");
 
-            var orderedCapabilities = capabilityPlan.OrderedCapabilityIds
+            // Orchestrator v1：能力執行順序以 orchestration plan 為正式來源
+            // （research_first 等 pipeline 的順序與必跑能力由它決定）。
+            var orderedCapabilities = orchestrationPlan.CapabilityOrder
                 .Select(id => AgentCapabilityRegistry.All.FirstOrDefault(c =>
                     string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase)))
                 .Where(c => c != null)
@@ -217,12 +226,14 @@ namespace test
                             Success = true,
                             Summary = "blocked by agent policy"
                         });
+                        orchestration.MarkCapabilitySkipped(capability.Id, "blocked by agent policy");
                         continue;
                     }
-                    bool isRequired = capabilityPlan.IsRequired(capability.Id);
+                    bool isRequired = orchestrationPlan.IsCapabilityRequired(capability.Id);
 
                     if (!runtimeAgent.IsCapabilityAllowed(capability.Id) && !isRequired)
                     {
+                        orchestration.MarkCapabilitySkipped(capability.Id, "agent policy not allowed");
                         continue;
                     }
 
@@ -247,6 +258,7 @@ namespace test
                             Success = true,
                             Summary = "agent capability not allowed"
                         });
+                        orchestration.MarkCapabilitySkipped(capability.Id, "agent capability not allowed");
                         continue;
                     }
 
@@ -269,6 +281,7 @@ namespace test
                             Summary = "",
                             ErrorMessage = ex.Message
                         });
+                        orchestration.MarkCapabilityFailed(capability.Id, $"CanHandle error: {ex.Message}");
                         continue;
                     }
 
@@ -286,11 +299,14 @@ namespace test
                             Success = true,
                             Summary = "skipped"
                         });
+                        orchestration.MarkCapabilitySkipped(capability.Id, "not applicable");
                         continue;
                     }
 
                     if (isRequired)
                         canHandle = true;
+
+                    orchestration.MarkCapabilityRunning(capability.Id);
 
                     AgentCapabilityResult capabilityResult;
                     try
@@ -317,8 +333,15 @@ namespace test
                             ErrorMessage = ex.Message
                         });
 
-                        if (capabilityPlan.IsRequired(capability.Id))
+                        orchestration.MarkCapabilityFailed(capability.Id, ex.Message);
+
+                        if (orchestrationPlan.IsCapabilityRequired(capability.Id))
                         {
+                            orchestration.CompleteRun(
+                                executionSuccess: false,
+                                failureDetail: $"Required capability failed: {capability.Id}");
+                            orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
                             throw new InvalidOperationException(
                                 $"Required capability failed: {capability.Id}. {ex.Message}",
                                 ex);
@@ -348,6 +371,7 @@ namespace test
                             Success = true,
                             Summary = "null result"
                         });
+                        orchestration.MarkCapabilitySuccess(capability.Id, "null result");
                         continue;
                     }
 
@@ -384,6 +408,9 @@ namespace test
                             Success = true,
                             Summary = $"data produced: {string.Join(", ", capabilityResult.Data.Keys)}"
                         });
+                        orchestration.MarkCapabilitySuccess(
+                            capability.Id,
+                            $"data: {string.Join(", ", capabilityResult.Data.Keys)}");
                     }
 
                     if (capabilityResult.Handled &&
@@ -418,6 +445,12 @@ namespace test
                         decision.CapabilityTrace = capabilityTrace;
                         decision.DelegationTrace = delegationTrace;
 
+                        orchestration.MarkCapabilitySuccess(capability.Id, "direct handled");
+                        orchestration.MarkSuccess("write_workspace", $"artifacts: {workspace.GetAll().Count}");
+                        orchestration.MarkSkipped("final_synthesis", "handled by capability");
+                        orchestration.CompleteRun(executionSuccess: true);
+                        orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
                         return new AgentExecutionResult
                         {
                             Decision = decision,
@@ -440,6 +473,8 @@ namespace test
                             Success = true,
                             Summary = "prompt augmented"
                         });
+
+                        orchestration.MarkCapabilitySuccess(capability.Id, "prompt augmented");
 
                         capabilityAugmentedText = capabilityResult.AugmentedPrompt;
 
@@ -469,14 +504,20 @@ namespace test
                             Success = true,
                             Summary = "executed without output change"
                         });
+                        orchestration.MarkCapabilitySuccess(capability.Id, "executed, no output change");
                     }
                 }
             }
             if (runCapabilityLayer &&
-                capabilityPlan.RequiresFreshFacts &&
+                orchestrationPlan.RequiresFreshFacts &&
     !capabilityData.ContainsKey("verified_facts") &&
     !capabilityData.ContainsKey("search_summary"))
             {
+                orchestration.CompleteRun(
+                    executionSuccess: false,
+                    failureDetail: "requires fresh facts but none produced");
+                orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
                 throw new InvalidOperationException(
                     "This task requires fresh facts, but search-capability did not produce verified_facts or search_summary.");
             }
@@ -764,6 +805,8 @@ namespace test
             }
 
             // 5. execution
+            orchestration.MarkRunning("final_synthesis");
+
             AiFallbackExecutionResult execution;
             bool useStreamingForFinalExecution = request.UseStreaming && !hasCodeDiffDraft;
 
@@ -912,6 +955,32 @@ namespace test
             }
 
             // 6. finalize
+            if (execution.IsSuccess)
+                orchestration.MarkSuccess("final_synthesis", $"model: {execution.ActualModelId}");
+            else
+                orchestration.MarkFailed("final_synthesis", execution.ErrorMessage);
+
+            // File Generation v1：GenerateFile 任務在最終答案後輸出 Markdown 報告檔。
+            // 只在頂層執行（非子代理委派）且有實際內容時才寫檔。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.GenerateFile &&
+                request.DelegationDepth == 0 &&
+                !string.IsNullOrWhiteSpace(execution.Text))
+            {
+                execution = GenerateReportFile(
+                    node,
+                    runtimeAgent,
+                    capabilityAugmentedText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration);
+            }
+
+            orchestration.MarkSuccess("write_workspace", $"artifacts: {workspace.GetAll().Count}");
+            orchestration.CompleteRun(execution.IsSuccess, execution.ErrorMessage);
+            orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
             var workspaceSummary = workspace.BuildSummary();
             decision = _executionFinalizer.FinalizeDecision(decision, execution);
             decision.ActualAgentId = runtimeAgent.Id;
@@ -931,6 +1000,90 @@ namespace test
                 WorkspaceSummary = workspaceSummary
             };
         }
+        /// <summary>
+        /// File Generation v1：把最終答案寫成 Markdown 報告檔，加入 workspace artifact，
+        /// 並在答案尾端附上檔案位置說明。回傳（可能被附註過的）execution。
+        /// 寫檔失敗不影響主答案，只把 generate_file 階段標記為 failed。
+        /// </summary>
+        private AiFallbackExecutionResult GenerateReportFile(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration)
+        {
+            orchestration.MarkRunning("generate_file");
+
+            int factCount = workspace.GetByType("verified_facts")
+                .Select(x => x.Payload)
+                .OfType<VerifiedFactPayload>()
+                .Sum(p => p.Facts?.Count ?? 0);
+
+            string sourceSummary = factCount > 0
+                ? $"{orchestrationPlan.PipelineId} / {factCount} 筆 verified_facts"
+                : orchestrationPlan.PipelineId;
+
+            string markdown = MarkdownReportBuilder.Build(new MarkdownReportBuilder.Request
+            {
+                UserInput = userInput,
+                FinalAnswer = execution.Text ?? "",
+                Workspace = workspace,
+                TaskType = orchestrationPlan.TaskType,
+                PipelineId = orchestrationPlan.PipelineId,
+                ModelId = execution.ActualModelId ?? orchestrationPlan.ModelId,
+                AgentId = runtimeAgent?.Id ?? ""
+            });
+
+            var generated = GeneratedFileWriter.WriteMarkdown(
+                _main.GetGeneratedFilesDir(),
+                title: ExtractReportTitle(userInput),
+                content: markdown,
+                sourceSummary: sourceSummary);
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "file-agent",
+                    "generated_file",
+                    generated));
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess("generate_file", generated.FileName);
+
+                string note =
+                    "\n\n---\n" +
+                    $"已生成檔案：{generated.FileName}\n" +
+                    $"位置：{generated.FilePath}";
+
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + note,
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            orchestration.MarkFailed("generate_file", generated.ErrorMessage);
+            return execution;
+        }
+
+        private static string ExtractReportTitle(string userInput)
+        {
+            string text = (userInput ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                return "報告";
+
+            return text.Length > 40 ? text.Substring(0, 40).Trim() : text;
+        }
+
         private async Task<AiFallbackExecutionResult> RunFinalSynthesisAsync(
             NodeControl node,
             AgentDefinition rootAgent,
