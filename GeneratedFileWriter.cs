@@ -111,6 +111,55 @@ namespace test
             }
         }
 
+        public static GeneratedFilePayload WriteImage(
+            string outputDir,
+            string title,
+            byte[] content,
+            string sourceSummary,
+            string extension = ".png")
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(outputDir))
+                    return Failed("輸出資料夾未設定。", title);
+
+                if (content == null || content.Length == 0)
+                    return Failed("圖片內容為空。", title);
+
+                Directory.CreateDirectory(outputDir);
+
+                string baseName = SanitizeFileName(title);
+                if (string.IsNullOrWhiteSpace(baseName))
+                    baseName = "image";
+
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string fileName = $"{baseName}_{stamp}{extension}";
+                string fullPath = Path.GetFullPath(Path.Combine(outputDir, fileName));
+
+                string rootFull = Path.GetFullPath(outputDir);
+                if (!fullPath.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                    return Failed("輸出路徑超出允許範圍。", title);
+
+                File.WriteAllBytes(fullPath, content);
+
+                return new GeneratedFilePayload
+                {
+                    Format = "image",
+                    FileName = fileName,
+                    FilePath = fullPath,
+                    Title = title ?? "",
+                    CharacterCount = 0,
+                    ByteCount = content.Length,
+                    Success = true,
+                    SourceSummary = sourceSummary ?? ""
+                };
+            }
+            catch (Exception ex)
+            {
+                return Failed(ex.Message, title);
+            }
+        }
+
         private static GeneratedFilePayload Failed(string error, string title)
         {
             return new GeneratedFilePayload

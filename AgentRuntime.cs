@@ -808,11 +808,25 @@ namespace test
                 finalInput = string.Join("\n\n", parts);
             }
 
+            // Image Gen v1：圖片任務不需要 LLM 描述圖片，只讓它輸出一句確認語。
+            if (orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration)
+            {
+                finalInput =
+                    "你是圖片生成助理。使用者請你依描述生成圖片，圖片生成程式已準備好。" +
+                    "請只用一句繁體中文確認你會根據描述生成圖片，不要展開描述圖片內容，不要給提示詞。" +
+                    "\n\n【使用者描述】\n" + topText;
+            }
+
             // 5. execution
             orchestration.MarkRunning("final_synthesis");
 
             AiFallbackExecutionResult execution;
-            bool useStreamingForFinalExecution = request.UseStreaming && !hasCodeDiffDraft;
+            // 圖片任務不串流：確認語很短，且串流後還要 append「已生成圖片」/錯誤訊息，
+            // 串流會讓最終修改與清理（含 [[END_OF_RESPONSE]] 移除）來不及蓋回畫面。
+            bool useStreamingForFinalExecution =
+                request.UseStreaming &&
+                !hasCodeDiffDraft &&
+                orchestrationPlan.TaskType != OrchestrationTaskType.ImageGeneration;
 
             if (synthesisExecution != null && synthesisExecution.IsSuccess)
             {
@@ -995,6 +1009,23 @@ namespace test
                     orchestrationPlan,
                     execution,
                     orchestration);
+            }
+
+            // Image Gen v1：ImageGeneration 任務在最終答案後呼叫 DALL-E 3 生成圖片，
+            // 存檔、加入 workspace artifact，並在輸出區直接顯示。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration &&
+                request.DelegationDepth == 0)
+            {
+                execution = await GenerateImageFile(
+                    node,
+                    runtimeAgent,
+                    topText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration,
+                    request.CancellationToken);
             }
 
             orchestration.MarkSuccess("write_workspace", $"artifacts: {workspace.GetAll().Count}");
@@ -1200,6 +1231,110 @@ namespace test
             }
 
             orchestration.MarkFailed("presentation_outline", generated.ErrorMessage);
+            return execution;
+        }
+
+        /// <summary>
+        /// Image Gen v1：呼叫 DALL-E 3 依使用者描述生成圖片，存成 .png、加入 GeneratedFile artifact，
+        /// 並在答案尾端附上一句說明（圖片本體由輸出區直接顯示，檔案 chip 可開啟原圖）。
+        /// 生成失敗不影響主答案，只把 generate_image 階段標記為 failed。
+        /// </summary>
+        private async Task<AiFallbackExecutionResult> GenerateImageFile(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration,
+            CancellationToken ct)
+        {
+            orchestration.MarkRunning("generate_image");
+
+            string prompt = (userInput ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                orchestration.MarkFailed("generate_image", "圖片描述為空。");
+                return execution;
+            }
+
+            OpenAIImageService.ImageResult image;
+            try
+            {
+                var imageService = new OpenAIImageService("gpt-image-2");
+                image = await imageService.GenerateAsync(prompt, "1024x1024", ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                orchestration.MarkFailed("generate_image", ex.Message);
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + $"\n\n⚠ 圖片生成失敗：{ex.Message}",
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            if (!image.Success)
+            {
+                orchestration.MarkFailed("generate_image", image.ErrorMessage);
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + $"\n\n⚠ 圖片生成失敗：{image.ErrorMessage}",
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            string sourceSummary = string.IsNullOrWhiteSpace(image.RevisedPrompt)
+                ? $"{orchestrationPlan.PipelineId} / gpt-image-2"
+                : $"{orchestrationPlan.PipelineId} / gpt-image-2 / {image.RevisedPrompt}";
+
+            var generated = GeneratedFileWriter.WriteImage(
+                _main.GetGeneratedFilesDir(),
+                title: ExtractReportTitle(prompt),
+                content: image.PngBytes,
+                sourceSummary: sourceSummary);
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "image-agent",
+                    "generated_file",
+                    generated));
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess("generate_image", generated.FileName);
+
+                string note = "\n\n已生成圖片。";
+
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + note,
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            orchestration.MarkFailed("generate_image", generated.ErrorMessage);
             return execution;
         }
 

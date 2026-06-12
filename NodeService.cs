@@ -211,6 +211,15 @@ namespace test
                     .Where(f => f != null && f.Success)
                     .ToList());
 
+                // 生成圖片任務：把圖片直接顯示在輸出區。
+                node.SetOutputImage(workspace.GetByType("generated_file")
+                    .Select(x => x.Payload)
+                    .OfType<GeneratedFilePayload>()
+                    .Where(f => f != null && f.Success &&
+                                string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.FilePath)
+                    .FirstOrDefault());
+
                 await _memoryService.RememberExecutionResultAsync(
     node,
     decision.ActualAgentId,
@@ -330,6 +339,15 @@ namespace test
                     .OfType<GeneratedFilePayload>()
                     .Where(f => f != null && f.Success)
                     .ToList());
+
+                // 生成圖片任務：把圖片直接顯示在輸出區。
+                node.SetOutputImage(workspace.GetByType("generated_file")
+                    .Select(x => x.Payload)
+                    .OfType<GeneratedFilePayload>()
+                    .Where(f => f != null && f.Success &&
+                                string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.FilePath)
+                    .FirstOrDefault());
 
                 await _memoryService.RememberExecutionResultAsync(
     node,

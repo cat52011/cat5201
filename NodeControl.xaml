@@ -567,6 +567,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <StackPanel x:Name="BottomLoadingOverlay"
@@ -619,9 +620,29 @@
                              VerticalScrollBarVisibility="Auto"
                              HorizontalScrollBarVisibility="Disabled"/>
 
+                    <!-- 生成圖片：直接在輸出區內顯示，點擊可開啟原圖 -->
+                    <Border x:Name="OutputImageHost"
+                            Grid.Row="1"
+                            Margin="20,4,20,10"
+                            HorizontalAlignment="Left"
+                            CornerRadius="8"
+                            Cursor="Hand"
+                            ClipToBounds="True"
+                            Background="#F2F2F2"
+                            ToolTip="點擊開啟原圖"
+                            Visibility="Collapsed"
+                            MouseLeftButtonDown="OutputImage_MouseLeftButtonDown">
+                        <Image x:Name="OutputImage"
+                               MaxWidth="480"
+                               MaxHeight="480"
+                               Stretch="Uniform"
+                               StretchDirection="DownOnly"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                    </Border>
+
                     <!-- 生成檔案連結：垂直排列，「檔案：[可點擊藍色底線檔名]」 -->
                     <StackPanel x:Name="OutputFileHost"
-                                Grid.Row="1"
+                                Grid.Row="2"
                                 Margin="20,0,20,10"
                                 Visibility="Collapsed">
                         <ItemsControl x:Name="OutputFileItems">

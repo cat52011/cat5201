@@ -43,6 +43,10 @@ namespace test
             if (taskType == OrchestrationTaskType.Presentation)
                 AddStage(stages, "presentation_outline", "Build presentation outline", "presentation-agent");
 
+            // Image Gen v1：ImageGeneration 任務在最終答案之後，多一個產生圖片階段。
+            if (taskType == OrchestrationTaskType.ImageGeneration)
+                AddStage(stages, "generate_image", "Generate image", "image-agent");
+
             return new OrchestrationPlanPayload
             {
                 Status = "pending",

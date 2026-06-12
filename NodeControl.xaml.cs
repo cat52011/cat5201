@@ -11,6 +11,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Animation;
@@ -85,6 +86,8 @@ namespace test
         private readonly ObservableCollection<OutputFileVm> _outputFiles = new();
         // 完整絕對路徑，用於 ClearOutputFiles 時刪除磁碟實體檔案。
         private readonly List<string> _pendingFilePaths = new();
+        // 本次執行在輸出區直接顯示的圖片（生成圖片任務），點擊可開啟原圖。
+        private string? _outputImagePath;
 
         private sealed class OutputFileVm
         {
@@ -875,6 +878,12 @@ namespace test
             _outputFiles.Clear();
             if (OutputFileHost != null)
                 OutputFileHost.Visibility = Visibility.Collapsed;
+
+            _outputImagePath = null;
+            if (OutputImage != null)
+                OutputImage.Source = null;
+            if (OutputImageHost != null)
+                OutputImageHost.Visibility = Visibility.Collapsed;
         }
 
         /// <summary>設定本次執行產生、可在輸出區點擊開啟的檔案。可從背景執行緒呼叫。</summary>
@@ -907,6 +916,61 @@ namespace test
 
             if (OutputFileHost != null)
                 OutputFileHost.Visibility = _outputFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>設定本次執行產生、要在輸出區直接顯示的圖片（生成圖片任務）。可從背景執行緒呼叫。</summary>
+        public void SetOutputImage(string? path)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetOutputImage(path));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
+            {
+                _outputImagePath = null;
+                if (OutputImage != null)
+                    OutputImage.Source = null;
+                if (OutputImageHost != null)
+                    OutputImageHost.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                // OnLoad：完整讀進記憶體，避免鎖住磁碟檔案（之後仍可刪除 / 開啟）。
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                bmp.UriSource = new Uri(path);
+                bmp.EndInit();
+                bmp.Freeze();
+
+                if (OutputImage != null)
+                    OutputImage.Source = bmp;
+                _outputImagePath = path;
+                if (OutputImageHost != null)
+                    OutputImageHost.Visibility = Visibility.Visible;
+            }
+            catch
+            {
+                _outputImagePath = null;
+                if (OutputImage != null)
+                    OutputImage.Source = null;
+                if (OutputImageHost != null)
+                    OutputImageHost.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void OutputImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_parent != null && !string.IsNullOrWhiteSpace(_outputImagePath))
+            {
+                _parent.OpenGeneratedFile(_outputImagePath);
+                e.Handled = true;
+            }
         }
 
         private void AttachmentDelete_Click(object sender, RoutedEventArgs e)
@@ -1274,10 +1338,19 @@ namespace test
                     "報告", "report", "分析", "研究", "財報", "匯出", "export", "生成檔", "生成報", "generate",
                     "簡報", "投影片", "ppt", "pptx", "slides", "slide", "presentation");
 
+            // 生成圖片：gpt-image-2 出圖較慢（可能 1～3 分鐘），需要更寬鬆的逾時。
+            bool imageTask =
+                ContainsAny(text, lower,
+                    "圖片", "圖像", "生成圖片", "產生圖片", "畫一張", "畫個", "畫張", "畫一幅",
+                    "image", "generate image", "draw");
+
             if (hasAttachments && codePatchTask)
                 return TimeSpan.FromMinutes(10);
 
             if (hasAttachments)
+                return TimeSpan.FromMinutes(6);
+
+            if (imageTask)
                 return TimeSpan.FromMinutes(6);
 
             if (reportTask)
