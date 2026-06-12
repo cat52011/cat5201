@@ -9,7 +9,8 @@ namespace test
             NodeControl node,
             string agentId,
             string key,
-            object value)
+            object value,
+            bool? isUserVisibleOverride = null)
         {
             key ??= "";
 
@@ -21,7 +22,7 @@ namespace test
                 ItemType = key,
                 ArtifactKind = ResolveArtifactKind(key, value),
                 ContentFormat = ResolveContentFormat(key, value),
-                IsUserVisible = ResolveUserVisible(key, value),
+                IsUserVisible = isUserVisibleOverride ?? ResolveUserVisible(key, value),
                 Title = BuildTitle(key, value),
                 Payload = value,
                 TextSummary = BuildTextSummary(value),
@@ -65,8 +66,14 @@ namespace test
                 return "workflow";
             }
 
+            if (value is PresentationOutlinePayload)
+                return "presentation";
+
             if (value is FinalSynthesisPayload)
                 return "final";
+
+            if (value is GeneratedFilePayload)
+                return "file";
 
             if (key.Contains("patch", StringComparison.OrdinalIgnoreCase))
                 return "patch";
@@ -126,6 +133,8 @@ namespace test
                 value is WorkflowPlanPayload ||
                 value is DownstreamNodePlanPayload ||
                 value is FinalSynthesisPayload ||
+                value is GeneratedFilePayload ||
+                value is PresentationOutlinePayload ||
                 value is DelegateOutputPayload)
             {
                 return "markdown";
@@ -134,18 +143,21 @@ namespace test
             return "text";
         }
 
+        // 使用者只需要看到「交付物」：事實、檔案/報告/圖片、最終答案、簡報大綱、程式碼 diff。
+        // 其餘（搜尋摘要、推理、任務拆解、orchestration / workflow 計畫、程式碼分析與快照、
+        // 委派輸出…）都是中間過程，標記 internal，讓 artifact 清單乾淨、好做簡報展示。
         private static bool ResolveUserVisible(string key, object value)
         {
-            key ??= "";
-
-            if (value is DelegateOutputPayload ||
-                string.Equals(key, "parallel_agent_output", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(key, "delegate_output", StringComparison.OrdinalIgnoreCase))
+            if (value is VerifiedFactPayload ||
+                value is GeneratedFilePayload ||
+                value is FinalSynthesisPayload ||
+                value is PresentationOutlinePayload ||
+                value is CodeDiffArtifactPayload)
             {
-                return false;
+                return true;
             }
 
-            return true;
+            return false;
         }
 
         private static string BuildTitle(string key, object value)
@@ -162,9 +174,9 @@ namespace test
                 return $"Parallel Output - {parallel.ToAgentId} / Model: {model}";
             }
             if (value is VerifiedFactPayload verified)
-                return $"Verified Facts - {verified.Query}";
+                return $"Verified Facts - {CleanQuery(verified.Query)}";
             if (value is SearchSummaryPayload search)
-                return $"Search Summary - {search.Query}";
+                return $"Search Summary - {CleanQuery(search.Query)}";
 
             if (value is FileSummaryPayload)
                 return "File Summary";
@@ -196,6 +208,16 @@ namespace test
             if (value is DownstreamNodePlanPayload downstream)
                 return $"Downstream Node Plan - {downstream.PipelineId}";
 
+            if (value is GeneratedFilePayload generated)
+            {
+                return generated.Success
+                    ? $"Generated File - {generated.FileName}"
+                    : $"Generated File - failed";
+            }
+
+            if (value is PresentationOutlinePayload presentation)
+                return $"Presentation Outline - {presentation.Title} ({presentation.SlideCount} slides)";
+
             if (value is FinalSynthesisPayload final)
             {
                 string model = string.IsNullOrWhiteSpace(final.ModelId)
@@ -216,10 +238,30 @@ namespace test
             return key;
         }
 
-        private static string BuildTextSummary(object value)
+        // Strips parallel-task instruction boilerplate, returning the real user query.
+        private static string CleanQuery(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return "";
+
+            const string marker = "Original User Request:";
+            int idx = raw.IndexOf(marker, StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                string after = raw.Substring(idx + marker.Length).TrimStart('\r', '\n', ' ');
+                string firstLine = after.Split(new[] { '\n', '\r' }, 2)[0].Trim();
+                if (!string.IsNullOrWhiteSpace(firstLine))
+                    return firstLine.Length > 60 ? firstLine.Substring(0, 60).Trim() + "…" : firstLine;
+            }
+
+            string first = raw.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";
+            return first.Length > 60 ? first.Substring(0, 60).Trim() + "…" : first;
+        }
+
+        public static string BuildTextSummary(object value)
         {
             if (value is VerifiedFactPayload verified)
-                return $"Verified Facts - {verified.Query}";
+                return $"Verified Facts - {CleanQuery(verified.Query)}";
             if (value is SearchSummaryPayload search)
                 return search.Summary ?? "";
 
@@ -265,6 +307,21 @@ namespace test
                 int nodeCount = downstream.ProposedNodes?.Count ?? 0;
                 int edgeCount = downstream.ProposedEdges?.Count ?? 0;
                 return $"TaskType={downstream.TaskType}, Pipeline={downstream.PipelineId}, ProposedNodes={nodeCount}, ProposedEdges={edgeCount}, Status={downstream.Status}";
+            }
+
+            if (value is GeneratedFilePayload generated)
+            {
+                return generated.Success
+                    ? $"Format={generated.Format}, File={generated.FileName}, {generated.CharacterCount} chars, {generated.ByteCount} bytes"
+                    : $"Generation failed: {generated.ErrorMessage}";
+            }
+
+            if (value is PresentationOutlinePayload presentation)
+            {
+                string requested = presentation.RequestedSlideCount > 0
+                    ? $", Requested={presentation.RequestedSlideCount}"
+                    : "";
+                return $"Slides={presentation.SlideCount}{requested}, Pipeline={presentation.PipelineId}";
             }
 
             if (value is FinalSynthesisPayload final)

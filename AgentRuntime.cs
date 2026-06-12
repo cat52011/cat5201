@@ -152,13 +152,24 @@ namespace test
                 _main.IsAutoModelSelectionEnabled(),
                 capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
 
-            workspace.Add(
-                AgentWorkspaceBuilder.FromCapabilityData(
-                    workspace,
-                    node,
-                    runtimeAgent.Id,
-                    "orchestration_plan",
-                    orchestrationPlan));
+            // Sub-agents (DelegationDepth > 0) write internal orchestration_plans only;
+            // the root agent's plan is the authoritative visible one.
+            bool isRootRun = request.DelegationDepth == 0;
+            var orchestrationItem = AgentWorkspaceBuilder.FromCapabilityData(
+                workspace,
+                node,
+                runtimeAgent.Id,
+                "orchestration_plan",
+                orchestrationPlan,
+                isUserVisibleOverride: isRootRun ? (bool?)null : false);
+            workspace.Add(orchestrationItem);
+
+            // Orchestrator v1：執行狀態機。規劃階段在 Build 當下已完成，直接記為 success。
+            var orchestration = new OrchestrationStateMachine(orchestrationPlan);
+            orchestration.MarkSuccess("detect_task", $"TaskType={orchestrationPlan.TaskType}");
+            orchestration.MarkSuccess("select_pipeline", orchestrationPlan.PipelineId);
+            orchestration.MarkSuccess("select_agent", runtimeAgent.Id);
+            orchestration.MarkSuccess("select_model", decision.ModelId);
 
             var workflowPlan = WorkflowPlanBuilder.FromOrchestrationPlan(
                 orchestrationPlan,
@@ -188,7 +199,9 @@ namespace test
             System.Diagnostics.Debug.WriteLine(
                 $"[CapabilityPlan] Agent={runtimeAgent.Id} Required={string.Join(", ", capabilityPlan.RequiredCapabilityIds)} Order={string.Join(" -> ", capabilityPlan.OrderedCapabilityIds)} Reason={capabilityPlan.Reason}");
 
-            var orderedCapabilities = capabilityPlan.OrderedCapabilityIds
+            // Orchestrator v1：能力執行順序以 orchestration plan 為正式來源
+            // （research_first 等 pipeline 的順序與必跑能力由它決定）。
+            var orderedCapabilities = orchestrationPlan.CapabilityOrder
                 .Select(id => AgentCapabilityRegistry.All.FirstOrDefault(c =>
                     string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase)))
                 .Where(c => c != null)
@@ -217,12 +230,14 @@ namespace test
                             Success = true,
                             Summary = "blocked by agent policy"
                         });
+                        orchestration.MarkCapabilitySkipped(capability.Id, "blocked by agent policy");
                         continue;
                     }
-                    bool isRequired = capabilityPlan.IsRequired(capability.Id);
+                    bool isRequired = orchestrationPlan.IsCapabilityRequired(capability.Id);
 
                     if (!runtimeAgent.IsCapabilityAllowed(capability.Id) && !isRequired)
                     {
+                        orchestration.MarkCapabilitySkipped(capability.Id, "agent policy not allowed");
                         continue;
                     }
 
@@ -247,6 +262,7 @@ namespace test
                             Success = true,
                             Summary = "agent capability not allowed"
                         });
+                        orchestration.MarkCapabilitySkipped(capability.Id, "agent capability not allowed");
                         continue;
                     }
 
@@ -269,6 +285,7 @@ namespace test
                             Summary = "",
                             ErrorMessage = ex.Message
                         });
+                        orchestration.MarkCapabilityFailed(capability.Id, $"CanHandle error: {ex.Message}");
                         continue;
                     }
 
@@ -286,11 +303,14 @@ namespace test
                             Success = true,
                             Summary = "skipped"
                         });
+                        orchestration.MarkCapabilitySkipped(capability.Id, "not applicable");
                         continue;
                     }
 
                     if (isRequired)
                         canHandle = true;
+
+                    orchestration.MarkCapabilityRunning(capability.Id);
 
                     AgentCapabilityResult capabilityResult;
                     try
@@ -317,8 +337,15 @@ namespace test
                             ErrorMessage = ex.Message
                         });
 
-                        if (capabilityPlan.IsRequired(capability.Id))
+                        orchestration.MarkCapabilityFailed(capability.Id, ex.Message);
+
+                        if (orchestrationPlan.IsCapabilityRequired(capability.Id))
                         {
+                            orchestration.CompleteRun(
+                                executionSuccess: false,
+                                failureDetail: $"Required capability failed: {capability.Id}");
+                            orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
                             throw new InvalidOperationException(
                                 $"Required capability failed: {capability.Id}. {ex.Message}",
                                 ex);
@@ -348,6 +375,7 @@ namespace test
                             Success = true,
                             Summary = "null result"
                         });
+                        orchestration.MarkCapabilitySuccess(capability.Id, "null result");
                         continue;
                     }
 
@@ -384,6 +412,9 @@ namespace test
                             Success = true,
                             Summary = $"data produced: {string.Join(", ", capabilityResult.Data.Keys)}"
                         });
+                        orchestration.MarkCapabilitySuccess(
+                            capability.Id,
+                            $"data: {string.Join(", ", capabilityResult.Data.Keys)}");
                     }
 
                     if (capabilityResult.Handled &&
@@ -418,6 +449,12 @@ namespace test
                         decision.CapabilityTrace = capabilityTrace;
                         decision.DelegationTrace = delegationTrace;
 
+                        orchestration.MarkCapabilitySuccess(capability.Id, "direct handled");
+                        orchestration.MarkSuccess("write_workspace", $"artifacts: {workspace.GetAll().Count}");
+                        orchestration.MarkSkipped("final_synthesis", "handled by capability");
+                        orchestration.CompleteRun(executionSuccess: true);
+                        orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
                         return new AgentExecutionResult
                         {
                             Decision = decision,
@@ -440,6 +477,8 @@ namespace test
                             Success = true,
                             Summary = "prompt augmented"
                         });
+
+                        orchestration.MarkCapabilitySuccess(capability.Id, "prompt augmented");
 
                         capabilityAugmentedText = capabilityResult.AugmentedPrompt;
 
@@ -469,14 +508,20 @@ namespace test
                             Success = true,
                             Summary = "executed without output change"
                         });
+                        orchestration.MarkCapabilitySuccess(capability.Id, "executed, no output change");
                     }
                 }
             }
             if (runCapabilityLayer &&
-                capabilityPlan.RequiresFreshFacts &&
+                orchestrationPlan.RequiresFreshFacts &&
     !capabilityData.ContainsKey("verified_facts") &&
     !capabilityData.ContainsKey("search_summary"))
             {
+                orchestration.CompleteRun(
+                    executionSuccess: false,
+                    failureDetail: "requires fresh facts but none produced");
+                orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
                 throw new InvalidOperationException(
                     "This task requires fresh facts, but search-capability did not produce verified_facts or search_summary.");
             }
@@ -691,7 +736,7 @@ namespace test
                 capabilityData.ContainsKey("code_diff_draft") ||
                 workspace.GetByType("code_diff_draft").Count > 0;
 
-            bool isFinanceTask = FinanceTaskDetector.IsFinanceLike(capabilityAugmentedText);
+            bool isFinanceTask = FinanceTaskDetector.IsFinanceFocused(capabilityAugmentedText);
             bool enforceFinalSynthesisFormat = hasVerifiedFacts && isFinanceTask;
 
             string finalInput = capabilityAugmentedText;
@@ -763,9 +808,25 @@ namespace test
                 finalInput = string.Join("\n\n", parts);
             }
 
+            // Image Gen v1：圖片任務不需要 LLM 描述圖片，只讓它輸出一句確認語。
+            if (orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration)
+            {
+                finalInput =
+                    "你是圖片生成助理。使用者請你依描述生成圖片，圖片生成程式已準備好。" +
+                    "請只用一句繁體中文確認你會根據描述生成圖片，不要展開描述圖片內容，不要給提示詞。" +
+                    "\n\n【使用者描述】\n" + topText;
+            }
+
             // 5. execution
+            orchestration.MarkRunning("final_synthesis");
+
             AiFallbackExecutionResult execution;
-            bool useStreamingForFinalExecution = request.UseStreaming && !hasCodeDiffDraft;
+            // 圖片任務不串流：確認語很短，且串流後還要 append「已生成圖片」/錯誤訊息，
+            // 串流會讓最終修改與清理（含 [[END_OF_RESPONSE]] 移除）來不及蓋回畫面。
+            bool useStreamingForFinalExecution =
+                request.UseStreaming &&
+                !hasCodeDiffDraft &&
+                orchestrationPlan.TaskType != OrchestrationTaskType.ImageGeneration;
 
             if (synthesisExecution != null && synthesisExecution.IsSuccess)
             {
@@ -912,6 +973,65 @@ namespace test
             }
 
             // 6. finalize
+            if (execution.IsSuccess)
+                orchestration.MarkSuccess("final_synthesis", $"model: {execution.ActualModelId}");
+            else
+                orchestration.MarkFailed("final_synthesis", execution.ErrorMessage);
+
+            // File Generation v1：GenerateFile 任務在最終答案後輸出 Markdown 報告檔。
+            // 只在頂層執行（非子代理委派）且有實際內容時才寫檔。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.GenerateFile &&
+                request.DelegationDepth == 0 &&
+                !string.IsNullOrWhiteSpace(execution.Text))
+            {
+                execution = GenerateReportFile(
+                    node,
+                    runtimeAgent,
+                    capabilityAugmentedText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration);
+            }
+
+            // Presentation Agent v1：Presentation 任務在最終答案後輸出投影片大綱 + Marp Markdown deck。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.Presentation &&
+                request.DelegationDepth == 0 &&
+                !string.IsNullOrWhiteSpace(execution.Text))
+            {
+                execution = GeneratePresentation(
+                    node,
+                    runtimeAgent,
+                    capabilityAugmentedText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration);
+            }
+
+            // Image Gen v1：ImageGeneration 任務在最終答案後呼叫 DALL-E 3 生成圖片，
+            // 存檔、加入 workspace artifact，並在輸出區直接顯示。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration &&
+                request.DelegationDepth == 0)
+            {
+                execution = await GenerateImageFile(
+                    node,
+                    runtimeAgent,
+                    topText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration,
+                    request.CancellationToken);
+            }
+
+            orchestration.MarkSuccess("write_workspace", $"artifacts: {workspace.GetAll().Count}");
+            orchestration.CompleteRun(execution.IsSuccess, execution.ErrorMessage);
+            orchestrationItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(orchestrationPlan);
+
             var workspaceSummary = workspace.BuildSummary();
             decision = _executionFinalizer.FinalizeDecision(decision, execution);
             decision.ActualAgentId = runtimeAgent.Id;
@@ -931,6 +1051,325 @@ namespace test
                 WorkspaceSummary = workspaceSummary
             };
         }
+        /// <summary>
+        /// File Generation v1：把最終答案寫成 Markdown 報告檔，加入 workspace artifact，
+        /// 並在答案尾端附上檔案位置說明。回傳（可能被附註過的）execution。
+        /// 寫檔失敗不影響主答案，只把 generate_file 階段標記為 failed。
+        /// </summary>
+        private AiFallbackExecutionResult GenerateReportFile(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration)
+        {
+            orchestration.MarkRunning("generate_file");
+
+            int factCount = workspace.GetByType("verified_facts")
+                .Select(x => x.Payload)
+                .OfType<VerifiedFactPayload>()
+                .Sum(p => p.Facts?.Count ?? 0);
+
+            string sourceSummary = factCount > 0
+                ? $"{orchestrationPlan.PipelineId} / {factCount} 筆 verified_facts"
+                : orchestrationPlan.PipelineId;
+
+            string markdown = MarkdownReportBuilder.Build(new MarkdownReportBuilder.Request
+            {
+                UserInput = userInput,
+                FinalAnswer = execution.Text ?? "",
+                Workspace = workspace,
+                TaskType = orchestrationPlan.TaskType,
+                PipelineId = orchestrationPlan.PipelineId,
+                ModelId = execution.ActualModelId ?? orchestrationPlan.ModelId,
+                AgentId = runtimeAgent?.Id ?? ""
+            });
+
+            var generated = GeneratedFileWriter.WriteMarkdown(
+                _main.GetGeneratedFilesDir(),
+                title: ExtractReportTitle(userInput),
+                content: markdown,
+                sourceSummary: sourceSummary);
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "file-agent",
+                    "generated_file",
+                    generated));
+
+            // Also generate .docx (non-critical: failure does not affect the .md report)
+            try
+            {
+                byte[] docxBytes = DocxReportBuilder.Build(markdown);
+                var docxGenerated = GeneratedFileWriter.WriteDocx(
+                    _main.GetGeneratedFilesDir(),
+                    title: ExtractReportTitle(userInput),
+                    content: docxBytes,
+                    sourceSummary: sourceSummary);
+
+                if (docxGenerated.Success)
+                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace, node, runtimeAgent?.Id ?? "file-agent",
+                        "generated_file", docxGenerated));
+            }
+            catch { }
+
+            // Also generate .pdf (non-critical: failure does not affect the .md report)
+            try
+            {
+                byte[] pdfBytes = PdfReportBuilder.Build(markdown);
+                var pdfGenerated = GeneratedFileWriter.WritePdf(
+                    _main.GetGeneratedFilesDir(),
+                    title: ExtractReportTitle(userInput),
+                    content: pdfBytes,
+                    sourceSummary: sourceSummary);
+
+                if (pdfGenerated.Success)
+                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace, node, runtimeAgent?.Id ?? "file-agent",
+                        "generated_file", pdfGenerated));
+            }
+            catch { }
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess("generate_file", generated.FileName);
+
+                // 報告內容已寫入檔案，文字區只保留空字串，讓 chip 說話。
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = "",
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            orchestration.MarkFailed("generate_file", generated.ErrorMessage);
+            return execution;
+        }
+
+        private static string ExtractReportTitle(string userInput)
+        {
+            string text = (userInput ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                return "報告";
+
+            return text.Length > 40 ? text.Substring(0, 40).Trim() : text;
+        }
+
+        /// <summary>
+        /// Presentation Agent v1：把最終答案拆解成投影片大綱，加入 PresentationOutline artifact，
+        /// 渲染成 Marp Markdown deck 並寫檔（同時產生 GeneratedFile artifact），最後在答案尾端附上說明。
+        /// 寫檔失敗不影響主答案，只把 presentation_outline 階段標記為 failed。
+        /// </summary>
+        private AiFallbackExecutionResult GeneratePresentation(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration)
+        {
+            orchestration.MarkRunning("presentation_outline");
+
+            int factCount = workspace.GetByType("verified_facts")
+                .Select(x => x.Payload)
+                .OfType<VerifiedFactPayload>()
+                .Sum(p => p.Facts?.Count ?? 0);
+
+            string sourceSummary = factCount > 0
+                ? $"{orchestrationPlan.PipelineId} / {factCount} 筆 verified_facts"
+                : orchestrationPlan.PipelineId;
+
+            var outline = PresentationOutlineBuilder.Build(new PresentationOutlineBuilder.Request
+            {
+                UserInput = userInput,
+                FinalAnswer = execution.Text ?? "",
+                Workspace = workspace,
+                PipelineId = orchestrationPlan.PipelineId,
+                ModelId = execution.ActualModelId ?? orchestrationPlan.ModelId,
+                AgentId = runtimeAgent?.Id ?? ""
+            });
+
+            // 結構化大綱 artifact（slide plan）。
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "presentation-agent",
+                    "presentation_outline",
+                    outline));
+
+            string deck = PresentationOutlineBuilder.RenderMarkdownDeck(outline);
+
+            var generated = GeneratedFileWriter.WriteMarkdown(
+                _main.GetGeneratedFilesDir(),
+                title: outline.Title,
+                content: deck,
+                sourceSummary: sourceSummary);
+
+            // 寫出的 deck 檔也作為 GeneratedFile artifact 暴露。
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "presentation-agent",
+                    "generated_file",
+                    generated));
+
+            // 同時輸出真正的 .pptx 二進位檔（非關鍵：失敗不影響 .md deck）。
+            try
+            {
+                byte[] pptxBytes = PptxBuilder.Build(outline);
+                var pptxGenerated = GeneratedFileWriter.WritePptx(
+                    _main.GetGeneratedFilesDir(),
+                    title: outline.Title,
+                    content: pptxBytes,
+                    sourceSummary: sourceSummary);
+
+                if (pptxGenerated.Success)
+                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace, node, runtimeAgent?.Id ?? "presentation-agent",
+                        "generated_file", pptxGenerated));
+            }
+            catch { }
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess(
+                    "presentation_outline",
+                    $"{outline.SlideCount} 張 / {generated.FileName}");
+
+                // 簡報內容已寫入檔案，文字區只保留張數摘要，讓 chip 說話。
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = $"已生成簡報大綱：{outline.SlideCount} 張投影片。",
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            orchestration.MarkFailed("presentation_outline", generated.ErrorMessage);
+            return execution;
+        }
+
+        /// <summary>
+        /// Image Gen v1：呼叫 DALL-E 3 依使用者描述生成圖片，存成 .png、加入 GeneratedFile artifact，
+        /// 並在答案尾端附上一句說明（圖片本體由輸出區直接顯示，檔案 chip 可開啟原圖）。
+        /// 生成失敗不影響主答案，只把 generate_image 階段標記為 failed。
+        /// </summary>
+        private async Task<AiFallbackExecutionResult> GenerateImageFile(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration,
+            CancellationToken ct)
+        {
+            orchestration.MarkRunning("generate_image");
+
+            string prompt = (userInput ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                orchestration.MarkFailed("generate_image", "圖片描述為空。");
+                return execution;
+            }
+
+            OpenAIImageService.ImageResult image;
+            try
+            {
+                var imageService = new OpenAIImageService("gpt-image-2");
+                image = await imageService.GenerateAsync(prompt, "1024x1024", ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                orchestration.MarkFailed("generate_image", ex.Message);
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + $"\n\n⚠ 圖片生成失敗：{ex.Message}",
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            if (!image.Success)
+            {
+                orchestration.MarkFailed("generate_image", image.ErrorMessage);
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + $"\n\n⚠ 圖片生成失敗：{image.ErrorMessage}",
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            string sourceSummary = string.IsNullOrWhiteSpace(image.RevisedPrompt)
+                ? $"{orchestrationPlan.PipelineId} / gpt-image-2"
+                : $"{orchestrationPlan.PipelineId} / gpt-image-2 / {image.RevisedPrompt}";
+
+            var generated = GeneratedFileWriter.WriteImage(
+                _main.GetGeneratedFilesDir(),
+                title: ExtractReportTitle(prompt),
+                content: image.PngBytes,
+                sourceSummary: sourceSummary);
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace,
+                    node,
+                    runtimeAgent?.Id ?? "image-agent",
+                    "generated_file",
+                    generated));
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess("generate_image", generated.FileName);
+
+                string note = "\n\n已生成圖片。";
+
+                return new AiFallbackExecutionResult
+                {
+                    IsSuccess = execution.IsSuccess,
+                    Text = (execution.Text ?? "").TrimEnd() + note,
+                    ActualModelId = execution.ActualModelId ?? "",
+                    UsedFallback = execution.UsedFallback,
+                    Summary = execution.Summary ?? "",
+                    ErrorMessage = execution.ErrorMessage ?? "",
+                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+                };
+            }
+
+            orchestration.MarkFailed("generate_image", generated.ErrorMessage);
+            return execution;
+        }
+
         private async Task<AiFallbackExecutionResult> RunFinalSynthesisAsync(
             NodeControl node,
             AgentDefinition rootAgent,
@@ -962,7 +1401,7 @@ namespace test
                 $"[Workspace Preview]\n{workspaceBlock.Substring(0, Math.Min(1000, workspaceBlock.Length))}");
 
             bool hasVerifiedFacts = workspace.GetByType("verified_facts").Count > 0;
-            bool isFinanceTask = FinanceTaskDetector.IsFinanceLike(originalInput);
+            bool isFinanceTask = FinanceTaskDetector.IsFinanceFocused(originalInput);
             string synthesisInstructions = hasVerifiedFacts && isFinanceTask
                 ? BuildFinanceFinalSynthesisInstructions()
                 : BuildGeneralFinalSynthesisInstructions();
@@ -1327,21 +1766,20 @@ $@"這個請求目前先不直接產生 patch，因為它是大型檔案的全�
 13. 使用繁體中文。
 
 【輸出格式】
-請嚴格使用以下格式：
+請嚴格使用以下格式。只針對使用者詢問的標的輸出，不得自行加入未被詢問的股票或比較項目：
 
 結論
-- 用 2～4 點直接回答。
-- 先說 TSM 與 MU 各自短期判斷。
-- 若兩者相比，直接說哪個較穩、哪個彈性較大、哪個風險較高。
+- 用 2～4 點直接回答使用者任務。
+- 針對每個被詢問的標的給出短期判斷。
+- 若使用者要求比較多個標的，直接說哪個較穩、哪個彈性較大、哪個風險較高。
+- 若使用者只詢問單一標的，只回答該標的，不要加入其他標的的「資料不足」備注。
 
 關鍵資料
-- TSM：只列最重要的股價、財報或市場資料。最多 5 點。
-- MU：只列最重要的股價、財報或市場資料。最多 5 點。
+- 只列被詢問標的最重要的股價、財報或市場資料，每個標的最多 5 點。
 - 如果資料來源衝突，不要在這裡展開；只簡短標示「報價來源有衝突，詳見資料衝突」。
 
 短期走勢判斷
-- 分開寫 TSM 與 MU。
-- 每檔最多 1 段。
+- 只針對被詢問的標的，每個標的最多 1 段。
 - 必須清楚區分「已知資料」與「合理推論」。
 - 不要保證漲跌。
 

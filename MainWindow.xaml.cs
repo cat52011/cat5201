@@ -108,6 +108,8 @@ namespace test
 
         private string SavesDir => @"D:\desk\college\final\file";
         private string AttachmentsRootDir => System.IO.Path.Combine(SavesDir, "_attachments");
+        private string GeneratedFilesDir => System.IO.Path.Combine(SavesDir, "_generated");
+        internal string GetGeneratedFilesDir() => GeneratedFilesDir;
 
         private string? _currentFilePath;
         private bool _hasStarted = false;
@@ -281,7 +283,9 @@ namespace test
     string? AgentId = null,
     string? NodeModel = null,
     string? TaskMode = null,
-    bool UnsupportedDownstreamNode = false
+    bool UnsupportedDownstreamNode = false,
+    List<string>? OutputFilePaths = null,
+    string? OutputImagePath = null
 );
 
         private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
@@ -3146,27 +3150,46 @@ namespace test
             string value = label?.Trim() ?? "";
 
             if (value.Contains("Research", StringComparison.OrdinalIgnoreCase) ||
-                value.Contains("source facts", StringComparison.OrdinalIgnoreCase))
+                value.Contains("source facts", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("supporting facts", StringComparison.OrdinalIgnoreCase))
                 return "搜尋並驗證資料";
 
             if (value.Contains("outline", StringComparison.OrdinalIgnoreCase))
                 return "建立大綱";
 
+            // export 要先於 deck 判斷，否則 "Export deck" 會被翻成「生成簡報」。
+            if (value.Contains("export", StringComparison.OrdinalIgnoreCase))
+                return "匯出檔案";
+
             if (value.Contains("deck", StringComparison.OrdinalIgnoreCase) ||
                 value.Contains("presentation", StringComparison.OrdinalIgnoreCase))
                 return "生成簡報";
 
-            if (value.Contains("export", StringComparison.OrdinalIgnoreCase))
-                return "匯出檔案";
-
             if (value.Contains("draft", StringComparison.OrdinalIgnoreCase))
                 return "撰寫草稿";
+
+            if (value.Contains("decompose", StringComparison.OrdinalIgnoreCase))
+                return "拆解任務";
 
             if (value.Contains("execute", StringComparison.OrdinalIgnoreCase))
                 return "執行步驟";
 
             if (value.Contains("synthesize", StringComparison.OrdinalIgnoreCase))
                 return "整合結果";
+
+            // prompt 要先於 image 判斷（"Refine image prompt" 兩者都含）；
+            // brief 要先於 video 判斷（"Create video brief" 兩者都含）。
+            if (value.Contains("prompt", StringComparison.OrdinalIgnoreCase))
+                return "優化圖片提示";
+
+            if (value.Contains("image", StringComparison.OrdinalIgnoreCase))
+                return "生成圖片";
+
+            if (value.Contains("brief", StringComparison.OrdinalIgnoreCase))
+                return "建立影片企劃";
+
+            if (value.Contains("video", StringComparison.OrdinalIgnoreCase))
+                return "生成影片";
 
             return string.IsNullOrWhiteSpace(value) ? "下游步驟" : value;
         }
@@ -3193,6 +3216,9 @@ namespace test
             if (id.Equals("synthesize", StringComparison.OrdinalIgnoreCase))
                 return "Synthesize";
 
+            if (id.Equals("decompose", StringComparison.OrdinalIgnoreCase))
+                return "Decompose";
+
             if (id.Equals("execute", StringComparison.OrdinalIgnoreCase))
                 return "Execute";
 
@@ -3201,6 +3227,9 @@ namespace test
 
             if (id.Equals("image", StringComparison.OrdinalIgnoreCase))
                 return "Image";
+
+            if (id.Equals("brief", StringComparison.OrdinalIgnoreCase))
+                return "Brief";
 
             if (id.Equals("video", StringComparison.OrdinalIgnoreCase))
                 return "Video";
@@ -3368,6 +3397,38 @@ namespace test
             }
         }
 
+        /// <summary>用系統預設程式開啟生成的檔案（報告 / 簡報 deck）。限制只能開啟 _generated 資料夾內的檔案。</summary>
+        public void OpenGeneratedFile(string fullPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+                {
+                    MessageBox.Show("找不到生成的檔案（可能已被移動或刪除）。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                // 安全檢查：只允許開啟 _generated 資料夾內的檔案。
+                string rootFull = System.IO.Path.GetFullPath(GeneratedFilesDir);
+                string targetFull = System.IO.Path.GetFullPath(fullPath);
+                if (!targetFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show("檔案不在允許開啟的範圍內。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = targetFull,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"開啟檔案失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         public void RemoveAttachment(NodeControl node, string relativePath)
         {
             if (!_attachmentsByNode.TryGetValue(node.Id, out var list))
@@ -3477,7 +3538,9 @@ namespace test
     GetNodeSelectedAgent(child),
     GetNodeSelectedModel(child),
     GetNodeTaskModeStorageValue(child),
-    _unsupportedDownstreamNodeIds.Contains(child.Id)
+    _unsupportedDownstreamNodeIds.Contains(child.Id),
+    child.GetOutputFilePaths().ToList(),
+    child.GetOutputImagePath()
 ));
             }
 
@@ -3658,6 +3721,10 @@ namespace test
                     SyncAutoFlowTemplate(node, n.TopText ?? "");
                     node.SetTopLocked(n.TopLocked);
                     node.SetFontSize(SafePositiveFinite(n.FontSize, 20));
+
+                    // 還原上次執行產生、可點擊開啟的檔案 chip 與 inline 圖片（檔案需仍存在）。
+                    node.RestoreOutputFiles(n.OutputFilePaths);
+                    node.SetOutputImage(n.OutputImagePath);
 
                     idMap[n.Id] = node;
                 }
@@ -4185,6 +4252,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
             foreach (var n in nodesToDelete)
             {
+                n.ClearOutputFiles();
                 ClearEditingIfDeleted(n);
                 MainCanvas.Children.Remove(n);
                 _attachmentsByNode.Remove(n.Id);

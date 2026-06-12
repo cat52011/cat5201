@@ -173,6 +173,8 @@ namespace test
 
             try
             {
+                var workspace = new AgentWorkspace();
+
                 var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
                 {
                     Node = node,
@@ -182,7 +184,7 @@ namespace test
                     OnDelta = null,
                     CancellationToken = ct,
                     SkipCapabilities = ShouldSkipCapabilities(topText),
-                    Workspace = new AgentWorkspace()
+                    Workspace = workspace
                 });
 
                 var decision = agentResult.Decision;
@@ -201,6 +203,22 @@ namespace test
                 SyncActualModelToNode(node, decision);
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                // 把本次產生、可開啟的檔案推給節點，顯示成可點擊的 chip。
+                node.SetOutputFiles(workspace.GetByType("generated_file")
+                    .Select(x => x.Payload)
+                    .OfType<GeneratedFilePayload>()
+                    .Where(f => f != null && f.Success)
+                    .ToList());
+
+                // 生成圖片任務：把圖片直接顯示在輸出區。
+                node.SetOutputImage(workspace.GetByType("generated_file")
+                    .Select(x => x.Payload)
+                    .OfType<GeneratedFilePayload>()
+                    .Where(f => f != null && f.Success &&
+                                string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.FilePath)
+                    .FirstOrDefault());
 
                 await _memoryService.RememberExecutionResultAsync(
     node,
@@ -284,6 +302,8 @@ namespace test
 
             try
             {
+                var workspace = new AgentWorkspace();
+
                 var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
                 {
                     Node = node,
@@ -293,7 +313,7 @@ namespace test
                     OnDelta = onDelta,
                     CancellationToken = ct,
                     SkipCapabilities = ShouldSkipCapabilities(topText),
-                    Workspace = new AgentWorkspace()
+                    Workspace = workspace
                 });
 
                 var decision = agentResult.Decision;
@@ -312,6 +332,22 @@ namespace test
                 SyncActualModelToNode(node, decision);
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, decision, startedAtUtc, success: true);
+
+                // 把本次產生、可開啟的檔案（報告 / 簡報 deck）推給節點，顯示成可點擊的 chip。
+                node.SetOutputFiles(workspace.GetByType("generated_file")
+                    .Select(x => x.Payload)
+                    .OfType<GeneratedFilePayload>()
+                    .Where(f => f != null && f.Success)
+                    .ToList());
+
+                // 生成圖片任務：把圖片直接顯示在輸出區。
+                node.SetOutputImage(workspace.GetByType("generated_file")
+                    .Select(x => x.Payload)
+                    .OfType<GeneratedFilePayload>()
+                    .Where(f => f != null && f.Success &&
+                                string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.FilePath)
+                    .FirstOrDefault());
 
                 await _memoryService.RememberExecutionResultAsync(
     node,

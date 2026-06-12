@@ -652,7 +652,8 @@ namespace test
                         if (stage == null)
                             continue;
 
-                        lines.Add($"  OrchestrationStage: {stage.Order}. {Safe(stage.Label)} / {Safe(stage.Id)} / {Safe(stage.Owner)} / {Safe(stage.Status)}");
+                        string stageDetail = string.IsNullOrWhiteSpace(stage.Detail) ? "" : $" / {Trim(stage.Detail, 120)}";
+                        lines.Add($"  OrchestrationStage: {stage.Order}. {Safe(stage.Label)} / {Safe(stage.Id)} / {Safe(stage.Owner)} / {Safe(stage.Status)}{stageDetail}");
                     }
 
                     if (!string.IsNullOrWhiteSpace(orchestration.Reason))
@@ -725,6 +726,35 @@ namespace test
                     {
                         if (!string.IsNullOrWhiteSpace(note))
                             lines.Add($"  DownstreamNote: {Trim(note, 180)}");
+                    }
+                }
+                else if (item.Payload is GeneratedFilePayload generated)
+                {
+                    if (generated.Success)
+                    {
+                        lines.Add($"  GeneratedFile: {Safe(generated.FileName)} / Format={Safe(generated.Format)} / {generated.CharacterCount} chars");
+                        lines.Add($"  GeneratedFilePath: {Safe(generated.FilePath)}");
+                        if (!string.IsNullOrWhiteSpace(generated.SourceSummary))
+                            lines.Add($"  GeneratedFileSource: {Trim(generated.SourceSummary, 180)}");
+                    }
+                    else
+                    {
+                        lines.Add($"  GeneratedFile: FAILED / {Trim(generated.ErrorMessage, 180)}");
+                    }
+                }
+                else if (item.Payload is PresentationOutlinePayload presentation)
+                {
+                    string requested = presentation.RequestedSlideCount > 0
+                        ? $" / requested={presentation.RequestedSlideCount}"
+                        : "";
+                    lines.Add($"  Presentation: {Safe(presentation.Title)} / slides={presentation.SlideCount}{requested}");
+
+                    foreach (var slide in presentation.Slides?.Take(12) ?? Array.Empty<PresentationSlidePayload>())
+                    {
+                        if (slide == null)
+                            continue;
+
+                        lines.Add($"    Slide {slide.Order} [{Safe(slide.Kind)}]: {Trim(slide.Heading, 80)} ({slide.Bullets?.Count ?? 0} bullets)");
                     }
                 }
                 else if (!string.IsNullOrWhiteSpace(item.TextSummary))

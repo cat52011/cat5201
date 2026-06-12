@@ -25,6 +25,19 @@ namespace test
                 ? AgentRegistry.Get(fallbackAgentId).Id
                 : AgentRegistry.Default.Id;
 
+            // 圖片生成通常以 Chat mode 進來（NodeTaskMode 沒有 Image），需在 switch 前先攔，
+            // 否則會落到 general-agent。關鍵詞需與 OrchestrationPlanner.ResolveTaskType 的
+            // ImageGeneration 清單保持一致。
+            if (!hasImageAttachments && IsImageRequest(topText))
+            {
+                return new AgentSelectionResolution
+                {
+                    AgentId = "image-agent",
+                    Confidence = 0.93,
+                    Reason = "偵測到圖片生成需求，優先使用 image-agent"
+                };
+            }
+
             switch (NodeTaskModeHelper.Normalize(taskMode))
             {
                 case NodeTaskMode.Translate:
@@ -69,6 +82,29 @@ namespace test
                             : "目前任務屬一般整理 / 對話 / 泛用型需求，優先使用 general-agent"
                     };
             }
+        }
+
+        // 與 OrchestrationPlanner.ResolveTaskType 的 ImageGeneration 關鍵詞一致。
+        private static bool IsImageRequest(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            string lower = text.ToLowerInvariant();
+            string[] needles =
+            {
+                "圖片", "圖像", "生成圖片", "產生圖片",
+                "畫一張", "畫一隻", "畫一幅", "畫個", "畫張", "幫我畫", "請畫",
+                "image", "generate image", "draw"
+            };
+
+            foreach (var needle in needles)
+            {
+                if (lower.Contains(needle, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
     }
 }

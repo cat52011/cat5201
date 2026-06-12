@@ -35,9 +35,21 @@ namespace test
             AddStage(stages, "write_workspace", "Write workspace", "workspace");
             AddStage(stages, "final_synthesis", "Final synthesis", runtimeAgent?.Id ?? "");
 
+            // File Generation v1：GenerateFile 任務在最終答案之後，多一個寫檔階段。
+            if (taskType == OrchestrationTaskType.GenerateFile)
+                AddStage(stages, "generate_file", "Generate file", "file-writer");
+
+            // Presentation Agent v1：Presentation 任務在最終答案之後，多一個產生投影片大綱 / deck 階段。
+            if (taskType == OrchestrationTaskType.Presentation)
+                AddStage(stages, "presentation_outline", "Build presentation outline", "presentation-agent");
+
+            // Image Gen v1：ImageGeneration 任務在最終答案之後，多一個產生圖片階段。
+            if (taskType == OrchestrationTaskType.ImageGeneration)
+                AddStage(stages, "generate_image", "Generate image", "image-agent");
+
             return new OrchestrationPlanPayload
             {
-                Status = "planned",
+                Status = "pending",
                 TaskType = taskType,
                 PipelineId = pipelineId,
                 TaskMode = (decision?.TaskMode ?? NodeTaskMode.Chat).ToString(),
@@ -76,8 +88,9 @@ namespace test
 
             if (ContainsAny(
                     normalized,
-                    "圖片", "圖像", "生成圖片", "產生圖片", "畫一張",
-                    "image", "generate image"))
+                    "圖片", "圖像", "生成圖片", "產生圖片",
+                    "畫一張", "畫一隻", "畫一幅", "畫個", "畫張", "幫我畫", "請畫",
+                    "image", "generate image", "draw"))
             {
                 return OrchestrationTaskType.ImageGeneration;
             }
@@ -163,7 +176,7 @@ namespace test
                 Id = id,
                 Label = label,
                 Owner = owner,
-                Status = "planned"
+                Status = "pending"
             });
         }
 

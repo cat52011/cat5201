@@ -51,9 +51,9 @@ namespace test
         {
             string originalQuery = context.TopText ?? "";
 
-            bool financeQuery =
-                FinanceTaskDetector.IsFinanceLike(originalQuery) ||
-                DetectTickers(originalQuery).Count > 0;
+            // 只有真正的財經意圖（財報 / 股價 / 營收…）或 cashtag 才走報價卡財經研究。
+            // 單純提到公司名（例如「介紹台積電的簡報」）走一般研究，不硬抓股價。
+            bool financeQuery = FinanceTaskDetector.IsFinanceFocused(originalQuery);
 
             if (financeQuery)
             {

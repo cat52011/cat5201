@@ -166,6 +166,39 @@ PreferredCapabilityIds = new[]
     "code-capability",
     "reasoning-capability"
 },
+            },
+
+            new AgentDefinition
+            {
+                Id = "image-agent",
+                Name = "Image Agent",
+                Role = AgentRole.General,
+                DefaultModelId = AiModels.OpenAi_Gpt54,
+                DefaultTaskMode = NodeTaskMode.Chat,
+                SystemPrompt = "你是一個圖片生成型代理，負責把使用者的描述交給圖片生成模型產圖，並用一句話確認任務。",
+                AllowedModelIds = new[]
+                {
+                    AiModels.OpenAi_Gpt54,
+                    AiModels.Claude_Sonnet46
+                },
+                Capabilities =
+                    AgentCapability.Images |
+                    AgentCapability.Files |
+                    AgentCapability.MemoryRead |
+                    AgentCapability.MemoryWrite |
+                    AgentCapability.ImageTool |
+                    AgentCapability.FileTool,
+                AllowDelegation = false,
+
+                AllowedCapabilityIds = new[]
+{
+    "image-capability",
+    "reasoning-capability"
+},
+PreferredCapabilityIds = new[]
+{
+    "image-capability"
+},
             }
         };
 

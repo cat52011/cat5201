@@ -11,6 +11,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Animation;
@@ -79,6 +80,19 @@ namespace test
             public string RelativePath { get; set; } = "";
             public string Kind { get; set; } = "file";
             public string KindGlyph => Kind == "image" ? "??" : "??";
+        }
+
+        // 本次執行產生的可開啟檔案（報告 / 簡報 deck 等），顯示在輸出區下方。
+        private readonly ObservableCollection<OutputFileVm> _outputFiles = new();
+        // 完整絕對路徑，用於 ClearOutputFiles 時刪除磁碟實體檔案。
+        private readonly List<string> _pendingFilePaths = new();
+        // 本次執行在輸出區直接顯示的圖片（生成圖片任務），點擊可開啟原圖。
+        private string? _outputImagePath;
+
+        private sealed class OutputFileVm
+        {
+            public string FileName { get; set; } = "";
+            public string FullPath { get; set; } = "";
         }
 
         public NodeControl() : this(Guid.NewGuid().ToString()) { }
@@ -279,6 +293,7 @@ namespace test
             };
 
             AttachmentItems.ItemsSource = _attachments;
+            OutputFileItems.ItemsSource = _outputFiles;
 
             Loaded += (s, e) =>
             {
@@ -826,6 +841,176 @@ namespace test
             }
         }
 
+        private void OutputFileItem_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_parent == null) return;
+
+            if (sender is FrameworkElement fe && fe.Tag is OutputFileVm vm)
+            {
+                _parent.OpenGeneratedFile(vm.FullPath);
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>
+        /// 清掉輸出檔案連結，並刪除磁碟上對應的實體檔案。
+        /// 重跑 / 清除輸出文字 / 刪除節點時呼叫。可從背景執行緒呼叫。
+        /// </summary>
+        public void ClearOutputFiles()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ClearOutputFiles);
+                return;
+            }
+
+            foreach (var path in _pendingFilePaths)
+            {
+                try
+                {
+                    if (System.IO.File.Exists(path))
+                        System.IO.File.Delete(path);
+                }
+                catch { }
+            }
+            _pendingFilePaths.Clear();
+
+            _outputFiles.Clear();
+            if (OutputFileHost != null)
+                OutputFileHost.Visibility = Visibility.Collapsed;
+
+            _outputImagePath = null;
+            if (OutputImage != null)
+                OutputImage.Source = null;
+            if (OutputImageHost != null)
+                OutputImageHost.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>設定本次執行產生、可在輸出區點擊開啟的檔案。可從背景執行緒呼叫。</summary>
+        public void SetOutputFiles(IReadOnlyList<GeneratedFilePayload> files)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetOutputFiles(files));
+                return;
+            }
+
+            _outputFiles.Clear();
+            _pendingFilePaths.Clear();
+
+            if (files != null)
+            {
+                foreach (var f in files)
+                {
+                    if (f == null || !f.Success || string.IsNullOrWhiteSpace(f.FilePath))
+                        continue;
+
+                    _outputFiles.Add(new OutputFileVm
+                    {
+                        FileName = f.FileName,
+                        FullPath = f.FilePath
+                    });
+                    _pendingFilePaths.Add(f.FilePath);
+                }
+            }
+
+            if (OutputFileHost != null)
+                OutputFileHost.Visibility = _outputFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>取得目前輸出區的可開啟檔案完整路徑，用於存檔持久化。</summary>
+        public IReadOnlyList<string> GetOutputFilePaths() => _pendingFilePaths.ToList();
+
+        /// <summary>取得目前輸出區 inline 顯示的圖片路徑，用於存檔持久化。</summary>
+        public string? GetOutputImagePath() => _outputImagePath;
+
+        /// <summary>從存檔還原輸出區檔案 chip（路徑指向的檔案需仍存在）。可從背景執行緒呼叫。</summary>
+        public void RestoreOutputFiles(IEnumerable<string>? paths)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => RestoreOutputFiles(paths));
+                return;
+            }
+
+            _outputFiles.Clear();
+            _pendingFilePaths.Clear();
+
+            if (paths != null)
+            {
+                foreach (var p in paths)
+                {
+                    if (string.IsNullOrWhiteSpace(p) || !System.IO.File.Exists(p))
+                        continue;
+
+                    _outputFiles.Add(new OutputFileVm
+                    {
+                        FileName = System.IO.Path.GetFileName(p),
+                        FullPath = p
+                    });
+                    _pendingFilePaths.Add(p);
+                }
+            }
+
+            if (OutputFileHost != null)
+                OutputFileHost.Visibility = _outputFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>設定本次執行產生、要在輸出區直接顯示的圖片（生成圖片任務）。可從背景執行緒呼叫。</summary>
+        public void SetOutputImage(string? path)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetOutputImage(path));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
+            {
+                _outputImagePath = null;
+                if (OutputImage != null)
+                    OutputImage.Source = null;
+                if (OutputImageHost != null)
+                    OutputImageHost.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                // OnLoad：完整讀進記憶體，避免鎖住磁碟檔案（之後仍可刪除 / 開啟）。
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                bmp.UriSource = new Uri(path);
+                bmp.EndInit();
+                bmp.Freeze();
+
+                if (OutputImage != null)
+                    OutputImage.Source = bmp;
+                _outputImagePath = path;
+                if (OutputImageHost != null)
+                    OutputImageHost.Visibility = Visibility.Visible;
+            }
+            catch
+            {
+                _outputImagePath = null;
+                if (OutputImage != null)
+                    OutputImage.Source = null;
+                if (OutputImageHost != null)
+                    OutputImageHost.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void OutputImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_parent != null && !string.IsNullOrWhiteSpace(_outputImagePath))
+            {
+                _parent.OpenGeneratedFile(_outputImagePath);
+                e.Handled = true;
+            }
+        }
+
         private void AttachmentDelete_Click(object sender, RoutedEventArgs e)
         {
             if (_parent == null) return;
@@ -1057,6 +1242,7 @@ namespace test
         {
             _isGenerating = true;
             UpdateEditButtons();
+            ClearOutputFiles();
             TimeSpan executionTimeout = ResolveExecutionTimeout(topText);
 
             try
@@ -1179,16 +1365,36 @@ namespace test
         {
             bool hasAttachments = _attachments.Count > 0;
             string text = topText ?? "";
+            string lower = text.ToLowerInvariant();
 
             bool codePatchTask =
-                ContainsAny(text, text.ToLowerInvariant(),
+                ContainsAny(text, lower,
                     "bug", "debug", "修正", "修改", "修好", "patch", "diff", "重構", "程式", "程式碼");
+
+            bool reportTask =
+                ContainsAny(text, lower,
+                    "報告", "report", "分析", "研究", "財報", "匯出", "export", "生成檔", "生成報", "generate",
+                    "簡報", "投影片", "ppt", "pptx", "slides", "slide", "presentation");
+
+            // 生成圖片：gpt-image-2 出圖較慢（可能 1～3 分鐘），需要更寬鬆的逾時。
+            // 關鍵詞需與 OrchestrationPlanner.ResolveTaskType 的 ImageGeneration 清單保持一致。
+            bool imageTask =
+                ContainsAny(text, lower,
+                    "圖片", "圖像", "生成圖片", "產生圖片",
+                    "畫一張", "畫一隻", "畫一幅", "畫個", "畫張", "幫我畫", "請畫",
+                    "image", "generate image", "draw");
 
             if (hasAttachments && codePatchTask)
                 return TimeSpan.FromMinutes(10);
 
             if (hasAttachments)
                 return TimeSpan.FromMinutes(6);
+
+            if (imageTask)
+                return TimeSpan.FromMinutes(8);
+
+            if (reportTask)
+                return TimeSpan.FromMinutes(8);
 
             return TimeSpan.FromMinutes(3);
         }
@@ -1270,6 +1476,7 @@ namespace test
 
         public void ClearBottomText()
         {
+            ClearOutputFiles();
             BottomDisplay.Text = "";
         }
 
