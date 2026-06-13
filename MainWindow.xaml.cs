@@ -2244,6 +2244,7 @@ namespace test
 
             _aiRouter.WarmupSafely();
             _nodeService = new NodeService(_aiRouter, this);
+            RefreshMemoryPanel();
 
             if (AutoModelSwitch != null)
                 AutoModelSwitch.IsChecked = _isAutoModelSelectionEnabled;
@@ -5102,6 +5103,102 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             catch
             {
                 return "default";
+            }
+        }
+
+        // ===== Memory v1：個人化設定對話框（齒輪開啟）=====
+
+        private void OpenSettings_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshMemoryPanel();
+            if (SettingsOverlay != null)
+                SettingsOverlay.Visibility = Visibility.Visible;
+            MemoryInput?.Focus();
+        }
+
+        private void CloseSettings_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsOverlay != null)
+                SettingsOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        // 點對話框外的暗色區域 → 關閉。
+        private void SettingsOverlay_BackgroundClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (SettingsOverlay != null)
+                SettingsOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        // 點卡片本身不關閉（阻止冒泡到背景）。
+        private void SettingsCard_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+        }
+
+        private void RememberPreference_Click(object sender, RoutedEventArgs e)
+        {
+            if (_nodeService == null || MemoryInput == null)
+                return;
+
+            string text = (MemoryInput.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            _nodeService.AddManualPreference(text);
+            MemoryInput.Clear();
+            RefreshMemoryPanel();
+            // 不彈確認視窗；新偏好會直接出現在下方清單。
+        }
+
+        // 單獨刪除一條偏好（× 按鈕）。
+        private void DeletePreference_Click(object sender, RoutedEventArgs e)
+        {
+            if (_nodeService == null)
+                return;
+
+            if (sender is FrameworkElement fe && fe.Tag is string key && !string.IsNullOrWhiteSpace(key))
+            {
+                _nodeService.DeletePreference(key);
+                RefreshMemoryPanel();
+            }
+        }
+
+        private void ClearMemory_Click(object sender, RoutedEventArgs e)
+        {
+            if (_nodeService == null)
+                return;
+
+            var result = MessageBox.Show(
+                "確定要清除全部偏好嗎？此動作無法復原。",
+                "清除偏好",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Question);
+
+            if (result != MessageBoxResult.OK)
+                return;
+
+            _nodeService.ClearPreferenceMemory();
+            RefreshMemoryPanel();
+        }
+
+        public void RefreshMemoryPanel()
+        {
+            if (_nodeService == null)
+                return;
+
+            try
+            {
+                var (prefs, _) = _nodeService.GetMemoryStats();
+
+                if (MemoryStatsLabel != null)
+                    MemoryStatsLabel.Text = $"偏好 {prefs} 條";
+
+                if (PreferenceList != null)
+                    PreferenceList.ItemsSource = _nodeService.GetPreferenceItems();
+            }
+            catch
+            {
+                // 面板刷新失敗不影響主流程
             }
         }
 

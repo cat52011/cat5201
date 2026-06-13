@@ -10,12 +10,81 @@ namespace test
     {
         private readonly MainWindow _main;
         private readonly MemoryStore _store;
+        private readonly PreferenceExtractor _prefExtractor = new();
 
         public NodeMemoryService(MainWindow main, MemoryStore store)
         {
             _main = main;
             _store = store;
         }
+
+        // ===== Memory v1：偏好記憶 =====
+
+        /// <summary>
+        /// 手動輸入框：把整段文字當明確偏好擷取並 upsert。回傳擷取到的偏好顯示值（給 UI 顯示）。
+        /// </summary>
+        public IReadOnlyList<string> CaptureExplicitPreference(string text)
+        {
+            var detected = _prefExtractor.ExtractFromManualInput(text);
+            return UpsertDetected(detected);
+        }
+
+        /// <summary>任務文字被動擷取偏好（含意圖詞才取明確類別；語言一律觀察）。</summary>
+        private void CapturePassivePreference(string topText)
+        {
+            var detected = _prefExtractor.ExtractFromTaskText(topText);
+            UpsertDetected(detected);
+        }
+
+        private IReadOnlyList<string> UpsertDetected(IReadOnlyList<PreferenceExtractor.DetectedPreference> detected)
+        {
+            var captured = new List<string>();
+            if (detected == null) return captured;
+
+            foreach (var p in detected)
+            {
+                _store.UpsertPreference(new MemoryItem
+                {
+                    Scope = MemoryScope.Global,
+                    Category = "user_preference",
+                    PreferenceKey = p.Key,
+                    IsSharedMemory = true,
+                    Title = p.DisplayValue,
+                    Content = p.Content,
+                    Importance = p.Importance,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                captured.Add($"{p.DisplayValue}");
+            }
+
+            return captured;
+        }
+
+        public int ClearAllMemory() => _store.ClearAll();
+        public int ClearPreferences() => _store.ClearPreferences();
+        public int ClearEpisodicMemory() => _store.ClearEpisodic();
+        public (int preferences, int episodic) GetMemoryStats() => _store.GetStats();
+
+        public IReadOnlyList<string> GetPreferenceDisplayList() =>
+            _store.GetPreferences()
+                .Select(x => string.IsNullOrWhiteSpace(x.Title) ? x.Content : x.Title)
+                .ToList();
+
+        /// <summary>個人化清單用：整句顯示 + 可刪除的 key。</summary>
+        public IReadOnlyList<PreferenceView> GetPreferenceItems() =>
+            _store.GetPreferences()
+                .Select(x => new PreferenceView
+                {
+                    Display = string.IsNullOrWhiteSpace(x.Title) ? x.Content : x.Title,
+                    Key = x.PreferenceKey
+                })
+                .ToList();
+
+        public int DeletePreference(string key) => _store.RemovePreference(key);
+
+        /// <summary>取得偏好區塊文字（給 AgentRuntime final synthesis 用，不需要 node）。</summary>
+        public string GetPreferenceBlock() => BuildPreferenceBlock(_store.GetPreferences());
 
         public Task RememberExecutionResultAsync(
             NodeControl node,
@@ -35,6 +104,9 @@ namespace test
 
             if (string.IsNullOrWhiteSpace(bottomText))
                 return Task.CompletedTask;
+
+            // 被動偏好擷取（含意圖詞才取明確偏好；語言一律觀察記錄）。
+            CapturePassivePreference(topText);
 
             string fileKey = GetCurrentFileKey();
             string title = BuildTitle(topText, taskMode);
@@ -233,6 +305,10 @@ namespace test
     .Take(maxCount)
     .ToList();
 
+            // 使用者偏好一律注入（不受相關度過濾），與 episodic 分開回傳。
+            var preferences = _store.GetPreferences();
+
+            string preferenceBlock = BuildPreferenceBlock(preferences);
             string block = BuildPromptBlock(agentId, merged, agentItems, sharedItems, taskMode);
 
             return new MemoryQueryResult
@@ -240,9 +316,27 @@ namespace test
                 Items = merged,
                 AgentItems = agentItems,
                 SharedItems = sharedItems,
-                PromptBlock = block
+                PromptBlock = block,
+                PreferenceBlock = preferenceBlock
             };
         }
+        // 偏好區塊：獨立於 episodic 記憶，由 prompt builder 放在最上方當硬指令。
+        private string BuildPreferenceBlock(IReadOnlyList<MemoryItem> preferences)
+        {
+            if (preferences == null || preferences.Count == 0)
+                return "";
+
+            var lines = new List<string>
+            {
+                "【使用者偏好（最高優先，必須遵守；僅當本次節點內容明確指定不同時才例外）】"
+            };
+
+            foreach (var p in preferences)
+                lines.Add($"- {p.Content}");
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
         private string BuildPromptBlock(
             string agentId,
             IReadOnlyList<MemoryItem> items,
@@ -250,17 +344,18 @@ namespace test
             IReadOnlyList<MemoryItem> sharedItems,
             NodeTaskMode taskMode)
         {
-            if ((items == null || items.Count == 0) &&
-                (agentItems == null || agentItems.Count == 0) &&
-                (sharedItems == null || sharedItems.Count == 0))
-            {
+            bool hasEpisodic =
+                (items != null && items.Count > 0) ||
+                (agentItems != null && agentItems.Count > 0) ||
+                (sharedItems != null && sharedItems.Count > 0);
+
+            if (!hasEpisodic)
                 return "";
-            }
 
             var lines = new List<string>
-    {
-        "【相關記憶（Agent-aware）】"
-    };
+            {
+                "【相關記憶（Agent-aware）】"
+            };
 
             if (agentItems != null && agentItems.Count > 0)
             {
@@ -268,7 +363,6 @@ namespace test
                 int index = 1;
                 foreach (var item in agentItems)
                 {
-                    lines.Add($"- Agent Memory {index}");
                     lines.Add($"- Agent Memory {index}");
                     lines.Add($"  Category: {item.Category}");
                     lines.Add($"  Title: {item.Title}");
@@ -291,7 +385,6 @@ namespace test
                 int index = 1;
                 foreach (var item in sharedItems)
                 {
-                    lines.Add($"- Shared Memory {index}");
                     lines.Add($"- Shared Memory {index}");
                     lines.Add($"  Category: {item.Category}");
                     lines.Add($"  Title: {item.Title}");

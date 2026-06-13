@@ -699,6 +699,7 @@ namespace test
                     capabilityAugmentedText,
                     workspace,
                     decision,
+                    request.PreferenceBlock,
                     request.CancellationToken);
 
                 if (synthesisExecution != null)
@@ -815,6 +816,14 @@ namespace test
                     "你是圖片生成助理。使用者請你依描述生成圖片，圖片生成程式已準備好。" +
                     "請只用一句繁體中文確認你會根據描述生成圖片，不要展開描述圖片內容，不要給提示詞。" +
                     "\n\n【使用者描述】\n" + topText;
+            }
+            else if (!string.IsNullOrWhiteSpace(request.PreferenceBlock))
+            {
+                // 非 parallel 路徑：把使用者偏好放在最前面當最高優先指令（圖片任務除外）。
+                finalInput =
+                    request.PreferenceBlock.Trim() +
+                    "\n（以上偏好為最高優先，蓋過任何「使用繁體中文」等預設規則；若指定輸出語言或格式，必須改用該語言與格式。）\n\n" +
+                    finalInput;
             }
 
             // 5. execution
@@ -1376,6 +1385,7 @@ namespace test
             string originalInput,
             AgentWorkspace workspace,
             NodeExecutionDecision rootDecision,
+            string preferenceBlock,
             CancellationToken ct)
         {
             var synthesizer = AgentRegistry.Get("general-agent");
@@ -1406,8 +1416,13 @@ namespace test
                 ? BuildFinanceFinalSynthesisInstructions()
                 : BuildGeneralFinalSynthesisInstructions();
 
+            string prefHeader = string.IsNullOrWhiteSpace(preferenceBlock)
+                ? ""
+                : preferenceBlock.Trim() +
+                  "\n（以上偏好為最高優先，蓋過下方任何「使用繁體中文」等預設規則；若偏好指定輸出語言或格式，最終答案必須改用該語言與格式。）\n\n";
+
             string synthesisInput =
-        $@"你是 final synthesizer。你的任務是把 shared workspace 整理成使用者真正需要看的最終答案。
+        $@"{prefHeader}你是 final synthesizer。你的任務是把 shared workspace 整理成使用者真正需要看的最終答案。
 
 【使用者原始任務】
 {originalInput}
@@ -1763,7 +1778,7 @@ $@"這個請求目前先不直接產生 patch，因為它是大型檔案的全�
 10. 不可輸出內部標記，例如 Agent Workspace、Task Plan、Search Summary、Verified Facts、Search Context、Analysis Context、parallel_agent_output、delegate_output。
 11. 不可輸出 citation marker，例如 [1][2][3]。
 12. 不要寫成研究紀錄，不要把 workspace 全部倒出來。請輸出給一般使用者看的精簡結論。
-13. 使用繁體中文。
+13. 預設使用繁體中文；若提供了【使用者偏好】並指定輸出語言，必須改用該偏好指定的語言。
 
 【輸出格式】
 請嚴格使用以下格式。只針對使用者詢問的標的輸出，不得自行加入未被詢問的股票或比較項目：
@@ -1808,7 +1823,7 @@ $@"這個請求目前先不直接產生 patch，因為它是大型檔案的全�
 3. 若使用者要求一句話，就只輸出一句話。
 4. 若任務是程式摘要或檔案說明，直接說明檔案用途、主要功能與關鍵結構；不要加入不適用的金融段落。
 5. 不可輸出 citation marker，例如 [1][2][3]。
-6. 使用繁體中文。
+6. 預設使用繁體中文；若提供了【使用者偏好】並指定輸出語言，必須改用該偏好指定的語言。
 
 【風格限制】
 - 簡潔、直接，避免把 workspace 逐條倒出來。

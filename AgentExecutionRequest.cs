@@ -15,5 +15,8 @@
         public bool ForceAgentProfile { get; init; }
         public bool SkipCapabilities { get; init; }
         public AgentWorkspace? Workspace { get; init; }
+
+        // 使用者偏好區塊（最高優先），會注入 final synthesis / 最終執行的輸入。
+        public string PreferenceBlock { get; init; } = "";
     }
 }

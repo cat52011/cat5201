@@ -19,13 +19,23 @@ namespace test
 
             return request.Strategy switch
             {
-                NodeContextStrategy.CompactSearch => BuildCompactSearchPrompt(ctx, request.TopText, request.TaskMode, request.MemoryBlock),
-                NodeContextStrategy.Research => BuildResearchPrompt(ctx, request.TopText, request.TaskMode, request.MemoryBlock),
-                _ => BuildFullContextPrompt(ctx, request.TopText, request.TaskMode, request.MemoryBlock)
+                NodeContextStrategy.CompactSearch => BuildCompactSearchPrompt(ctx, request.TopText, request.TaskMode, request.MemoryBlock, request.PreferenceBlock),
+                NodeContextStrategy.Research => BuildResearchPrompt(ctx, request.TopText, request.TaskMode, request.MemoryBlock, request.PreferenceBlock),
+                _ => BuildFullContextPrompt(ctx, request.TopText, request.TaskMode, request.MemoryBlock, request.PreferenceBlock)
             };
         }
 
-        private string BuildFullContextPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock)
+        // 偏好區塊放在 prompt 最上方，並明確宣告蓋過預設語言/格式。空則回空字串。
+        private static string PreferenceHeader(string preferenceBlock)
+        {
+            if (string.IsNullOrWhiteSpace(preferenceBlock))
+                return "";
+
+            return preferenceBlock.Trim() + "\n" +
+                   "（以上偏好優先級高於本提示其他「預設使用繁體中文」等預設規則；若偏好指定了輸出語言或格式，必須改用偏好指定的語言與格式。）\n\n";
+        }
+
+        private string BuildFullContextPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock, string preferenceBlock)
         {
             string primaryContext;
             if (string.IsNullOrWhiteSpace(ctx.UpstreamContext) && string.IsNullOrWhiteSpace(ctx.DownstreamContext))
@@ -60,7 +70,7 @@ namespace test
                 : memoryBlock;
 
             return
-$@"你正在一個節點式筆記檔案中工作。
+$@"{PreferenceHeader(preferenceBlock)}你正在一個節點式筆記檔案中工作。
 
 【系統判定任務模式】
 {taskMode}
@@ -103,7 +113,7 @@ $@"你正在一個節點式筆記檔案中工作。
 23. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
         }
 
-        private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock)
+        private string BuildCompactSearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock, string preferenceBlock)
         {
             string compactUpstream = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
                 ? "（無上游主鏈）"
@@ -122,9 +132,9 @@ $@"你正在一個節點式筆記檔案中工作。
                 : memoryBlock;
 
             return
-$@"你正在處理一個節點式即時搜尋 / 查證任務。
+$@"{PreferenceHeader(preferenceBlock)}你正在處理一個節點式即時搜尋 / 查證任務。
 請以目前節點問題為主，並參考主鏈、記憶與支線摘要回答。
-直接輸出完成結果本身，使用繁體中文。
+直接輸出完成結果本身，預設使用繁體中文（若上方【使用者偏好】指定了輸出語言，必須改用該語言）。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
 
 【系統判定任務模式】
@@ -169,7 +179,7 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
 21. 若目前節點內容包含【Agent Workspace】，請把它視為本次多代理共享工作區資料；可用於整合回答，但不可直接輸出【Agent Workspace】或其中的 Type、Source Agent、Title、Summary 等內部欄位名稱。";
         }
 
-        private string BuildResearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock)
+        private string BuildResearchPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock, string preferenceBlock)
         {
             string upstreamPart = string.IsNullOrWhiteSpace(ctx.UpstreamContext)
                 ? "（無上游主鏈）"
@@ -188,9 +198,9 @@ $@"你正在處理一個節點式即時搜尋 / 查證任務。
                 : memoryBlock;
 
             return
-$@"你正在處理一個節點式研究任務。
+$@"{PreferenceHeader(preferenceBlock)}你正在處理一個節點式研究任務。
 請先理解目前問題，再結合主鏈、記憶與支線摘要進行較完整的研究、查證、補充與整理。
-直接輸出結果本身，使用繁體中文。
+直接輸出結果本身，預設使用繁體中文（若上方【使用者偏好】指定了輸出語言，必須改用該語言）。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
 
 【系統判定任務模式】

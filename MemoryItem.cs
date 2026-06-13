@@ -10,7 +10,11 @@ namespace test
 
         public string Category { get; init; } = "";
         // 例如：
-        // execution_result / summary / fact / preference / source_note / extracted_data
+        // execution_result / summary / fact / user_preference / source_note / extracted_data
+
+        // 偏好記憶專用：同一個 key（如 pref.language）只保留最新一筆，做 upsert 去重。
+        // 一般 episodic 記憶留空字串。
+        public string PreferenceKey { get; init; } = "";
 
         public string FileKey { get; init; } = "";
         public string SourceNodeId { get; init; } = "";

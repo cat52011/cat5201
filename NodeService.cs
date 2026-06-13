@@ -101,6 +101,37 @@ namespace test
         private readonly MemoryStore _memoryStore;
         private readonly NodeMemoryService _memoryService;
 
+        // ===== Memory v1：給 MainWindow 側邊欄記憶/偏好面板用的公開 API =====
+
+        /// <summary>手動輸入偏好/記憶指令；回傳擷取到的偏好顯示值。</summary>
+        public IReadOnlyList<string> AddManualPreference(string text)
+            => _memoryService.CaptureExplicitPreference(text);
+
+        /// <summary>目前所有偏好的顯示清單。</summary>
+        public IReadOnlyList<string> GetPreferenceList()
+            => _memoryService.GetPreferenceDisplayList();
+
+        /// <summary>個人化清單：整句顯示 + 可刪除 key。</summary>
+        public IReadOnlyList<PreferenceView> GetPreferenceItems()
+            => _memoryService.GetPreferenceItems();
+
+        public int DeletePreference(string key) => _memoryService.DeletePreference(key);
+
+        /// <summary>(偏好筆數, episodic 筆數)。</summary>
+        public (int preferences, int episodic) GetMemoryStats()
+            => _memoryService.GetMemoryStats();
+
+        public int ClearAllMemory() => _memoryService.ClearAllMemory();
+        public int ClearPreferenceMemory() => _memoryService.ClearPreferences();
+        public int ClearEpisodicMemory() => _memoryService.ClearEpisodicMemory();
+
+        /// <summary>執行後在 UI 執行緒刷新側邊欄記憶面板（被動偏好/記憶數可能已變動）。</summary>
+        private void TryRefreshMemoryPanel()
+        {
+            try { _main.Dispatcher.Invoke(() => _main.RefreshMemoryPanel()); }
+            catch { }
+        }
+
         private sealed class SegmentPlanItem
         {
             public string Title { get; set; } = "";
@@ -184,7 +215,8 @@ namespace test
                     OnDelta = null,
                     CancellationToken = ct,
                     SkipCapabilities = ShouldSkipCapabilities(topText),
-                    Workspace = workspace
+                    Workspace = workspace,
+                    PreferenceBlock = _memoryService.GetPreferenceBlock()
                 });
 
                 var decision = agentResult.Decision;
@@ -246,6 +278,8 @@ namespace test
                     decision.TaskMode,
                     decision.ActualModelId,
                     ct);
+
+                TryRefreshMemoryPanel();
 
                 if (agentResult.WorkspaceSummary != null)
                 {
@@ -313,7 +347,8 @@ namespace test
                     OnDelta = onDelta,
                     CancellationToken = ct,
                     SkipCapabilities = ShouldSkipCapabilities(topText),
-                    Workspace = workspace
+                    Workspace = workspace,
+                    PreferenceBlock = _memoryService.GetPreferenceBlock()
                 });
 
                 var decision = agentResult.Decision;
@@ -375,6 +410,9 @@ namespace test
                     decision.TaskMode,
                     decision.ActualModelId,
                     ct);
+
+                TryRefreshMemoryPanel();
+
                 if (agentResult.WorkspaceSummary != null)
                 {
                     await _memoryService.RememberWorkspaceSummaryAsync(

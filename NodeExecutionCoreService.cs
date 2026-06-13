@@ -55,7 +55,8 @@ namespace test
                 TopText = topText,
                 TaskMode = taskMode,
                 Strategy = _contextStrategyResolver.Resolve(model, taskMode),
-                MemoryBlock = memory.PromptBlock
+                MemoryBlock = memory.PromptBlock,
+                PreferenceBlock = memory.PreferenceBlock
             });
 
             return await GenerateWithContinuationAsync(
@@ -87,7 +88,8 @@ namespace test
                 TopText = topText,
                 TaskMode = taskMode,
                 Strategy = _contextStrategyResolver.Resolve(model, taskMode),
-                MemoryBlock = memory.PromptBlock
+                MemoryBlock = memory.PromptBlock,
+                PreferenceBlock = memory.PreferenceBlock
             });
 
             return await GenerateWithContinuationStreamingAsync(

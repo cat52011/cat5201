@@ -64,6 +64,104 @@ namespace test
             }
         }
 
+        /// <summary>
+        /// 偏好 upsert：同一個 PreferenceKey 只保留最新一筆（覆蓋舊偏好）。
+        /// </summary>
+        public void UpsertPreference(MemoryItem pref)
+        {
+            if (pref == null || string.IsNullOrWhiteSpace(pref.Content) ||
+                string.IsNullOrWhiteSpace(pref.PreferenceKey))
+                return;
+
+            lock (_sync)
+            {
+                _cache.RemoveAll(x =>
+                    string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(x.PreferenceKey, pref.PreferenceKey, StringComparison.OrdinalIgnoreCase));
+
+                _cache.Add(pref);
+                SaveUnsafe();
+            }
+        }
+
+        /// <summary>
+        /// 取得所有使用者偏好（Global / user_preference），依重要度排序。
+        /// </summary>
+        public IReadOnlyList<MemoryItem> GetPreferences()
+        {
+            lock (_sync)
+            {
+                return _cache
+                    .Where(x => string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.Importance)
+                    .ThenByDescending(x => x.UpdatedAtUtc)
+                    .ToList();
+            }
+        }
+
+        /// <summary>依 PreferenceKey 刪除單一偏好。</summary>
+        public int RemovePreference(string preferenceKey)
+        {
+            if (string.IsNullOrWhiteSpace(preferenceKey))
+                return 0;
+
+            lock (_sync)
+            {
+                int n = _cache.RemoveAll(x =>
+                    string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(x.PreferenceKey, preferenceKey, StringComparison.Ordinal));
+                SaveUnsafe();
+                return n;
+            }
+        }
+
+        /// <summary>清除全部記憶（偏好 + episodic）。</summary>
+        public int ClearAll()
+        {
+            lock (_sync)
+            {
+                int n = _cache.Count;
+                _cache = new List<MemoryItem>();
+                SaveUnsafe();
+                return n;
+            }
+        }
+
+        /// <summary>只清除使用者偏好，保留 episodic 執行記憶。</summary>
+        public int ClearPreferences()
+        {
+            lock (_sync)
+            {
+                int n = _cache.RemoveAll(x =>
+                    string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase));
+                SaveUnsafe();
+                return n;
+            }
+        }
+
+        /// <summary>只清除 episodic 執行記憶，保留偏好。</summary>
+        public int ClearEpisodic()
+        {
+            lock (_sync)
+            {
+                int n = _cache.RemoveAll(x =>
+                    !string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase));
+                SaveUnsafe();
+                return n;
+            }
+        }
+
+        /// <summary>(偏好筆數, episodic 筆數)。</summary>
+        public (int preferences, int episodic) GetStats()
+        {
+            lock (_sync)
+            {
+                int pref = _cache.Count(x =>
+                    string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase));
+                return (pref, _cache.Count - pref);
+            }
+        }
+
         public IReadOnlyList<MemoryItem> Query(
     string fileKey,
     string agentId,
@@ -79,6 +177,9 @@ namespace test
             lock (_sync)
             {
                 var ranked = _cache
+                    .Where(x => !string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase))
+                    .Where(x => string.IsNullOrWhiteSpace(fileKey) ||
+                                string.Equals(x.FileKey, fileKey, StringComparison.OrdinalIgnoreCase))
                     .Select(x => new
                     {
                         Item = x,

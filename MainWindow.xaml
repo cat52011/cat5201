@@ -265,13 +265,55 @@
                         </ListBox.ItemContainerStyle>
                     </ListBox>
 
-                    <TextBlock x:Name="CurrentFileLabel"
-                               Grid.Row="2"
-                               Text="目前檔案：尚未建立"
-                               FontSize="12"
-                               Foreground="#555"
-                               Margin="0,6,0,0"
-                               TextWrapping="Wrap" />
+                    <Grid Grid.Row="2" Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock x:Name="CurrentFileLabel"
+                                   Grid.Column="0"
+                                   Text="目前檔案：尚未建立"
+                                   FontSize="12"
+                                   Foreground="#555"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+
+                        <!-- 左下角：齒輪 → 個人化設定 -->
+                        <Button x:Name="SettingsGearButton"
+                                Grid.Column="1"
+                                Width="34" Height="34"
+                                Margin="8,0,0,0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                ToolTip="個人化設定"
+                                Click="OpenSettings_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="gbd"
+                                            Background="Transparent"
+                                            CornerRadius="9">
+                                        <Viewbox Width="20" Height="20"
+                                                 HorizontalAlignment="Center"
+                                                 VerticalAlignment="Center">
+                                            <Canvas Width="24" Height="24">
+                                                <Path x:Name="gearIcon"
+                                                      Fill="#5A5A5A"
+                                                      Data="M19.14,12.94a7.49,7.49,0,0,0,.05-1,7.49,7.49,0,0,0-.05-1l2.11-1.65a.5.5,0,0,0,.12-.64l-2-3.46a.5.5,0,0,0-.61-.22l-2.49,1a7.32,7.32,0,0,0-1.69-1l-.38-2.65A.49.49,0,0,0,13.8,1H9.8a.49.49,0,0,0-.49.42L8.93,4.07a7.32,7.32,0,0,0-1.69,1l-2.49-1a.5.5,0,0,0-.61.22l-2,3.46a.5.5,0,0,0,.12.64L4.5,11a7.49,7.49,0,0,0,0,2L2.39,14.65a.5.5,0,0,0-.12.64l2,3.46a.5.5,0,0,0,.61.22l2.49-1a7.32,7.32,0,0,0,1.69,1l.38,2.65a.49.49,0,0,0,.49.42h4a.49.49,0,0,0,.49-.42l.38-2.65a7.32,7.32,0,0,0,1.69-1l2.49,1a.5.5,0,0,0,.61-.22l2-3.46a.5.5,0,0,0-.12-.64ZM12,15.5A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z"/>
+                                            </Canvas>
+                                        </Viewbox>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="gbd" Property="Background" Value="#E2E2E2"/>
+                                            <Setter TargetName="gearIcon" Property="Fill" Value="#222"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
                 </Grid>
             </Border>
         </Grid>
@@ -721,6 +763,252 @@ Margin="0,20,20,0">
                                       Opacity="0.22"/>
                 </Button.Effect>
             </Button>
+        </Grid>
+
+        <!-- 個人化設定對話框（齒輪點開） -->
+        <Grid x:Name="SettingsOverlay"
+              Visibility="Collapsed"
+              Panel.ZIndex="10000"
+              Background="#55000000"
+              MouseLeftButtonDown="SettingsOverlay_BackgroundClick">
+
+            <Border Width="440"
+                    Height="560"
+                    CornerRadius="18"
+                    Background="White"
+                    BorderBrush="#E6E6E6"
+                    BorderThickness="1"
+                    Padding="20"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MouseLeftButtonDown="SettingsCard_Click">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.22"/>
+                </Border.Effect>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- 標題列 -->
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="個人化設定"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="#303030"
+                                   VerticalAlignment="Center"/>
+
+                        <Border Grid.Column="1"
+                                CornerRadius="999"
+                                Background="#F1F1F3"
+                                Padding="10,4"
+                                VerticalAlignment="Center"
+                                Margin="0,0,8,0">
+                            <TextBlock x:Name="MemoryStatsLabel"
+                                       Text="偏好 0 條・歷史 0 筆"
+                                       FontSize="11.5"
+                                       Foreground="#666"/>
+                        </Border>
+
+                        <Button Grid.Column="2"
+                                Width="28" Height="28"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                ToolTip="關閉"
+                                Click="CloseSettings_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="cbd" Background="Transparent" CornerRadius="8">
+                                        <Path Data="M5,5 L15,15 M15,5 L5,15"
+                                              Stroke="#888"
+                                              StrokeThickness="1.8"
+                                              StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="cbd" Property="Background" Value="#EEEEEE"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+
+                    <Border Grid.Row="0" Height="1" Background="#ECECEC"
+                            VerticalAlignment="Bottom" Margin="0,0,0,0"/>
+
+                    <!-- 輸入區 -->
+                    <StackPanel Grid.Row="1" Margin="0,16,0,0">
+                        <TextBlock Text="記憶與偏好"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,0,0,2"/>
+                        <TextBlock Text="告訴它你的偏好，之後每次回答都會遵守。例如：回答用中文與韓文、以後簡潔一點、盡量用便宜的模型。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+
+                        <Border CornerRadius="10"
+                                Background="#F7F7F8"
+                                BorderBrush="#E4E4E7"
+                                BorderThickness="1"
+                                Padding="10,8">
+                            <TextBox x:Name="MemoryInput"
+                                     Height="60"
+                                     FontSize="13"
+                                     Foreground="#222"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Background="Transparent"
+                                     BorderThickness="0"/>
+                        </Border>
+
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Button x:Name="RememberButton"
+                                    Grid.Column="0"
+                                    Content="記住"
+                                    Height="34"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Cursor="Hand"
+                                    Background="#111"
+                                    Foreground="White"
+                                    BorderThickness="0"
+                                    Click="RememberPreference_Click">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="9">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                              TextElement.Foreground="White"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="#333"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+
+                            <Button x:Name="ClearMemoryButton"
+                                    Grid.Column="2"
+                                    Content="全部清除"
+                                    Height="34"
+                                    FontSize="12.5"
+                                    Cursor="Hand"
+                                    Background="#F1F1F3"
+                                    Foreground="#444"
+                                    BorderThickness="0"
+                                    Click="ClearMemory_Click">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="9" Padding="16,0">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="#E4E4E7"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- 已記住的偏好（整句完整保留，可捲動） -->
+                    <ScrollViewer Grid.Row="2"
+                                  Margin="0,14,0,0"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl x:Name="PreferenceList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#F4F5FB"
+                                            CornerRadius="10"
+                                            Padding="12,8"
+                                            Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Grid.Column="0"
+                                                    Width="6" Height="6"
+                                                    CornerRadius="3"
+                                                    Background="#5B6CFF"
+                                                    VerticalAlignment="Top"
+                                                    Margin="0,6,9,0"/>
+
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Display}"
+                                                       FontSize="12.5"
+                                                       Foreground="#3A3A40"
+                                                       TextWrapping="Wrap"
+                                                       VerticalAlignment="Center"/>
+
+                                            <Button Grid.Column="2"
+                                                    Width="22" Height="22"
+                                                    Margin="8,0,0,0"
+                                                    VerticalAlignment="Top"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    Cursor="Hand"
+                                                    ToolTip="刪除這條偏好"
+                                                    Tag="{Binding Key}"
+                                                    Click="DeletePreference_Click">
+                                                <Button.Template>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border x:Name="dbd" Background="Transparent" CornerRadius="6">
+                                                            <Path Data="M4,4 L12,12 M12,4 L4,12"
+                                                                  Stroke="#9A9AA0"
+                                                                  StrokeThickness="1.6"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  HorizontalAlignment="Center"
+                                                                  VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="dbd" Property="Background" Value="#E2E3EC"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Button.Template>
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>
