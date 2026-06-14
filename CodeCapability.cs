@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -70,6 +71,13 @@ namespace test
 
         private static string ResolveRequestType(string text)
         {
+            // Code Agent v1.5：先判斷「挑選某一項來修」與「先列出 bug 清單」兩種模式（比一般修正更具體）。
+            if (IsBugFixSelection(text))
+                return "bug_fix_selected";
+
+            if (IsBugListingRequest(text))
+                return "bug_listing";
+
             if (ContainsAny(text, "修正", "fix", "bug", "debug", "錯誤", "exception", "null"))
                 return "debug_or_fix";
 
@@ -86,6 +94,47 @@ namespace test
                 return "full_code";
 
             return "code_generation";
+        }
+
+        // 「先列出所有 bug，再決定修哪個」——盤點模式。
+        private static bool IsBugListingRequest(string text)
+        {
+            bool explicitPhrase = ContainsAny(text,
+                "列出bug", "列出所有bug", "bug清單", "問題清單", "list bugs", "list the bugs",
+                "list all bugs", "找出bug", "找bug", "抓bug", "有哪些bug", "有什麼問題",
+                "有哪些問題", "code review", "程式碼審查", "程式審查");
+
+            bool listIntent = ContainsAny(text,
+                "列出", "清單", "有哪些", "哪些", "盤點", "掃描", "列舉", "逐一",
+                "list", "enumerate", "find all", "review", "audit", "檢視");
+
+            bool bugWord = ContainsAny(text,
+                "bug", "問題", "錯誤", "issue", "issues", "缺陷", "毛病",
+                "smell", "風險", "漏洞", "vulnerab");
+
+            return explicitPhrase || (listIntent && bugWord);
+        }
+
+        // 「修正第 N 個 / fix bug N / 處理 1,3」——從先前清單挑選一項來修。
+        private static bool IsBugFixSelection(string text)
+        {
+            bool fixIntent = ContainsAny(text,
+                "修正", "修", "處理", "解決", "選", "fix", "resolve", "handle");
+
+            if (!fixIntent)
+                return false;
+
+            if (Regex.IsMatch(text, @"第\s*[0-9０-９一二三四五六七八九十]+\s*(個|項|條|號|點)?"))
+                return true;
+
+            if (Regex.IsMatch(text, @"\bbug\s*#?\s*[0-9]+\b", RegexOptions.IgnoreCase))
+                return true;
+
+            if (Regex.IsMatch(text, @"(修正|修|處理|解決|選|fix|resolve|handle)\s*#?\s*[0-9]+(\s*[,，、和及]\s*[0-9]+)*",
+                    RegexOptions.IgnoreCase))
+                return true;
+
+            return false;
         }
 
         private static string ResolveLanguage(string text)
@@ -127,6 +176,11 @@ namespace test
         private static IReadOnlyList<string> BuildRequiredActions(string text)
         {
             var actions = new List<string>();
+
+            if (IsBugFixSelection(text))
+                actions.Add("User selected specific bug item(s) to fix. Produce a focused patch for those item(s) only.");
+            else if (IsBugListingRequest(text))
+                actions.Add("List bugs first as a numbered inventory. Do NOT output a diff yet; let user choose which to fix.");
 
             if (ContainsAny(text, "完整程式", "完整程式碼", "可直接貼上", "貼上即用"))
                 actions.Add("Provide complete paste-ready code.");
@@ -220,6 +274,14 @@ namespace test
 
         private static bool ShouldCreateDiffDraft(string text, string requestType)
         {
+            // bug 盤點模式：只列清單、不出 patch。
+            if (string.Equals(requestType, "bug_listing", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // 已挑選某幾項要修：需要 diff。
+            if (string.Equals(requestType, "bug_fix_selected", StringComparison.OrdinalIgnoreCase))
+                return true;
+
             if (ContainsAny(text, "不要改", "只解釋", "只說明", "explain only"))
                 return false;
 

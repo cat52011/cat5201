@@ -24,6 +24,9 @@ namespace test
 
         public bool Success { get; init; }
 
+        // 產物狀態：completed / failed（圖片任務的即時 queued / generating 由 orchestration 階段反映）。
+        public string Status { get; init; } = "completed";
+
         public string ErrorMessage { get; init; } = "";
 
         // 來源說明：例如「research_first / 3 筆 verified_facts」

@@ -129,7 +129,9 @@ namespace test
 
             Add(currentModelId);
 
-            foreach (var def in AiModelRegistry.All)
+            // Multi-Model v1：依能力重導時，剩餘候選依成本層級由便宜到貴排序，
+            // 只納入已啟用的模型（休眠擴充點不選），達成「依能力＋成本」的挑選。
+            foreach (var def in AiModelRegistry.Available.OrderBy(x => (int)x.CostTier))
                 Add(def.Id);
 
             return result;

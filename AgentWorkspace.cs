@@ -461,6 +461,10 @@ namespace test
                     if (x.Payload is VerifiedFactPayload verified)
                         factCount = verified.Facts?.Count ?? 0;
 
+                    string kind = string.IsNullOrWhiteSpace(x.ArtifactKind) ? "artifact" : x.ArtifactKind.Trim();
+                    string format = string.IsNullOrWhiteSpace(x.ContentFormat) ? "text" : x.ContentFormat.Trim();
+                    string status = DeriveStatus(x);
+
                     return new AgentWorkspaceArtifactRecord
                     {
                         Id = Safe(x.Id),
@@ -468,17 +472,160 @@ namespace test
                         NodeId = Safe(x.NodeId),
                         SourceAgentId = Safe(x.SourceAgentId),
                         ItemType = Safe(x.ItemType),
-                        ArtifactKind = string.IsNullOrWhiteSpace(x.ArtifactKind) ? "artifact" : x.ArtifactKind.Trim(),
-                        ContentFormat = string.IsNullOrWhiteSpace(x.ContentFormat) ? "text" : x.ContentFormat.Trim(),
+                        ArtifactKind = kind,
+                        ContentFormat = format,
                         IsUserVisible = x.IsUserVisible,
                         Title = string.IsNullOrWhiteSpace(x.Title) ? Safe(x.ItemType) : x.Title.Trim(),
                         Preview = Trim(preview, 220),
                         EstimatedSize = EstimateSize(x),
                         FactCount = factCount,
-                        CreatedAtUtc = x.CreatedAtUtc
+                        CreatedAtUtc = x.CreatedAtUtc,
+
+                        // Workspace v2：集中推導 status / source / 標籤 / 落地檔案 / 依賴。
+                        Status = status,
+                        StatusLabel = ArtifactStatus.ToLabel(status),
+                        ModelId = DeriveModelId(x),
+                        CapabilityId = DeriveCapabilityId(x),
+                        DependsOn = x.DependsOn != null && x.DependsOn.Count > 0
+                            ? x.DependsOn
+                            : DeriveDependsOn(x),
+                        KindLabel = KindLabel(kind, x.ItemType),
+                        FormatLabel = FormatLabel(format),
+                        FilePath = DeriveFilePath(x),
+                        CreatedAtLocalText = x.CreatedAtUtc == default
+                            ? ""
+                            : x.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                     };
                 })
                 .ToList();
+        }
+
+        // 各 capability 不一定都填 Status，這裡依 payload 型別集中推導，確保跨能力一致。
+        private static string DeriveStatus(AgentWorkspaceItem item)
+        {
+            if (item == null)
+                return ArtifactStatus.Ready;
+
+            if (!string.IsNullOrWhiteSpace(item.Status))
+                return ArtifactStatus.Normalize(item.Status);
+
+            switch (item.Payload)
+            {
+                case GeneratedFilePayload generated:
+                    return generated.Success ? ArtifactStatus.Exported : ArtifactStatus.Failed;
+                case CodeDiffValidationPayload validation:
+                    return string.Equals(validation.Status, "failed", StringComparison.OrdinalIgnoreCase)
+                        ? ArtifactStatus.Failed
+                        : ArtifactStatus.Validated;
+                case FinalSynthesisPayload finalSynthesis:
+                    return finalSynthesis.Success ? ArtifactStatus.Ready : ArtifactStatus.Failed;
+                case CodeDiffArtifactPayload:
+                case WorkflowPlanPayload:
+                case DownstreamNodePlanPayload:
+                    return ArtifactStatus.Draft;
+                default:
+                    return ArtifactStatus.Ready;
+            }
+        }
+
+        private static string DeriveModelId(AgentWorkspaceItem item)
+        {
+            if (item == null)
+                return "";
+
+            if (!string.IsNullOrWhiteSpace(item.ModelId))
+                return item.ModelId.Trim();
+
+            return item.Payload switch
+            {
+                DelegateOutputPayload delegateOutput => Safe(delegateOutput.ActualModelId),
+                FinalSynthesisPayload finalSynthesis => Safe(finalSynthesis.ModelId),
+                OrchestrationPlanPayload orchestration => Safe(orchestration.ModelId),
+                // 簡報大綱帶有實際作者模型（多階段作者寫入），讓決策窗顯示「簡報是誰寫的」。
+                PresentationOutlinePayload presentation => Safe(presentation.ModelId),
+                // 研究 / 搜尋固定由 Perplexity 執行（research-agent 預設 pplx-sonar），據此標明來源模型。
+                VerifiedFactPayload => AiModels.Perplexity_Sonar,
+                SearchSummaryPayload => AiModels.Perplexity_Sonar,
+                _ => ""
+            };
+        }
+
+        private static string DeriveCapabilityId(AgentWorkspaceItem item)
+        {
+            if (item == null)
+                return "";
+
+            if (!string.IsNullOrWhiteSpace(item.CapabilityId))
+                return item.CapabilityId.Trim();
+
+            string itemType = item.ItemType ?? "";
+            const string prefix = "capability:";
+            if (itemType.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return itemType.Substring(prefix.Length).Trim();
+
+            return "";
+        }
+
+        private static IReadOnlyList<string> DeriveDependsOn(AgentWorkspaceItem item)
+        {
+            // 預設依賴鏈：最終答案依賴事實/搜尋；檔案/簡報依賴最終答案。
+            string type = (item?.ItemType ?? "").ToLowerInvariant();
+
+            if (type == "final_synthesis")
+                return new[] { "verified_facts", "search_summary" };
+
+            if (item?.Payload is GeneratedFilePayload || item?.Payload is PresentationOutlinePayload)
+                return new[] { "final_synthesis" };
+
+            return Array.Empty<string>();
+        }
+
+        private static string DeriveFilePath(AgentWorkspaceItem item)
+        {
+            if (item?.Payload is GeneratedFilePayload generated && generated.Success)
+                return Safe(generated.FilePath);
+
+            return "";
+        }
+
+        private static string KindLabel(string kind, string itemType)
+        {
+            string key = (string.IsNullOrWhiteSpace(kind) || kind == "artifact" ? itemType : kind ?? "")
+                .Trim()
+                .ToLowerInvariant();
+
+            return key switch
+            {
+                "facts" or "verified_facts" => "事實",
+                "search" or "search_summary" => "搜尋",
+                "analysis" or "reasoning_analysis" or "code_analysis" => "分析",
+                "code" or "code_snapshot" => "程式碼",
+                "diff" or "patch" or "code_diff" => "變更",
+                "media" or "image" => "媒體",
+                "file" or "generated_file" => "檔案",
+                "final" or "final_synthesis" => "最終答案",
+                "workflow" => "工作流",
+                "presentation" or "presentation_outline" => "簡報",
+                "delegate_output" or "parallel_agent_output" => "代理輸出",
+                "orchestration_plan" => "編排計畫",
+                "downstream_node_plan" => "後續節點",
+                _ => string.IsNullOrWhiteSpace(kind) ? "產出物" : kind
+            };
+        }
+
+        private static string FormatLabel(string format)
+        {
+            return (format ?? "").Trim().ToLowerInvariant() switch
+            {
+                "markdown" or "md" => "Markdown",
+                "json" => "JSON",
+                "code" => "程式碼",
+                "image" => "圖片",
+                "video" => "影片",
+                "binary" => "檔案",
+                "text" or "" => "文字",
+                _ => string.IsNullOrWhiteSpace(format) ? "文字" : format
+            };
         }
 
         private static int EstimateSize(AgentWorkspaceItem item)

@@ -737,6 +737,40 @@ namespace test
                 capabilityData.ContainsKey("code_diff_draft") ||
                 workspace.GetByType("code_diff_draft").Count > 0;
 
+            // Code Agent v1.5：bug 清單模式偵測 + 大型任務規模/風險評估（過程資訊，放決策區）。
+            string codeRequestType = TryGetCodeRequestType(capabilityData, workspace);
+            bool isBugListing = string.Equals(codeRequestType, "bug_listing", StringComparison.OrdinalIgnoreCase);
+
+            var codeSnapshotForAssessment = TryGetCodeSnapshot(capabilityData, workspace);
+            CodeTaskAssessmentPayload? codeAssessment = null;
+            if (codeSnapshotForAssessment != null)
+            {
+                codeAssessment = CodeTaskAssessor.Assess(codeSnapshotForAssessment);
+                workspace.Add(
+                    AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace,
+                        node,
+                        runtimeAgent.Id,
+                        "code_task_assessment",
+                        codeAssessment));
+            }
+
+            // 三段 finalInput 組裝都用同一套 code 指令區塊，避免漏掉某條路徑。
+            void AddCodeInstructionBlocks(List<string> parts)
+            {
+                if (isBugListing)
+                    parts.Add(BuildBugListingInstructionBlock());
+
+                if (hasCodeDiffDraft)
+                    parts.Add(BuildCodeDiffOutputInstructionBlock());
+
+                if (codeAssessment != null &&
+                    !string.Equals(codeAssessment.RiskLevel, "low", StringComparison.OrdinalIgnoreCase))
+                {
+                    parts.Add(BuildCodeRiskNoteBlock(codeAssessment));
+                }
+            }
+
             bool isFinanceTask = FinanceTaskDetector.IsFinanceFocused(capabilityAugmentedText);
             bool enforceFinalSynthesisFormat = hasVerifiedFacts && isFinanceTask;
 
@@ -756,8 +790,7 @@ namespace test
                 if (enforceFinalSynthesisFormat)
                     parts.Add(BuildFinalOutputFormatBlock());
 
-                if (hasCodeDiffDraft)
-                    parts.Add(BuildCodeDiffOutputInstructionBlock());
+                AddCodeInstructionBlocks(parts);
 
                 parts.Add("【目前任務】\n" + capabilityAugmentedText);
 
@@ -777,8 +810,7 @@ namespace test
                 if (enforceFinalSynthesisFormat)
                     parts.Add(BuildFinalOutputFormatBlock());
 
-                if (hasCodeDiffDraft)
-                    parts.Add(BuildCodeDiffOutputInstructionBlock());
+                AddCodeInstructionBlocks(parts);
 
                 parts.Add(
                     "以下是其他代理提供的補充資訊：\n" +
@@ -801,8 +833,7 @@ namespace test
 
                 if (enforceFinalSynthesisFormat)
                     parts.Add(BuildFinalOutputFormatBlock());
-                if (hasCodeDiffDraft)
-                    parts.Add(BuildCodeDiffOutputInstructionBlock());
+                AddCodeInstructionBlocks(parts);
                 parts.Add("【Delegated Analysis Omitted】\nDelegated/parallel agent text was omitted because structured verified_facts exist. Use delegated analysis only as internal reasoning, not as a source for numeric facts.");
                 parts.Add("【目前任務】\n" + capabilityAugmentedText);
 
@@ -1010,14 +1041,15 @@ namespace test
                 request.DelegationDepth == 0 &&
                 !string.IsNullOrWhiteSpace(execution.Text))
             {
-                execution = GeneratePresentation(
+                execution = await GeneratePresentation(
                     node,
                     runtimeAgent,
                     capabilityAugmentedText,
                     workspace,
                     orchestrationPlan,
                     execution,
-                    orchestration);
+                    orchestration,
+                    request.CancellationToken);
             }
 
             // Image Gen v1：ImageGeneration 任務在最終答案後呼叫 DALL-E 3 生成圖片，
@@ -1027,6 +1059,23 @@ namespace test
                 request.DelegationDepth == 0)
             {
                 execution = await GenerateImageFile(
+                    node,
+                    runtimeAgent,
+                    topText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration,
+                    request.CancellationToken);
+            }
+
+            // Video Gen v1：VideoGeneration 任務在最終答案後呼叫影片 API（非同步、需輪詢），
+            // 完成後存檔、加入 workspace artifact。未啟用時（休眠）標記未啟用，不影響主答案。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.VideoGeneration &&
+                request.DelegationDepth == 0)
+            {
+                execution = await GenerateVideoFile(
                     node,
                     runtimeAgent,
                     topText,
@@ -1096,25 +1145,12 @@ namespace test
                 AgentId = runtimeAgent?.Id ?? ""
             });
 
-            var generated = GeneratedFileWriter.WriteMarkdown(
-                _main.GetGeneratedFilesDir(),
-                title: ExtractReportTitle(userInput),
-                content: markdown,
-                sourceSummary: sourceSummary);
-
-            workspace.Add(
-                AgentWorkspaceBuilder.FromCapabilityData(
-                    workspace,
-                    node,
-                    runtimeAgent?.Id ?? "file-agent",
-                    "generated_file",
-                    generated));
-
-            // Also generate .docx (non-critical: failure does not affect the .md report)
+            // 只產 .docx（.md 多餘、.pdf 已移除）；失敗不影響主答案，僅標記 stage failed。
+            GeneratedFilePayload? docxGenerated = null;
             try
             {
                 byte[] docxBytes = DocxReportBuilder.Build(markdown);
-                var docxGenerated = GeneratedFileWriter.WriteDocx(
+                docxGenerated = GeneratedFileWriter.WriteDocx(
                     _main.GetGeneratedFilesDir(),
                     title: ExtractReportTitle(userInput),
                     content: docxBytes,
@@ -1127,41 +1163,16 @@ namespace test
             }
             catch { }
 
-            // Also generate .pdf (non-critical: failure does not affect the .md report)
-            try
+            if (docxGenerated?.Success == true)
             {
-                byte[] pdfBytes = PdfReportBuilder.Build(markdown);
-                var pdfGenerated = GeneratedFileWriter.WritePdf(
-                    _main.GetGeneratedFilesDir(),
-                    title: ExtractReportTitle(userInput),
-                    content: pdfBytes,
-                    sourceSummary: sourceSummary);
-
-                if (pdfGenerated.Success)
-                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
-                        workspace, node, runtimeAgent?.Id ?? "file-agent",
-                        "generated_file", pdfGenerated));
+                orchestration.MarkSuccess("generate_file", docxGenerated.FileName);
             }
-            catch { }
-
-            if (generated.Success)
+            else
             {
-                orchestration.MarkSuccess("generate_file", generated.FileName);
-
-                // 報告內容已寫入檔案，文字區只保留空字串，讓 chip 說話。
-                return new AiFallbackExecutionResult
-                {
-                    IsSuccess = execution.IsSuccess,
-                    Text = "",
-                    ActualModelId = execution.ActualModelId ?? "",
-                    UsedFallback = execution.UsedFallback,
-                    Summary = execution.Summary ?? "",
-                    ErrorMessage = execution.ErrorMessage ?? "",
-                    Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
-                };
+                orchestration.MarkFailed("generate_file", docxGenerated?.ErrorMessage ?? "docx 寫檔失敗");
             }
 
-            orchestration.MarkFailed("generate_file", generated.ErrorMessage);
+            // 報告文字顯示在對話框，docx chip 提供下載，兩者並存。
             return execution;
         }
 
@@ -1179,14 +1190,15 @@ namespace test
         /// 渲染成 Marp Markdown deck 並寫檔（同時產生 GeneratedFile artifact），最後在答案尾端附上說明。
         /// 寫檔失敗不影響主答案，只把 presentation_outline 階段標記為 failed。
         /// </summary>
-        private AiFallbackExecutionResult GeneratePresentation(
+        private async Task<AiFallbackExecutionResult> GeneratePresentation(
             NodeControl node,
             AgentDefinition runtimeAgent,
             string userInput,
             AgentWorkspace workspace,
             OrchestrationPlanPayload orchestrationPlan,
             AiFallbackExecutionResult execution,
-            OrchestrationStateMachine orchestration)
+            OrchestrationStateMachine orchestration,
+            CancellationToken ct)
         {
             orchestration.MarkRunning("presentation_outline");
 
@@ -1199,15 +1211,22 @@ namespace test
                 ? $"{orchestrationPlan.PipelineId} / {factCount} 筆 verified_facts"
                 : orchestrationPlan.PipelineId;
 
-            var outline = PresentationOutlineBuilder.Build(new PresentationOutlineBuilder.Request
-            {
-                UserInput = userInput,
-                FinalAnswer = execution.Text ?? "",
-                Workspace = workspace,
-                PipelineId = orchestrationPlan.PipelineId,
-                ModelId = execution.ActualModelId ?? orchestrationPlan.ModelId,
-                AgentId = runtimeAgent?.Id ?? ""
-            });
+            // Presentation v1.5（Gamma 之前）：先用 Perplexity 查資料，再請 Claude/GPT 真正「設計」一份簡報。
+            // 兩段任一失敗都優雅退回原本的確定性切段（PresentationOutlineBuilder），demo 不會開天窗。
+            int requestedSlides = PresentationOutlineBuilder.DetectRequestedSlideCount(userInput);
+            var outline = await BuildAuthoredPresentationAsync(
+                              node, userInput, workspace, execution, requestedSlides, orchestrationPlan, runtimeAgent, ct)
+                          ?? PresentationOutlineBuilder.Build(new PresentationOutlineBuilder.Request
+                          {
+                              UserInput = userInput,
+                              FinalAnswer = execution.Text ?? "",
+                              Workspace = workspace,
+                              PipelineId = orchestrationPlan.PipelineId,
+                              ModelId = execution.ActualModelId ?? orchestrationPlan.ModelId,
+                              AgentId = runtimeAgent?.Id ?? ""
+                          });
+
+            node.SetLoadingHint(null);
 
             // 結構化大綱 artifact（slide plan）。
             workspace.Add(
@@ -1218,51 +1237,56 @@ namespace test
                     "presentation_outline",
                     outline));
 
-            string deck = PresentationOutlineBuilder.RenderMarkdownDeck(outline);
-
-            var generated = GeneratedFileWriter.WriteMarkdown(
-                _main.GetGeneratedFilesDir(),
-                title: outline.Title,
-                content: deck,
-                sourceSummary: sourceSummary);
-
-            // 寫出的 deck 檔也作為 GeneratedFile artifact 暴露。
-            workspace.Add(
-                AgentWorkspaceBuilder.FromCapabilityData(
-                    workspace,
-                    node,
-                    runtimeAgent?.Id ?? "presentation-agent",
-                    "generated_file",
-                    generated));
-
-            // 同時輸出真正的 .pptx 二進位檔（非關鍵：失敗不影響 .md deck）。
-            try
+            // Image Gen → Presentation：使用者明確要求配圖時，生成一張封面圖嵌入 deck / pptx。
+            byte[]? coverImageBytes = null;
+            string? coverImageFileName = null;
+            if (PresentationWantsCoverImage(userInput))
             {
-                byte[] pptxBytes = PptxBuilder.Build(outline);
-                var pptxGenerated = GeneratedFileWriter.WritePptx(
-                    _main.GetGeneratedFilesDir(),
-                    title: outline.Title,
-                    content: pptxBytes,
-                    sourceSummary: sourceSummary);
-
-                if (pptxGenerated.Success)
-                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
-                        workspace, node, runtimeAgent?.Id ?? "presentation-agent",
-                        "generated_file", pptxGenerated));
+                (coverImageBytes, coverImageFileName) = await TryGenerateCoverImageAsync(
+                    node, runtimeAgent, outline, workspace, orchestrationPlan, ct);
             }
-            catch { }
 
-            if (generated.Success)
+            // .pptx 二進位檔：只有使用者在個人化選了「Gamma」生成器才走 Gamma（Claude 內容 + Gamma 設計）；
+            // 其餘（Claude / GPT）一律用內建 PptxBuilder。Gamma 未設定金鑰或失敗時也會回 null → fallback。
+            // 目前 Gamma 在 UI 停用且 SetPresentationEngine 會把 Gamma 落回 Claude，故此分支現階段不會觸發。
+            string? gammaUrl = _main.GetPresentationEngine() == PresentationEngine.Gamma
+                ? await TryAddGammaPptxAsync(
+                    node, runtimeAgent, outline, execution.Text ?? "", workspace, sourceSummary, ct)
+                : null;
+
+            GeneratedFilePayload? pptxResult = null;
+            if (gammaUrl == null)
             {
-                orchestration.MarkSuccess(
-                    "presentation_outline",
-                    $"{outline.SlideCount} 張 / {generated.FileName}");
+                try
+                {
+                    byte[] pptxBytes = PptxBuilder.Build(outline, coverImageBytes);
+                    pptxResult = GeneratedFileWriter.WritePptx(
+                        _main.GetGeneratedFilesDir(),
+                        title: outline.Title,
+                        content: pptxBytes,
+                        sourceSummary: sourceSummary);
 
-                // 簡報內容已寫入檔案，文字區只保留張數摘要，讓 chip 說話。
+                    if (pptxResult.Success)
+                        workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                            workspace, node, runtimeAgent?.Id ?? "presentation-agent",
+                            "generated_file", pptxResult));
+                }
+                catch { }
+            }
+
+            if (pptxResult?.Success == true || gammaUrl != null)
+            {
+                string fileName = pptxResult?.FileName ?? "Gamma 線上版";
+                orchestration.MarkSuccess("presentation_outline", $"{outline.SlideCount} 張 / {fileName}");
+
+                string note = $"已生成簡報大綱：{outline.SlideCount} 張投影片。";
+                if (!string.IsNullOrWhiteSpace(gammaUrl))
+                    note += $"\n線上版（Gamma）：{gammaUrl}";
+
                 return new AiFallbackExecutionResult
                 {
                     IsSuccess = execution.IsSuccess,
-                    Text = $"已生成簡報大綱：{outline.SlideCount} 張投影片。",
+                    Text = note,
                     ActualModelId = execution.ActualModelId ?? "",
                     UsedFallback = execution.UsedFallback,
                     Summary = execution.Summary ?? "",
@@ -1271,8 +1295,154 @@ namespace test
                 };
             }
 
-            orchestration.MarkFailed("presentation_outline", generated.ErrorMessage);
+            orchestration.MarkFailed("presentation_outline", pptxResult?.ErrorMessage ?? "pptx 寫檔失敗");
             return execution;
+        }
+
+        // Presentation v2 前置：用 Gamma 產出高品質 .pptx（Claude 內容 + Gamma 設計）。
+        // 回傳 gammaUrl（成功，可能為空字串表示無連結）；回傳 null 代表未啟用或失敗，呼叫端應 fallback 到 PptxBuilder。
+        // 目前休眠：沒有 GAMMA_API_KEY 時 IsConfigured=false，直接回 null，行為與現在相同。
+        private async Task<string?> TryAddGammaPptxAsync(
+            NodeControl node,
+            AgentDefinition? runtimeAgent,
+            PresentationOutlinePayload outline,
+            string contentText,
+            AgentWorkspace workspace,
+            string sourceSummary,
+            CancellationToken ct)
+        {
+            var gamma = new GammaPresentationService();
+            if (!gamma.IsConfigured || string.IsNullOrWhiteSpace(contentText))
+                return null;
+
+            try
+            {
+                var result = await gamma.GeneratePresentationAsync(new GammaGenerationInput
+                {
+                    InputText = contentText,
+                    Title = outline.Title,
+                    NumCards = outline.RequestedSlideCount,
+                    Language = "zh-tw"
+                }, ct);
+
+                if (!result.Success || !result.HasExport)
+                    return null;
+
+                byte[] pptxBytes = await gamma.DownloadExportAsync(result.ExportUrl, ct);
+                if (pptxBytes == null || pptxBytes.Length == 0)
+                    return null;
+
+                var pptxGenerated = GeneratedFileWriter.WritePptx(
+                    _main.GetGeneratedFilesDir(),
+                    title: outline.Title,
+                    content: pptxBytes,
+                    sourceSummary: $"{sourceSummary} / Gamma");
+
+                if (!pptxGenerated.Success)
+                    return null;
+
+                workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace, node, runtimeAgent?.Id ?? "presentation-agent",
+                    "generated_file", pptxGenerated));
+
+                return result.GammaUrl ?? "";
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // 任何問題（網路 / 欄位不符 / 額度不足）→ 回 null 讓呼叫端 fallback 到 PptxBuilder。
+                return null;
+            }
+        }
+
+        // 使用者是否明確要求簡報配圖（避免每次簡報都呼叫圖片 API 造成額外成本）。
+        private static bool PresentationWantsCoverImage(string? userInput)
+        {
+            string text = userInput ?? "";
+            string lower = text.ToLowerInvariant();
+
+            return ContainsAnyText(text, lower,
+                "配圖", "插圖", "封面圖", "加圖", "加上圖", "附圖", "示意圖", "搭配圖",
+                "有圖", "要圖", "圖片簡報", "帶圖", "封面圖片",
+                "含圖", "含圖片", "包含圖", "需要圖", "加入圖", "放圖", "要有圖", "帶圖片",
+                "with image", "cover image", "with picture", "illustration", "with a picture");
+        }
+
+        private static bool ContainsAnyText(string text, string lower, params string[] keywords)
+        {
+            foreach (var kw in keywords)
+            {
+                if (string.IsNullOrEmpty(kw))
+                    continue;
+
+                if (kw.Any(ch => ch > 127))
+                {
+                    if (text.Contains(kw, StringComparison.Ordinal))
+                        return true;
+                }
+                else if (lower.Contains(kw, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // 為簡報生成一張封面圖：回傳 (png bytes, 寫出的檔名)；失敗時回傳 (null, null) 不影響簡報。
+        private async Task<(byte[]?, string?)> TryGenerateCoverImageAsync(
+            NodeControl node,
+            AgentDefinition? runtimeAgent,
+            PresentationOutlinePayload outline,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            CancellationToken ct)
+        {
+            try
+            {
+                string subject = string.IsNullOrWhiteSpace(outline.Topic)
+                    ? outline.Title
+                    : $"{outline.Title}：{outline.Topic}";
+
+                string prompt =
+                    $"專業簡報封面用的乾淨示意插圖，主題：{subject}。" +
+                    "簡潔現代、留白充足、無文字、無浮水印。";
+
+                var imageService = new OpenAIImageService("gpt-image-2");
+                var image = await imageService.GenerateAsync(prompt, "1024x1024", ct);
+
+                if (!image.Success || image.PngBytes == null || image.PngBytes.Length == 0)
+                    return (null, null);
+
+                var generated = GeneratedFileWriter.WriteImage(
+                    _main.GetGeneratedFilesDir(),
+                    title: $"{outline.Title}_封面",
+                    content: image.PngBytes,
+                    sourceSummary: $"{orchestrationPlan.PipelineId} / 簡報封面圖 / gpt-image-2");
+
+                if (generated.Success)
+                {
+                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace, node, runtimeAgent?.Id ?? "image-agent",
+                        "generated_file", generated));
+
+                    return (image.PngBytes, generated.FileName);
+                }
+
+                return (image.PngBytes, null);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // 配圖失敗不影響簡報主體。
+                return (null, null);
+            }
         }
 
         /// <summary>
@@ -1377,6 +1547,381 @@ namespace test
 
             orchestration.MarkFailed("generate_image", generated.ErrorMessage);
             return execution;
+        }
+
+        /// <summary>
+        /// Video Gen v1（多工具導演流程）：
+        ///   1) Claude 當導演產出結構化影片計畫（劇本/分鏡/旁白/鏡頭/風格）——核心，永遠執行。
+        ///   2) 配角工具（Flux/Midjourney 關鍵畫面、ElevenLabs 旁白、Suno 配樂）—— 缺 API 就記為略過。
+        ///   3) 影片產生器：Veo 3 優先，否則 Sora，皆休眠則只交付 Claude 計畫。
+        /// 支援取消（OperationCanceledException 往上拋）。即使所有影片 API 休眠，使用者仍拿到完整 Claude 影片計畫。
+        /// </summary>
+        private async Task<AiFallbackExecutionResult> GenerateVideoFile(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration,
+            CancellationToken ct)
+        {
+            orchestration.MarkRunning("generate_video");
+
+            string prompt = (userInput ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                orchestration.MarkFailed("generate_video", "影片描述為空。");
+                return execution;
+            }
+
+            string agentId = runtimeAgent?.Id ?? "video-agent";
+
+            // 1) Claude 導演：劇本 / 分鏡 / 旁白 / 鏡頭 / 風格（核心，永遠執行）。
+            node.SetLoadingHint("Claude 正在寫劇本與分鏡");
+            VideoPlanPayload plan = await BuildVideoPlanAsync(node, prompt, targetSeconds: 8, ct);
+            node.SetLoadingHint(null);
+
+            plan.ProviderRoles.Add(VideoProviderRole.Of(
+                "劇本/分鏡/旁白/鏡頭", "Claude", VideoProviderRoleStatus.Completed,
+                $"{plan.Scenes?.Count ?? 0} 個鏡頭"));
+
+            // 關鍵畫面 / 風格：Claude 已產出 keyframe prompt 與風格定義；實際出圖為配角。
+            plan.ProviderRoles.Add(VideoProviderRole.Of(
+                "關鍵畫面/風格", "Flux / Midjourney", VideoProviderRoleStatus.SkippedNoApi,
+                "Claude 已產出 keyframe prompt 與風格定義；接上 Flux/Midjourney API 後可實際出圖"));
+
+            // 2) 配角：旁白配音（ElevenLabs）、配樂（Suno）—— 缺 API 就略過。
+            var narration = new ElevenLabsNarrationService();
+            plan.ProviderRoles.Add(VideoProviderRole.Of(
+                "旁白配音", narration.ProviderName,
+                narration.IsConfigured ? VideoProviderRoleStatus.Planned : VideoProviderRoleStatus.SkippedNoApi,
+                narration.IsConfigured ? "已偵測到金鑰（配音接線為後續工作）" : narration.NotConfiguredReason));
+
+            var music = new SunoMusicService();
+            plan.ProviderRoles.Add(VideoProviderRole.Of(
+                "配樂", music.ProviderName,
+                music.IsConfigured ? VideoProviderRoleStatus.Planned : VideoProviderRoleStatus.SkippedNoApi,
+                music.IsConfigured ? "已偵測到金鑰（配樂接線為後續工作）" : music.NotConfiguredReason));
+
+            var planItem = AgentWorkspaceBuilder.FromCapabilityData(
+                workspace, node, "video-director(claude)", "video_plan", plan, isUserVisibleOverride: true);
+            workspace.Add(planItem);
+
+            string videoPrompt = string.IsNullOrWhiteSpace(plan.VideoPromptForGenerator)
+                ? prompt
+                : plan.VideoPromptForGenerator;
+
+            int seconds = plan.TotalDurationSeconds > 0 ? plan.TotalDurationSeconds : 4;
+
+            // 「prompt → 影片請求」artifact，全程追蹤狀態 / 進度。
+            var request = new VideoRequestPayload
+            {
+                Prompt = videoPrompt,
+                DurationSeconds = seconds,
+                Size = "720x1280",
+                Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Queued)
+            };
+            var requestItem = AgentWorkspaceBuilder.FromCapabilityData(
+                workspace, node, agentId, "video_request", request, isUserVisibleOverride: true);
+            workspace.Add(requestItem);
+
+            // 3) 影片產生器：Veo 3 優先 → Sora → 皆休眠則只交付 Claude 計畫。
+            var veo = new VeoVideoService();
+            var sora = new OpenAIVideoService();
+
+            void OnProgress(int percent, VideoGenerationStatus status)
+            {
+                request.ProgressPercent = percent;
+                request.PollCount++;
+                request.Status = VideoGenerationStatusText.ToStorageValue(status);
+                node.SetLoadingHint($"影片{VideoGenerationStatusText.ToLabel(status)} {percent}%");
+            }
+
+            byte[]? mp4 = null;
+            string videoError = "";
+            string providerLabel;
+            string jobRef = "";
+            bool attempted = false;
+
+            try
+            {
+                if (veo.IsConfigured)
+                {
+                    attempted = true;
+                    providerLabel = "Veo 3";
+                    request.Model = veo.Model;
+                    request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Generating);
+
+                    var r = await veo.GenerateAsync(videoPrompt, seconds, "9:16", OnProgress, ct);
+                    if (r.Success) { mp4 = r.Mp4Bytes; jobRef = r.OperationName; }
+                    else videoError = r.ErrorMessage;
+                }
+                else if (sora.IsConfigured)
+                {
+                    attempted = true;
+                    providerLabel = "Sora";
+                    request.Model = sora.Model;
+                    request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Generating);
+
+                    var r = await sora.GenerateAsync(videoPrompt, request.DurationSeconds, request.Size, OnProgress, ct);
+                    if (r.Success) { mp4 = r.Mp4Bytes; jobRef = r.JobId; }
+                    else videoError = r.ErrorMessage;
+                }
+                else
+                {
+                    providerLabel = "Veo 3";
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Canceled);
+                requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
+                node.SetLoadingHint(null);
+                orchestration.MarkFailed("generate_video", "已取消");
+                throw;
+            }
+            finally
+            {
+                node.SetLoadingHint(null);
+            }
+
+            request.JobId = jobRef;
+
+            // 3a) 影片模型皆休眠：只交付 Claude 計畫（仍算成功，因為導演計畫已產出）。
+            if (!attempted)
+            {
+                plan.ProviderRoles.Add(VideoProviderRole.Of(
+                    "影片", "Veo 3", VideoProviderRoleStatus.SkippedNoApi, veo.NotConfiguredReason));
+                request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Failed);
+                request.ErrorMessage = veo.NotConfiguredReason;
+                planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
+                requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
+                orchestration.MarkSuccess("generate_video", "已產出 Claude 影片計畫（影片模型休眠）");
+                return AppendExecutionNote(execution,
+                    BuildVideoPlanNote(plan) +
+                    $"\n\nℹ 影片模型休眠：{veo.NotConfiguredReason} 啟用 Veo 3 後即可依此計畫生成影片。");
+            }
+
+            // 3b) 嘗試了但失敗。
+            if (mp4 == null || mp4.Length == 0)
+            {
+                plan.ProviderRoles.Add(VideoProviderRole.Of(
+                    "影片", providerLabel, VideoProviderRoleStatus.Failed, videoError));
+                request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Failed);
+                request.ErrorMessage = videoError;
+                planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
+                requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
+                orchestration.MarkFailed("generate_video", videoError);
+                return AppendExecutionNote(execution,
+                    BuildVideoPlanNote(plan) + $"\n\n⚠ 影片生成失敗（{providerLabel}）：{videoError}");
+            }
+
+            // 3c) 成功 → 寫檔。
+            var generated = GeneratedFileWriter.WriteVideo(
+                _main.GetGeneratedFilesDir(),
+                title: string.IsNullOrWhiteSpace(plan.Title) ? ExtractReportTitle(prompt) : plan.Title,
+                content: mp4,
+                sourceSummary: $"{orchestrationPlan.PipelineId} / {providerLabel} / {request.Model}");
+
+            workspace.Add(
+                AgentWorkspaceBuilder.FromCapabilityData(
+                    workspace, node, agentId, "generated_file", generated));
+
+            if (generated.Success)
+            {
+                plan.ProviderRoles.Add(VideoProviderRole.Of(
+                    "影片", providerLabel, VideoProviderRoleStatus.Completed, generated.FileName));
+                request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Completed);
+                request.ProgressPercent = 100;
+                request.FilePath = generated.FilePath;
+                planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
+                requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
+                orchestration.MarkSuccess("generate_video", generated.FileName);
+                return AppendExecutionNote(execution, BuildVideoPlanNote(plan) + "\n\n已生成影片。");
+            }
+
+            plan.ProviderRoles.Add(VideoProviderRole.Of(
+                "影片", providerLabel, VideoProviderRoleStatus.Failed, generated.ErrorMessage));
+            request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Failed);
+            request.ErrorMessage = generated.ErrorMessage;
+            planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
+            requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
+            orchestration.MarkFailed("generate_video", generated.ErrorMessage);
+            return AppendExecutionNote(execution,
+                BuildVideoPlanNote(plan) + $"\n\n⚠ 影片寫檔失敗：{generated.ErrorMessage}");
+        }
+
+        // Presentation v1.5（Gamma / NotebookLM 之前的「夠用」占位）：兩段式作者流程
+        // ——研究（Perplexity）→ 選定生成器（Claude / GPT）一次撰寫結構化 JSON deck。
+        // 刻意保持簡單：內容品質的真正投資留到接上 Gamma / NotebookLM，這層不做逐頁深寫等重工。
+        // 任一步失敗回 null，呼叫端 fallback 回確定性切段。
+        private async Task<PresentationOutlinePayload?> BuildAuthoredPresentationAsync(
+            NodeControl node,
+            string userInput,
+            AgentWorkspace workspace,
+            AiFallbackExecutionResult execution,
+            int requestedSlides,
+            OrchestrationPlanPayload orchestrationPlan,
+            AgentDefinition? runtimeAgent,
+            CancellationToken ct)
+        {
+            try
+            {
+                var engine = _main.GetPresentationEngine();
+                string authorModelId = PresentationEngineHelper.ToAuthorModelId(engine);
+                string engineName = PresentationEngineHelper.ToDisplayName(engine);
+
+                // 1) 研究（Perplexity）：best-effort，失敗 / 無金鑰就用空素材，作者改用自身知識。
+                node.SetLoadingHint("Perplexity 正在查資料");
+                string research = await ResearchForPresentationAsync(node, userInput, requestedSlides, ct);
+
+                // 2) 作者（選定生成器，必要時 fallback）：一次產出結構化 JSON deck。
+                node.SetLoadingHint($"{engineName} 正在撰寫簡報內容");
+                string authorPrompt = PresentationAuthor.BuildAuthorPrompt(
+                    userInput, research, execution.Text, requestedSlides);
+
+                var authored = await RunPresentationAuthorStepAsync(
+                    node, authorPrompt, authorModelId, $"Presentation Author ({engineName})", ct);
+                if (!authored.IsSuccess || string.IsNullOrWhiteSpace(authored.Text))
+                    return null;
+
+                node.SetLoadingHint(null);
+
+                // 模型 id 帶上實際作者模型，決策窗才看得到「簡報是誰寫的」（Claude / GPT → 成功；pplx → 退回切段）。
+                return PresentationAuthor.Parse(
+                    authored.Text,
+                    userInput,
+                    requestedSlides,
+                    orchestrationPlan.PipelineId,
+                    string.IsNullOrWhiteSpace(authored.ActualModelId) ? authorModelId : authored.ActualModelId,
+                    runtimeAgent?.Id ?? "presentation-agent");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // 簡報多階段作者用的共用 executor：以選定的作者模型跑一步（規劃骨架 / 逐頁內容），必要時 fallback。
+        private async Task<AiFallbackExecutionResult> RunPresentationAuthorStepAsync(
+            NodeControl node, string prompt, string authorModelId, string label, CancellationToken ct)
+        {
+            var decision = new NodeExecutionDecision
+            {
+                RequestedAgentId = "general-agent",
+                ActualAgentId = "general-agent",
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(authorModelId),
+                ModelId = AiModelHelper.NormalizeNodeModel(authorModelId),
+                ActualModelId = "",
+                TaskMode = NodeTaskMode.Chat,
+                ResolverLabel = label,
+                ResolverReason = label,
+                StatusLabel = "Auto",
+                ForceSingleModel = false
+            };
+
+            return await _executeWithFallbackAsync(node, prompt, decision, null, false, ct);
+        }
+
+        // 用 Perplexity 蒐集簡報素材；無金鑰 / 失敗時回空字串（不中斷，作者改用自身知識）。
+        private async Task<string> ResearchForPresentationAsync(
+            NodeControl node, string userInput, int requestedSlides, CancellationToken ct)
+        {
+            try
+            {
+                string researchPrompt = PresentationAuthor.BuildResearchPrompt(userInput, requestedSlides);
+
+                var researchDecision = new NodeExecutionDecision
+                {
+                    RequestedAgentId = "general-agent",
+                    ActualAgentId = "general-agent",
+                    RequestedModelId = AiModelHelper.NormalizeNodeModel(AiModels.Perplexity_Sonar),
+                    ModelId = AiModelHelper.NormalizeNodeModel(AiModels.Perplexity_Sonar),
+                    ActualModelId = "",
+                    TaskMode = NodeTaskMode.Research,
+                    ResolverLabel = "Presentation Research (Perplexity)",
+                    ResolverReason = "用 Perplexity 取得簡報所需的即時事實與數據。",
+                    StatusLabel = "Auto",
+                    ForceSingleModel = false
+                };
+
+                var r = await _executeWithFallbackAsync(node, researchPrompt, researchDecision, null, false, ct);
+                return r.IsSuccess ? (r.Text ?? "") : "";
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private async Task<VideoPlanPayload> BuildVideoPlanAsync(
+            NodeControl node, string prompt, int targetSeconds, CancellationToken ct)
+        {
+            string directorPrompt = VideoPlanBuilder.BuildDirectorPrompt(prompt, targetSeconds);
+
+            var directorDecision = new NodeExecutionDecision
+            {
+                RequestedAgentId = "general-agent",
+                ActualAgentId = "general-agent",
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ActualModelId = "",
+                TaskMode = NodeTaskMode.Chat,
+                ResolverLabel = "Video Director (Claude)",
+                ResolverReason = "Claude 產出影片劇本 / 分鏡 / 旁白 / 鏡頭計畫。",
+                StatusLabel = "Auto",
+                ForceSingleModel = true
+            };
+
+            try
+            {
+                var r = await _executeWithFallbackAsync(node, directorPrompt, directorDecision, null, false, ct);
+                return VideoPlanBuilder.Parse(r.IsSuccess ? r.Text : "", prompt, targetSeconds);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return VideoPlanBuilder.Parse("", prompt, targetSeconds);
+            }
+        }
+
+        private static string BuildVideoPlanNote(VideoPlanPayload plan)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("\n\n【影片計畫（Claude 導演）】");
+
+            if (!string.IsNullOrWhiteSpace(plan.Title))
+                sb.Append($"\n標題：{plan.Title}");
+            if (!string.IsNullOrWhiteSpace(plan.Logline))
+                sb.Append($"\n概念：{plan.Logline}");
+            if (!string.IsNullOrWhiteSpace(plan.StyleDefinition))
+                sb.Append($"\n風格：{plan.StyleDefinition}");
+
+            sb.Append($"\n分鏡：{plan.Scenes?.Count ?? 0} 個鏡頭，約 {plan.TotalDurationSeconds} 秒");
+
+            sb.Append("\n工具分工：");
+            foreach (var role in plan.ProviderRoles)
+                sb.Append($"\n· {role.Role}：{role.Provider}（{VideoProviderRoleStatus.ToLabel(role.Status)}）");
+
+            return sb.ToString();
+        }
+
+        private static AiFallbackExecutionResult AppendExecutionNote(
+            AiFallbackExecutionResult execution, string note)
+        {
+            return new AiFallbackExecutionResult
+            {
+                IsSuccess = execution.IsSuccess,
+                Text = (execution.Text ?? "").TrimEnd() + note,
+                ActualModelId = execution.ActualModelId ?? "",
+                UsedFallback = execution.UsedFallback,
+                Summary = execution.Summary ?? "",
+                ErrorMessage = execution.ErrorMessage ?? "",
+                Attempts = execution.Attempts ?? Array.Empty<AiFallbackAttempt>()
+            };
         }
 
         private async Task<AiFallbackExecutionResult> RunFinalSynthesisAsync(
@@ -1842,6 +2387,11 @@ $@"這個請求目前先不直接產生 patch，因為它是大型檔案的全�
 
             bool hasVerifiedFacts = capabilityData.ContainsKey("verified_facts");
 
+            string codeUserGoal =
+                (capabilityData.TryGetValue("code_analysis", out var caVal) && caVal is CodeAnalysisPayload caPayload)
+                    ? caPayload.UserGoal ?? ""
+                    : "";
+
             foreach (var kv in capabilityData)
             {
                 if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null)
@@ -1875,7 +2425,7 @@ $@"這個請求目前先不直接產生 patch，因為它是大型檔案的全�
 
                 if (string.Equals(kv.Key, "code_file_snapshot", StringComparison.OrdinalIgnoreCase))
                 {
-                    AppendCodeFileSnapshot(sb, kv.Value);
+                    AppendCodeFileSnapshot(sb, kv.Value, codeUserGoal);
                     continue;
                 }
 
@@ -2019,6 +2569,87 @@ diff --git a/path/to/file b/path/to/file
 5. 對「把所有 bug 都修好」這類大範圍任務，若只能看到部分內容，只能提出可被摘錄內容支持的有限修正；若無法確認，請要求縮小範圍或先列候選區域。
 6. 除了 diff，可以用短句說明修了什麼，但不要輸出 workspace 內部標記。";
         }
+
+        // Code Agent v1.5：bug 盤點模式——先列清單、不出 patch，讓使用者挑選要修哪幾項。
+        private static string BuildBugListingInstructionBlock()
+        {
+            return
+@"【Bug 清單模式 - 先盤點，不要直接修】
+使用者想先看到問題清單，再決定修哪一個。本次請「只列出 bug／問題清單」，不要輸出任何 diff 或 patch。
+
+輸出格式（務必逐項編號，方便使用者挑選）：
+Bug 1（嚴重度：高/中/低）｜位置：檔名:行號 或 類別.方法
+- 問題：一句話描述問題與影響
+- 建議：一句話說明修法方向（先不要給完整程式碼）
+
+Bug 2（…）
+…
+
+規則：
+1. 依嚴重度由高到低排序，最多列 12 項。
+2. 只列出有實際根據（snapshot 內容支持）的問題，不要臆測不存在的程式碼。
+3. 若內容被分段／截斷（PromptTruncated=True 或有 ChunkMap），請在清單最後說明還有哪些區段尚未檢查。
+4. 結尾固定加一句：『想修正哪幾項？回覆「修正 1」或「修正 1,3」我就針對那幾項產生 patch。』";
+        }
+
+        // Code Agent v1.5：大型程式任務的成本/風險提醒（過程資訊，提醒模型保守處理）。
+        private static string BuildCodeRiskNoteBlock(CodeTaskAssessmentPayload assessment)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("【大型程式任務提醒】");
+            sb.AppendLine(
+                $"任務規模：{assessment.SizeTier}；風險：{assessment.RiskLevel}；" +
+                $"檔案 {assessment.FileCount} 個、約 {assessment.TotalLines} 行。");
+
+            if (assessment.Warnings != null)
+            {
+                foreach (var w in assessment.Warnings)
+                {
+                    if (!string.IsNullOrWhiteSpace(w))
+                        sb.AppendLine("- " + w);
+                }
+            }
+
+            sb.AppendLine("處理原則：優先給出有把握、範圍明確的修正；不要宣稱已完整檢查整個專案。");
+            return sb.ToString().TrimEnd();
+        }
+
+        private static string TryGetCodeRequestType(
+            IReadOnlyDictionary<string, object> capabilityData,
+            AgentWorkspace workspace)
+        {
+            if (capabilityData != null &&
+                capabilityData.TryGetValue("code_analysis", out var v) &&
+                v is CodeAnalysisPayload p)
+            {
+                return p.RequestType ?? "";
+            }
+
+            var ws = workspace?
+                .GetByType("code_analysis")
+                .Select(x => x.Payload as CodeAnalysisPayload)
+                .FirstOrDefault(x => x != null);
+
+            return ws?.RequestType ?? "";
+        }
+
+        private static CodeFileSnapshotPayload? TryGetCodeSnapshot(
+            IReadOnlyDictionary<string, object> capabilityData,
+            AgentWorkspace workspace)
+        {
+            if (capabilityData != null &&
+                capabilityData.TryGetValue("code_file_snapshot", out var v) &&
+                v is CodeFileSnapshotPayload p)
+            {
+                return p;
+            }
+
+            return workspace?
+                .GetByType("code_file_snapshot")
+                .Select(x => x.Payload as CodeFileSnapshotPayload)
+                .FirstOrDefault(x => x != null);
+        }
+
         private static void AppendReasoningAnalysis(StringBuilder sb, object value)
         {
             if (sb == null || value == null)
@@ -2154,7 +2785,7 @@ diff --git a/path/to/file b/path/to/file
                 sb.AppendLine($"Guidance: {payload.Guidance}");
         }
 
-        private static void AppendCodeFileSnapshot(StringBuilder sb, object value)
+        private static void AppendCodeFileSnapshot(StringBuilder sb, object value, string userGoal)
         {
             if (sb == null || value == null)
                 return;
@@ -2185,10 +2816,11 @@ diff --git a/path/to/file b/path/to/file
 
                 string content = file.Content ?? "";
                 int promptLimit = Math.Min(MaxCodeSnapshotPromptCharsPerFile, remainingPromptChars);
-                string promptContent = promptLimit > 0
-                    ? TrimForPrompt(content, promptLimit)
-                    : "";
-                bool promptTruncated = promptContent.Length < content.Trim().Length;
+
+                // Code Agent v1.5：針對性 / 分段擷取（檔頭 + 結構骨架 + 目標關鍵字上下文）。
+                var focused = CodeContextExtractor.Build(content, userGoal, promptLimit);
+                string promptContent = focused.Text;
+                bool promptTruncated = focused.Chunked;
                 string sourceOutline = BuildCodeSourceOutline(content, MaxCodeSourceOutlineCharsPerFile);
                 remainingPromptChars = Math.Max(0, remainingPromptChars - promptContent.Length);
 
@@ -2198,10 +2830,11 @@ diff --git a/path/to/file b/path/to/file
                 sb.AppendLine($"Language: {file.Language}");
                 sb.AppendLine($"Chars: {file.CharacterCount}; Lines: {file.LineCount}; Truncated: {file.IsTruncated}");
                 sb.AppendLine($"PromptChars: {promptContent.Length}; PromptTruncated: {promptTruncated}");
-                if (promptTruncated)
+                if (focused.Chunked)
                 {
-                    sb.AppendLine("Note: Full snapshot is kept in workspace for validation, but only a compact outline and excerpt are sent to the model to control token cost.");
-                    sb.AppendLine("Do not claim a comprehensive whole-file fix when PromptTruncated=True. Prefer a narrow, evidence-backed patch or explain that targeted follow-up is required.");
+                    sb.AppendLine($"ChunkMap: included {focused.IncludedLines}/{focused.TotalLines} lines; segments=[{string.Join(", ", focused.SegmentRanges)}]");
+                    sb.AppendLine("分段分析：以上摘錄是針對目標關鍵字與程式結構挑選的重點區段，非整份檔案。若需要某個未列出的區段，請指名行號範圍或函式名稱。");
+                    sb.AppendLine("Do not claim a comprehensive whole-file fix when content is chunked. Prefer a narrow, evidence-backed patch or explain that targeted follow-up is required.");
                 }
 
                 if (!string.IsNullOrWhiteSpace(sourceOutline))

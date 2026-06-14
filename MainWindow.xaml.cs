@@ -57,6 +57,24 @@ namespace test
         private readonly Dictionary<Guid, NodeAutoFlowPolicy> _autoFlowPoliciesByNode = new();
         private readonly HashSet<Guid> _unsupportedDownstreamNodeIds = new();
 
+        // §4：本次 session 中由「自動展開」生成的下游節點 id（用於避免 Mode 2 在生成節點上再次展開、無限遞迴）。
+        private readonly HashSet<Guid> _generatedDownstreamNodeIds = new();
+
+        // §4：多階段任務自動展開策略（個人化設定可切換；預設一鍵展開）。
+        private DownstreamAutoMode _downstreamAutoMode = DownstreamAutoMode.OneClick;
+
+        // 簡報生成器（個人化設定可切換；預設 Claude，Gamma 九月才開放）。
+        private PresentationEngine _presentationEngine = PresentationEngine.Claude;
+
+        // §4 stop/skip：目前正在依序執行的工作流鏈的取消來源 + 當前執行中的節點。
+        // 取消這個 cts 會透過 linked token 同時取消 in-flight 節點，並讓鏈迴圈在下一步前停止。
+        private CancellationTokenSource? _workflowChainCts;
+        private NodeControl? _runningChainNode;
+
+        // 是否有工作流鏈正在跑（給右鍵選單決定是否啟用「停止工作流」）。
+        public bool IsWorkflowChainRunning =>
+            _workflowChainCts != null && !_workflowChainCts.IsCancellationRequested;
+
         public enum EditReason
         {
             None = 0,
@@ -352,7 +370,9 @@ namespace test
             List<ExecutionLogState>? ExecutionLogs = null,
             bool FileNameLocked = false,
             bool AutoModelSelectionEnabled = false,
-            bool AdvancedAutoResolverEnabled = false
+            bool AdvancedAutoResolverEnabled = false,
+            string DownstreamAutoMode = "OneClick",
+            string PresentationEngine = "Claude"
         );
 
         private static string DisplayNameFromPath(string path)
@@ -1429,7 +1449,11 @@ namespace test
 
                 if (IsWorkspaceStep(step))
                 {
-                    detailHost.Children.Add(CreateWorkspaceInspector(safeDetailLines));
+                    var workspaceArtifacts = step?.WorkspaceArtifacts;
+                    if (workspaceArtifacts != null && workspaceArtifacts.Count > 0)
+                        detailHost.Children.Add(CreateWorkspaceProductSurface(workspaceArtifacts));
+                    else
+                        detailHost.Children.Add(CreateWorkspaceInspector(safeDetailLines));
                 }
                 else
                 {
@@ -1549,6 +1573,391 @@ namespace test
 
         private static string SafeCopy(string? text)
             => string.IsNullOrWhiteSpace(text) ? "-" : text.Trim();
+
+        // Workspace v2：從結構化 artifact 紀錄渲染產品化卡片（非 re-parse 文字行）。
+        private FrameworkElement CreateWorkspaceProductSurface(IReadOnlyList<AgentWorkspaceArtifactRecord> records)
+        {
+            var root = new StackPanel();
+
+            var safe = (records ?? Array.Empty<AgentWorkspaceArtifactRecord>())
+                .Where(x => x != null)
+                .ToList();
+
+            if (safe.Count == 0)
+            {
+                root.Children.Add(CreateWorkspaceTextCard("本次沒有產出物。", muted: true));
+                return root;
+            }
+
+            var visible = safe.Where(x => x.IsUserVisible).ToList();
+            var internalItems = safe.Where(x => !x.IsUserVisible).ToList();
+
+            root.Children.Add(new TextBlock
+            {
+                Text = $"共 {safe.Count} 項產出物，{visible.Count} 項對使用者可見。",
+                FontSize = 11.5,
+                Foreground = CreateBrush("#57606A", "#57606A"),
+                Margin = new Thickness(0, 2, 0, 8),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            foreach (var r in visible)
+                root.Children.Add(CreateProductArtifactCard(r, dimmed: false));
+
+            if (internalItems.Count > 0)
+            {
+                root.Children.Add(CreateWorkspaceSectionLabel($"內部中繼資料（{internalItems.Count}）"));
+                foreach (var r in internalItems)
+                    root.Children.Add(CreateProductArtifactCard(r, dimmed: true));
+            }
+
+            return root;
+        }
+
+        private Border CreateProductArtifactCard(AgentWorkspaceArtifactRecord r, bool dimmed)
+        {
+            var (emoji, accentHex, accentSoftHex) = ArtifactKindVisual(r.ArtifactKind, r.ContentFormat, r.FormatLabel);
+
+            var panel = new StackPanel();
+
+            // ── 標題列：種類圖示 chip + 標題/小標 + 狀態徽章（靠右）──
+            var header = new DockPanel { LastChildFill = true };
+
+            var (statusBg, statusFg) = ArtifactStatus.Colors(r.Status);
+            var statusBadge = CreateWorkspaceBadge(
+                string.IsNullOrWhiteSpace(r.StatusLabel) ? ArtifactStatus.ToLabel(r.Status) : r.StatusLabel,
+                statusBg, statusFg);
+            statusBadge.Margin = new Thickness(6, 1, 0, 0);
+            statusBadge.VerticalAlignment = VerticalAlignment.Top;
+            DockPanel.SetDock(statusBadge, Dock.Right);
+            header.Children.Add(statusBadge);
+
+            var iconChip = new Border
+            {
+                Width = 34,
+                Height = 34,
+                CornerRadius = new CornerRadius(9),
+                Background = CreateBrush(accentSoftHex, accentSoftHex),
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 0, 10, 0),
+                Child = new TextBlock
+                {
+                    Text = emoji,
+                    FontSize = 17,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+            DockPanel.SetDock(iconChip, Dock.Left);
+            header.Children.Add(iconChip);
+
+            var titleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            titleStack.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(r.Title) ? r.KindLabel : r.Title,
+                FontSize = 13.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = CreateBrush(dimmed ? "#6B7280" : "#1A2333", "#1A2333"),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            // 小標：種類 · 格式 · 模型（淡色一行）
+            var subParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(r.KindLabel)) subParts.Add(r.KindLabel);
+            if (!string.IsNullOrWhiteSpace(r.FormatLabel)) subParts.Add(r.FormatLabel);
+            if (!string.IsNullOrWhiteSpace(r.ModelId)) subParts.Add(GetArtifactModelDisplay(r.ModelId));
+            if (subParts.Count > 0)
+            {
+                titleStack.Children.Add(new TextBlock
+                {
+                    Text = string.Join("   ·   ", subParts),
+                    FontSize = 11,
+                    Foreground = CreateBrush("#8A94A6", "#8A94A6"),
+                    Margin = new Thickness(0, 2, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+            header.Children.Add(titleStack);
+            panel.Children.Add(header);
+
+            // ── 次要徽章（事實數 / 內部）──
+            if (r.FactCount > 0 || !r.IsUserVisible)
+            {
+                var badges = new WrapPanel { Margin = new Thickness(0, 9, 0, 0) };
+                if (r.FactCount > 0)
+                    badges.Children.Add(CreateWorkspaceBadge($"{r.FactCount} 項事實", "#FFF6E5", "#9A6700"));
+                if (!r.IsUserVisible)
+                    badges.Children.Add(CreateWorkspaceBadge("內部中繼", "#F2F4F7", "#888888"));
+                panel.Children.Add(badges);
+            }
+
+            // ── 預覽：嵌入式淡底卡 ──
+            if (!string.IsNullOrWhiteSpace(r.Preview))
+            {
+                panel.Children.Add(new Border
+                {
+                    Background = CreateBrush("#F8FAFC", "#F8FAFC"),
+                    BorderBrush = CreateBrush("#EDF1F6", "#EDF1F6"),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(10, 8, 10, 8),
+                    Margin = new Thickness(0, 9, 0, 0),
+                    Child = new TextBlock
+                    {
+                        Text = r.Preview,
+                        FontSize = 11.5,
+                        Foreground = CreateBrush(dimmed ? "#8A94A6" : "#43536C", "#43536C"),
+                        TextWrapping = TextWrapping.Wrap
+                    }
+                });
+            }
+
+            // ── 來源 / 時間：footer 淡字 ──
+            var metaParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(r.SourceAgentId))
+                metaParts.Add($"代理 {r.SourceAgentId}");
+            if (!string.IsNullOrWhiteSpace(r.CapabilityId))
+                metaParts.Add($"能力 {r.CapabilityId}");
+            if (!string.IsNullOrWhiteSpace(r.CreatedAtLocalText))
+                metaParts.Add(r.CreatedAtLocalText);
+
+            if (metaParts.Count > 0)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = string.Join("   ·   ", metaParts),
+                    FontSize = 10.5,
+                    Foreground = CreateBrush("#9AA4B2", "#9AA4B2"),
+                    Margin = new Thickness(0, 8, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+
+            // ── 依賴 ──
+            if (r.DependsOn != null && r.DependsOn.Count > 0)
+            {
+                var dep = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+                dep.Children.Add(new TextBlock
+                {
+                    Text = "依賴",
+                    FontSize = 10.5,
+                    Foreground = CreateBrush("#9AA4B2", "#9AA4B2"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 6, 5)
+                });
+                foreach (var d in r.DependsOn.Where(x => !string.IsNullOrWhiteSpace(x)))
+                    dep.Children.Add(CreateWorkspaceBadge(ArtifactDependencyLabel(d), "#F4F0FF", "#6B4FBB"));
+                panel.Children.Add(dep);
+            }
+
+            // ── 動作 chips：複製 / 匯出 / 開啟檔案 ──
+            var actions = new WrapPanel { Margin = new Thickness(0, 11, 0, 0) };
+            actions.Children.Add(CreateWorkspaceActionButton("📋 複製", accentHex, () => CopyTextToClipboard(BuildArtifactCopyText(r))));
+            actions.Children.Add(CreateWorkspaceActionButton("💾 匯出", accentHex, () => ExportArtifactRecord(r)));
+            if (!string.IsNullOrWhiteSpace(r.FilePath) && File.Exists(r.FilePath))
+                actions.Children.Add(CreateWorkspaceActionButton("📂 開啟檔案", accentHex, () => OpenGeneratedFile(r.FilePath)));
+            panel.Children.Add(actions);
+
+            var card = new Border
+            {
+                Background = CreateBrush(dimmed ? "#FBFCFE" : "#FFFFFF", "#FFFFFF"),
+                BorderBrush = CreateBrush(dimmed ? "#EDF0F4" : "#E4EAF2", "#E4EAF2"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(13),
+                Margin = new Thickness(0, 0, 0, 10),
+                Child = panel
+            };
+
+            if (!dimmed)
+            {
+                card.Effect = new DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    BlurRadius = 10,
+                    ShadowDepth = 1,
+                    Direction = 270,
+                    Opacity = 0.07
+                };
+            }
+
+            AttachCopyContextMenu(card, "複製此產出物", () => BuildArtifactCopyText(r));
+
+            return card;
+        }
+
+        // 依產出物種類給一個視覺識別（emoji + 主色 + 淡底色），讓 Workspace 一眼分辨是簡報/圖片/影片/文件…
+        private static (string Emoji, string Accent, string AccentSoft) ArtifactKindVisual(
+            string? kind, string? format, string? formatLabel)
+        {
+            string k = (kind ?? "").Trim().ToLowerInvariant();
+            string f = (format ?? "").Trim().ToLowerInvariant();
+            string fl = formatLabel ?? "";
+
+            bool Has(params string[] needles) =>
+                needles.Any(n => k.Contains(n) || f.Contains(n));
+
+            if (Has("present", "pptx", "slide", "deck") || fl.Contains("簡報"))
+                return ("📊", "#7C3AED", "#F1ECFE");
+            if (Has("image", "png", "jpg", "jpeg") || fl.Contains("圖"))
+                return ("🖼", "#DB2777", "#FCE7F3");
+            if (Has("video", "media", "mp4") || fl.Contains("影片"))
+                return ("🎬", "#4F46E5", "#EAEBFE");
+            if (Has("doc", "pdf", "report", "word") || fl.Contains("文件") || fl.Contains("報告"))
+                return ("📄", "#2563EB", "#E6F0FE");
+            if (Has("fact", "valid", "verify") || fl.Contains("事實") || fl.Contains("驗證"))
+                return ("✅", "#059669", "#E4F6EE");
+            if (Has("code") || fl.Contains("程式"))
+                return ("💻", "#475569", "#EEF1F5");
+            if (Has("search", "research") || fl.Contains("搜尋"))
+                return ("🔍", "#0891B2", "#E2F5F9");
+            if (Has("plan", "workflow") || fl.Contains("計畫") || fl.Contains("流程"))
+                return ("🗂", "#B45309", "#FCEFDD");
+
+            return ("📦", "#475467", "#F1F4F8");
+        }
+
+        // 動作 chip：用 Border 自繪（避免預設 Button 灰底 chrome），帶 hover。
+        private FrameworkElement CreateWorkspaceActionButton(string label, string accentHex, Action onClick)
+        {
+            var bg = CreateBrush("#F4F7FC", "#F4F7FC");
+            var bgHover = CreateBrush("#E7EEFA", "#E7EEFA");
+
+            var chip = new Border
+            {
+                Background = bg,
+                BorderBrush = CreateBrush("#DCE5F2", "#DCE5F2"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(11, 5, 11, 5),
+                Margin = new Thickness(0, 0, 7, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Child = new TextBlock
+                {
+                    Text = label,
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = CreateBrush(accentHex, accentHex)
+                }
+            };
+
+            chip.MouseEnter += (_, __) => chip.Background = bgHover;
+            chip.MouseLeave += (_, __) => chip.Background = bg;
+            chip.MouseLeftButtonUp += (_, __) =>
+            {
+                try { onClick?.Invoke(); }
+                catch { /* 動作失敗不應讓決策窗崩潰 */ }
+            };
+
+            return chip;
+        }
+
+        private static string GetArtifactModelDisplay(string modelId)
+        {
+            var def = AiModelHelper.GetDefinition(modelId);
+            if (!string.IsNullOrWhiteSpace(def.DisplayName))
+                return def.DisplayName;
+            return string.IsNullOrWhiteSpace(modelId) ? "-" : modelId;
+        }
+
+        private static string ArtifactDependencyLabel(string itemType)
+        {
+            return (itemType ?? "").Trim().ToLowerInvariant() switch
+            {
+                "verified_facts" => "事實",
+                "search_summary" => "搜尋",
+                "final_synthesis" => "最終答案",
+                "reasoning_analysis" or "code_analysis" => "分析",
+                _ => string.IsNullOrWhiteSpace(itemType) ? "上游" : itemType
+            };
+        }
+
+        private void CopyTextToClipboard(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            try { Clipboard.SetText(text); }
+            catch { /* Clipboard 可能被其他程式暫時鎖住 */ }
+        }
+
+        private static string BuildArtifactCopyText(AgentWorkspaceArtifactRecord r)
+        {
+            if (r == null)
+                return "";
+
+            var lines = new List<string>
+            {
+                $"{r.Title}",
+                $"類型：{r.KindLabel} / {r.FormatLabel} / 狀態：{(string.IsNullOrWhiteSpace(r.StatusLabel) ? ArtifactStatus.ToLabel(r.Status) : r.StatusLabel)}"
+            };
+
+            var meta = new List<string>();
+            if (!string.IsNullOrWhiteSpace(r.SourceAgentId)) meta.Add($"代理 {r.SourceAgentId}");
+            if (!string.IsNullOrWhiteSpace(r.ModelId)) meta.Add($"模型 {r.ModelId}");
+            if (!string.IsNullOrWhiteSpace(r.CapabilityId)) meta.Add($"能力 {r.CapabilityId}");
+            if (!string.IsNullOrWhiteSpace(r.CreatedAtLocalText)) meta.Add(r.CreatedAtLocalText);
+            if (meta.Count > 0)
+                lines.Add("來源：" + string.Join(" · ", meta));
+
+            if (r.DependsOn != null && r.DependsOn.Count > 0)
+                lines.Add("依賴：" + string.Join(", ", r.DependsOn));
+
+            if (!string.IsNullOrWhiteSpace(r.FilePath))
+                lines.Add("檔案：" + r.FilePath);
+
+            if (!string.IsNullOrWhiteSpace(r.Preview))
+            {
+                lines.Add("");
+                lines.Add(r.Preview);
+            }
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        // 把單一 artifact 匯出成 _generated 內的 .txt（產品化「匯出」動作）。
+        private void ExportArtifactRecord(AgentWorkspaceArtifactRecord r)
+        {
+            if (r == null)
+                return;
+
+            // 已落地成檔的 artifact：直接開啟既有檔案，不重複匯出。
+            if (!string.IsNullOrWhiteSpace(r.FilePath) && File.Exists(r.FilePath))
+            {
+                OpenGeneratedFile(r.FilePath);
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(GeneratedFilesDir);
+
+                string baseName = string.IsNullOrWhiteSpace(r.Title) ? r.KindLabel : r.Title;
+                string safeName = SanitizeArtifactFileName(baseName);
+                string fileName = $"{safeName}_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                string fullPath = System.IO.Path.Combine(GeneratedFilesDir, fileName);
+
+                File.WriteAllText(fullPath, BuildArtifactCopyText(r), new System.Text.UTF8Encoding(true));
+
+                OpenGeneratedFile(fullPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"匯出產出物失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private static string SanitizeArtifactFileName(string name)
+        {
+            string s = (name ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(s))
+                s = "artifact";
+
+            foreach (var c in System.IO.Path.GetInvalidFileNameChars())
+                s = s.Replace(c, '_');
+
+            return s.Length <= 40 ? s : s.Substring(0, 40);
+        }
 
         private FrameworkElement CreateWorkspaceInspector(IReadOnlyList<string> lines)
         {
@@ -2813,6 +3222,9 @@ namespace test
                 else
                     _unsupportedDownstreamNodeIds.Remove(node.Id);
 
+                // 標記為「自動生成的下游節點」，避免之後在它身上又自動展開（Mode 2 遞迴防護）。
+                _generatedDownstreamNodeIds.Add(node.Id);
+
                 node.SetTopText(BuildDownstreamNodePrompt(proposal));
                 node.SetBottomText("");
                 node.SetTopLocked(false);
@@ -2835,6 +3247,185 @@ namespace test
             RefreshConnectionsAfterLayout(new[] { sourceNode }.Concat(created).ToList());
             SaveState();
             return created;
+        }
+
+        // ===== §4 自動下游節點：偵測 / 一鍵展開並執行 / 完全自動 =====
+
+        public DownstreamAutoMode GetDownstreamAutoMode() => _downstreamAutoMode;
+
+        // 簡報生成器：AgentRuntime 撰寫簡報時讀這個決定交給哪個 AI。
+        public PresentationEngine GetPresentationEngine() => _presentationEngine;
+
+        // 由節點目前的 prompt + task mode 重推導任務型別，建出「可實際執行」的下游工作流計畫。
+        // 回 null 代表此任務不是多階段任務（例如一般對話），不需展開。
+        public DownstreamNodePlanPayload? BuildDownstreamPlanForNode(NodeControl node)
+        {
+            if (node == null || !MainCanvas.Children.Contains(node))
+                return null;
+
+            string top = node.GetTopText() ?? "";
+            if (string.IsNullOrWhiteSpace(top))
+                return null;
+
+            var taskType = OrchestrationPlanner.ResolveTaskType(top, GetNodeTaskMode(node));
+            var plan = DownstreamNodePlanBuilder.FromTaskType(taskType, node.Id.ToString());
+            return plan.ProposedNodes.Count > 0 ? plan : null;
+        }
+
+        // 此節點是否「可被展開為多階段工作流」（給 UI 決定是否顯示一鍵入口 / 右鍵選單啟用）。
+        public bool NodeCanExpandToWorkflow(NodeControl node)
+        {
+            if (node == null)
+                return false;
+
+            // 已是自動生成的下游節點 → 不再提供展開（避免層層展開）。
+            if (_generatedDownstreamNodeIds.Contains(node.Id))
+                return false;
+
+            return BuildDownstreamPlanForNode(node) != null;
+        }
+
+        private bool HasIncomingConnection(NodeControl node)
+        {
+            if (node == null)
+                return false;
+
+            return _connections.Any(c => ReferenceEquals(c.EndNode, node));
+        }
+
+        // 一鍵（Mode 1）與完全自動（Mode 2）共用：把節點展開成下游工作流並依序執行整條。
+        public async Task ExpandAndRunDownstreamWorkflowAsync(NodeControl sourceNode)
+        {
+            if (sourceNode == null || !MainCanvas.Children.Contains(sourceNode))
+                return;
+
+            if (_generatedDownstreamNodeIds.Contains(sourceNode.Id))
+                return;
+
+            var plan = BuildDownstreamPlanForNode(sourceNode);
+            if (plan == null || plan.ProposedNodes.Count == 0)
+                return;
+
+            var created = MaterializeDownstreamNodePlan(sourceNode, plan);
+            if (created.Count == 0)
+                return;
+
+            FocusDecisionNode(created[0]);
+
+            // 從第一個生成節點開始依序執行；上游輸出會經 {{input}} 模板自動注入下游。
+            await RunManualWorkflowChainAsync(created[0]);
+        }
+
+        // Mode 2（完全自動）：使用者送出後呼叫。只在「根節點 + 策略為 FullyAuto + 確為多階段任務」時才自動展開並執行。
+        public async Task MaybeAutoExpandAfterSubmitAsync(NodeControl sourceNode)
+        {
+            if (sourceNode == null || !MainCanvas.Children.Contains(sourceNode))
+                return;
+
+            if (_downstreamAutoMode != DownstreamAutoMode.FullyAuto)
+                return;
+
+            // 生成的下游節點 / 已是某條鏈的中間節點 → 不自動再展開。
+            if (_generatedDownstreamNodeIds.Contains(sourceNode.Id))
+                return;
+
+            if (HasIncomingConnection(sourceNode))
+                return;
+
+            if (!NodeCanExpandToWorkflow(sourceNode))
+                return;
+
+            // 來源節點必須已產出可用內容（作為下游第一步的輸入）。
+            if (string.IsNullOrWhiteSpace(sourceNode.GetBottomText()))
+                return;
+
+            await ExpandAndRunDownstreamWorkflowAsync(sourceNode);
+        }
+
+        public void SetDownstreamAutoMode(DownstreamAutoMode mode, bool save = true)
+        {
+            _downstreamAutoMode = mode;
+            SyncDownstreamAutoModeRadios();
+            if (save)
+                SaveState();
+        }
+
+        private bool _suppressDownstreamModeRadioEvents = false;
+
+        private void SyncDownstreamAutoModeRadios()
+        {
+            _suppressDownstreamModeRadioEvents = true;
+            try
+            {
+                if (DownstreamModeOneClick != null)
+                    DownstreamModeOneClick.IsChecked = _downstreamAutoMode == DownstreamAutoMode.OneClick;
+                if (DownstreamModeFullyAuto != null)
+                    DownstreamModeFullyAuto.IsChecked = _downstreamAutoMode == DownstreamAutoMode.FullyAuto;
+                if (DownstreamModeOff != null)
+                    DownstreamModeOff.IsChecked = _downstreamAutoMode == DownstreamAutoMode.Off;
+            }
+            finally
+            {
+                _suppressDownstreamModeRadioEvents = false;
+            }
+        }
+
+        private void DownstreamMode_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressDownstreamModeRadioEvents)
+                return;
+
+            if (ReferenceEquals(sender, DownstreamModeFullyAuto))
+                SetDownstreamAutoMode(DownstreamAutoMode.FullyAuto);
+            else if (ReferenceEquals(sender, DownstreamModeOff))
+                SetDownstreamAutoMode(DownstreamAutoMode.Off);
+            else
+                SetDownstreamAutoMode(DownstreamAutoMode.OneClick);
+        }
+
+        // ===== 簡報生成器（個人化）=====
+
+        public void SetPresentationEngine(PresentationEngine engine, bool save = true)
+        {
+            // Gamma 尚未開放（無 GAMMA_API_KEY），任何路徑誤選都落回 Claude。
+            if (engine == PresentationEngine.Gamma)
+                engine = PresentationEngine.Claude;
+
+            _presentationEngine = engine;
+            SyncPresentationEngineRadios();
+            if (save)
+                SaveState();
+        }
+
+        private bool _suppressPresentationEngineRadioEvents = false;
+
+        private void SyncPresentationEngineRadios()
+        {
+            _suppressPresentationEngineRadioEvents = true;
+            try
+            {
+                if (PresentationEngineClaude != null)
+                    PresentationEngineClaude.IsChecked = _presentationEngine == PresentationEngine.Claude;
+                if (PresentationEngineGpt != null)
+                    PresentationEngineGpt.IsChecked = _presentationEngine == PresentationEngine.Gpt;
+                if (PresentationEngineGamma != null)
+                    PresentationEngineGamma.IsChecked = _presentationEngine == PresentationEngine.Gamma;
+            }
+            finally
+            {
+                _suppressPresentationEngineRadioEvents = false;
+            }
+        }
+
+        private void PresentationEngine_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressPresentationEngineRadioEvents)
+                return;
+
+            if (ReferenceEquals(sender, PresentationEngineGpt))
+                SetPresentationEngine(PresentationEngine.Gpt);
+            else
+                SetPresentationEngine(PresentationEngine.Claude);
         }
 
         private double ResolveAvailableDownstreamRowY(
@@ -2927,7 +3518,7 @@ namespace test
             }), DispatcherPriority.Loaded);
         }
 
-        private void TryMaterializeDownstreamNodePlanFromText(string artifactText)
+        private async void TryMaterializeDownstreamNodePlanFromText(string artifactText)
         {
             if (string.IsNullOrWhiteSpace(artifactText))
                 return;
@@ -2957,7 +3548,11 @@ namespace test
 
             var created = MaterializeDownstreamNodePlan(sourceNode, plan);
             if (created.Count > 0)
+            {
                 FocusDecisionNode(created[0]);
+                // Mode 1：展開後直接依序執行整條工作流（手動點此卡片即代表使用者同意花 token）。
+                await RunManualWorkflowChainAsync(created[0]);
+            }
         }
 
         private static double GetNodeLayoutHeight(NodeControl node)
@@ -3141,9 +3736,50 @@ namespace test
                 ? "Downstream step"
                 : proposal.Label.Trim();
 
+            string instruction = BuildDownstreamStepInstruction(proposal?.Id ?? "");
+
+            // 第一行為步驟標題（畫布可讀）；第二行為「帶路由關鍵字的指令」，
+            // 讓此節點實際執行時走到對應 orchestration（簡報 / 檔案 / 圖片 / 影片…）。
+            // {{input}} 為上游輸出注入點（auto-flow 模板）。
             return
-                $"{label}｜{TranslateDownstreamStepLabel(detailLabel)}\n\n" +
+                $"{label}｜{TranslateDownstreamStepLabel(detailLabel)}\n" +
+                instruction + "\n\n" +
                 "{{input}}";
+        }
+
+        // 依下游步驟 id 給「可觸發正確 orchestration 的中文指令」。
+        // 關鍵字需與 OrchestrationPlanner.ResolveTaskType 對齊（簡報 / 報告·輸出成檔案 / 圖片 / 影片）。
+        private static string BuildDownstreamStepInstruction(string id)
+        {
+            switch ((id ?? "").Trim().ToLowerInvariant())
+            {
+                case "research":
+                    return "請研究並蒐集以下主題的最新關鍵事實、數據與可查證來源，條列成可直接引用的要點。";
+                case "outline":
+                    return "請依據以下資料，分析並整理出結構化的重點與大綱。";
+                case "draft":
+                    return "請依據以下重點，撰寫完整、有條理的內容。";
+                case "synthesize":
+                    return "請整合以下所有階段的結果，輸出最終結論與建議。";
+                case "deck":
+                    return "請依據以下內容，製作一份結構完整的簡報（投影片），含封面與重點頁。";
+                case "export":
+                    return "請把以下內容整理成一份完整文件並輸出成檔案（報告）。";
+                case "prompt":
+                    return "請依以下需求，撰寫一段精準、具體的圖片生成提示詞。";
+                case "image":
+                    return "請根據以下提示詞生成一張圖片。";
+                case "brief":
+                    return "請為以下需求規劃影片的劇本、分鏡與旁白。";
+                case "video":
+                    return "請根據以下企劃生成影片。";
+                case "decompose":
+                    return "請把以下任務拆解成可執行的步驟與順序。";
+                case "execute":
+                    return "請依序執行以下步驟並輸出結果。";
+                default:
+                    return "請延續以下內容完成本步驟。";
+            }
         }
 
         private static string TranslateDownstreamStepLabel(string label)
@@ -3592,7 +4228,9 @@ namespace test
     logs,
     FileNameLocked: _fileNameLockedByUser,
     AutoModelSelectionEnabled: _isAutoModelSelectionEnabled,
-    AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled
+    AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled,
+    DownstreamAutoMode: DownstreamAutoModeHelper.ToStorageValue(_downstreamAutoMode),
+    PresentationEngine: PresentationEngineHelper.ToStorageValue(_presentationEngine)
 );
 
             if (string.IsNullOrEmpty(_currentFilePath))
@@ -3621,6 +4259,12 @@ namespace test
             _fileNameLockedByUser = state.FileNameLocked;
             _isAutoModelSelectionEnabled = state.AutoModelSelectionEnabled;
             _isAdvancedAutoResolverEnabled = _isAutoModelSelectionEnabled && state.AdvancedAutoResolverEnabled;
+            _downstreamAutoMode = DownstreamAutoModeHelper.Parse(state.DownstreamAutoMode);
+            SyncDownstreamAutoModeRadios();
+            _presentationEngine = PresentationEngineHelper.Parse(state.PresentationEngine);
+            if (_presentationEngine == PresentationEngine.Gamma)
+                _presentationEngine = PresentationEngine.Claude; // Gamma 尚未開放，載入時一律落回 Claude。
+            SyncPresentationEngineRadios();
             _lastAppliedAutoKeyword = "";
             _lastInitialTopSnapshot = "";
 
@@ -3645,6 +4289,7 @@ namespace test
             _executionLogService.ClearAll();
             _nodeAgentsById.Clear();
             _unsupportedDownstreamNodeIds.Clear();
+            _generatedDownstreamNodeIds.Clear();
 
             _hoveredDecisionNode = null;
             _lastDecisionNode = null;
@@ -4776,14 +5421,16 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 Steps = AppendLiveWorkspaceStep(
                     steps,
                     decision.WorkspaceSummary ?? "",
-                    decision.WorkspaceArtifactDetails ?? Array.Empty<string>())
+                    decision.WorkspaceArtifactDetails ?? Array.Empty<string>(),
+                    decision.WorkspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>())
             };
         }
 
         private static IReadOnlyList<NodeDecisionStepViewData> AppendLiveWorkspaceStep(
             IReadOnlyList<NodeDecisionStepViewData> steps,
             string workspaceSummary,
-            IReadOnlyList<string> workspaceArtifactDetails)
+            IReadOnlyList<string> workspaceArtifactDetails,
+            IReadOnlyList<AgentWorkspaceArtifactRecord> workspaceArtifacts)
         {
             var result = steps?.ToList() ?? new List<NodeDecisionStepViewData>();
             var detailLines = new List<string>();
@@ -4807,22 +5454,33 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 detailLines.AddRange(workspaceArtifactDetails.Where(x => !string.IsNullOrWhiteSpace(x)));
             }
 
-            if (detailLines.Count == 0)
+            var safeArtifacts = workspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>();
+
+            if (detailLines.Count == 0 && safeArtifacts.Count == 0)
                 return result;
 
-            int artifactCount = workspaceArtifactDetails?
-                .Count(x => x.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+            int artifactCount = safeArtifacts.Count > 0
+                ? safeArtifacts.Count
+                : (workspaceArtifactDetails?
+                    .Count(x => x.StartsWith("Artifact:", StringComparison.OrdinalIgnoreCase)) ?? 0);
 
-            int factCount = workspaceArtifactDetails?
-                .Count(x => x.TrimStart().StartsWith("Fact:", StringComparison.OrdinalIgnoreCase)) ?? 0;
+            int factCount = safeArtifacts.Count > 0
+                ? safeArtifacts.Sum(x => x?.FactCount ?? 0)
+                : (workspaceArtifactDetails?
+                    .Count(x => x.TrimStart().StartsWith("Fact:", StringComparison.OrdinalIgnoreCase)) ?? 0);
+
+            string workspaceDetail = safeArtifacts.Count > 0
+                ? $"產出物 {artifactCount} 項（可見 {safeArtifacts.Count(x => x != null && x.IsUserVisible)}）"
+                : $"Artifacts: {artifactCount}, facts: {factCount}";
 
             result.Insert(Math.Max(0, result.Count - 2), new NodeDecisionStepViewData
             {
                 Title = "Workspace",
-                Detail = $"Artifacts: {artifactCount}, facts: {factCount}",
-                State = factCount > 0 ? NodeDecisionStepState.Success : NodeDecisionStepState.Info,
+                Detail = workspaceDetail,
+                State = factCount > 0 || artifactCount > 0 ? NodeDecisionStepState.Success : NodeDecisionStepState.Info,
                 Highlight = true,
-                DetailLines = detailLines
+                DetailLines = detailLines,
+                WorkspaceArtifacts = safeArtifacts
             });
 
             return result;
@@ -5111,6 +5769,8 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         private void OpenSettings_Click(object sender, RoutedEventArgs e)
         {
             RefreshMemoryPanel();
+            SyncDownstreamAutoModeRadios();
+            SyncPresentationEngineRadios();
             if (SettingsOverlay != null)
                 SettingsOverlay.Visibility = Visibility.Visible;
             MemoryInput?.Focus();
@@ -5336,36 +5996,109 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             if (startNode == null || !MainCanvas.Children.Contains(startNode))
                 return;
 
-            var visited = new HashSet<Guid>();
-            var current = startNode;
+            // 已有工作流在跑 → 不重入（避免兩條鏈搶同一批節點）。使用者可先「停止工作流」再重跑。
+            if (IsWorkflowChainRunning)
+                return;
 
-            for (int step = 0; step < 12; step++)
+            using var cts = new CancellationTokenSource();
+            _workflowChainCts = cts;
+            try
             {
-                if (current == null || !MainCanvas.Children.Contains(current))
-                    return;
+                var visited = new HashSet<Guid>();
+                var current = startNode;
 
-                if (!visited.Add(current.Id))
-                    return;
-
-                FocusDecisionNode(current);
-
-                if (ShouldStopBeforeUnsupportedDownstreamNode(current))
+                for (int step = 0; step < 12; step++)
                 {
-                    current.SetBottomText(
-                        "（此下游節點需要尚未接上的專用代理，已停止以避免不必要的 token 消耗。）\n" +
-                        "目前可先使用前一個節點的結果；等 presentation/file/media/workflow agent 完成後再啟用此步。");
-                    return;
+                    if (current == null || !MainCanvas.Children.Contains(current))
+                        return;
+
+                    if (cts.IsCancellationRequested)
+                        return;
+
+                    if (!visited.Add(current.Id))
+                        return;
+
+                    FocusDecisionNode(current);
+
+                    if (ShouldStopBeforeUnsupportedDownstreamNode(current))
+                    {
+                        current.SetBottomText(
+                            "（此下游節點需要尚未接上的專用代理，已停止以避免不必要的 token 消耗。）\n" +
+                            "目前可先使用前一個節點的結果；等 presentation/file/media/workflow agent 完成後再啟用此步。");
+                        return;
+                    }
+
+                    _runningChainNode = current;
+                    bool success = await current.RunCurrentTopTextAsync(cts.Token);
+                    _runningChainNode = null;
+
+                    // 被手動停止 → 安靜結束（節點本身已標記為「已停止」）。
+                    if (cts.IsCancellationRequested)
+                        return;
+
+                    // 這一步失敗 → 停在這裡。使用者可右鍵「略過此步、從下一步續跑」或「執行此節點與下游」重跑。
+                    if (!success)
+                        return;
+
+                    current = GetFirstDownstreamNode(current);
+                    if (current == null)
+                        return;
                 }
-
-                bool success = await current.RunCurrentTopTextAsync();
-                if (!success)
-                    return;
-
-                current = GetFirstDownstreamNode(current);
-                if (current == null)
-                    return;
+            }
+            finally
+            {
+                _runningChainNode = null;
+                if (ReferenceEquals(_workflowChainCts, cts))
+                    _workflowChainCts = null;
             }
         }
+
+        // §4 stop：立即停止正在跑的工作流鏈（取消 in-flight 節點 + 阻止後續步驟）。
+        public void StopWorkflowChain()
+        {
+            try { _workflowChainCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        // §4 skip：略過此步，從它的下游節點繼續整條鏈。
+        // 被略過的節點轉為 passthrough（直接帶上一個好的上游輸出），下游的 {{input}} 仍讀得到正確內容。
+        public async Task SkipStepAndContinueAsync(NodeControl node)
+        {
+            if (node == null || !MainCanvas.Children.Contains(node))
+                return;
+
+            if (IsWorkflowChainRunning)
+                return;
+
+            var next = GetFirstDownstreamNode(node);
+
+            var upstream = GetFirstUpstreamNode(node);
+            string carried = (upstream?.GetBottomText() ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(carried))
+                node.SetBottomText(carried);
+
+            node.MarkChainStepSkipped();
+
+            if (next == null)
+                return;
+
+            await RunManualWorkflowChainAsync(next);
+        }
+
+        // 此節點的第一個上游（入邊來源）節點；無入邊回 null。
+        public NodeControl? GetFirstUpstreamNode(NodeControl node)
+        {
+            if (node == null)
+                return null;
+
+            return GetConnectionsForContext()
+                .Where(c => ReferenceEquals(c.EndNode, node))
+                .Select(c => c.StartNode)
+                .FirstOrDefault(n => n != null);
+        }
+
+        // 此節點是否有下游節點（給右鍵「略過此步」決定是否啟用）。
+        public bool NodeHasDownstream(NodeControl node) => GetFirstDownstreamNode(node) != null;
 
         public void RunDryWorkflowChain(NodeControl startNode)
         {

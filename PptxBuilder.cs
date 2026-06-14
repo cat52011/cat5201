@@ -20,6 +20,10 @@ namespace test
         private const long SlideHeight = 6858000;
 
         public static byte[] Build(PresentationOutlinePayload outline)
+            => Build(outline, null);
+
+        // coverImagePng：非 null 時，封面投影片下半部嵌入該圖（用於「圖片 → 簡報」）。
+        public static byte[] Build(PresentationOutlinePayload outline, byte[]? coverImagePng)
         {
             using var stream = new MemoryStream();
 
@@ -36,7 +40,8 @@ namespace test
 
                 foreach (var slide in BuildSlideModels(outline))
                 {
-                    var slidePart = CreateSlidePart(presentationPart, slideLayoutPart, slide.Title, slide.Body);
+                    byte[]? imageForSlide = slide.IsCover ? coverImagePng : null;
+                    var slidePart = CreateSlidePart(presentationPart, slideLayoutPart, slide.Title, slide.Body, imageForSlide);
                     slideIdList.Append(new P.SlideId
                     {
                         Id = slideId++,
@@ -65,6 +70,7 @@ namespace test
         {
             public string Title = "";
             public string[] Body = Array.Empty<string>();
+            public bool IsCover = false;
         }
 
         private static System.Collections.Generic.IEnumerable<SlideModel> BuildSlideModels(PresentationOutlinePayload outline)
@@ -74,7 +80,8 @@ namespace test
                 yield return new SlideModel
                 {
                     Title = string.IsNullOrWhiteSpace(outline?.Title) ? "簡報" : outline!.Title,
-                    Body = string.IsNullOrWhiteSpace(outline?.Topic) ? Array.Empty<string>() : new[] { outline!.Topic }
+                    Body = string.IsNullOrWhiteSpace(outline?.Topic) ? Array.Empty<string>() : new[] { outline!.Topic },
+                    IsCover = true
                 };
                 yield break;
             }
@@ -90,7 +97,8 @@ namespace test
                     yield return new SlideModel
                     {
                         Title = string.IsNullOrWhiteSpace(s.Heading) ? outline.Title : s.Heading,
-                        Body = string.IsNullOrWhiteSpace(sub) ? Array.Empty<string>() : new[] { sub }
+                        Body = string.IsNullOrWhiteSpace(sub) ? Array.Empty<string>() : new[] { sub },
+                        IsCover = true
                     };
                 }
                 else
@@ -205,7 +213,8 @@ namespace test
             PresentationPart presentationPart,
             SlideLayoutPart slideLayoutPart,
             string title,
-            string[] bullets)
+            string[] bullets,
+            byte[]? coverImagePng = null)
         {
             var slidePart = presentationPart.AddNewPart<SlidePart>();
 
@@ -216,17 +225,19 @@ namespace test
                     new P.ApplicationNonVisualDrawingProperties()),
                 new P.GroupShapeProperties(new A.TransformGroup()));
 
-            // 標題文字框
+            bool hasImage = coverImagePng != null && coverImagePng.Length > 0;
+
+            // 標題文字框（有封面圖時上移、縮小，留出下方空間給圖）。
             shapeTree.Append(MakeTextShape(
                 shapeId: 2U,
                 name: "Title",
                 xEmu: 685800, yEmu: 457200,
                 cxEmu: SlideWidth - 1371600, cyEmu: 1143000,
                 paragraphs: new[] { new BodyLine(title ?? "", 0) },
-                fontSize: 4000, bold: true, colorHex: "1F3864"));
+                fontSize: hasImage ? 3200 : 4000, bold: true, colorHex: "1F3864"));
 
-            // 內文 / 重點文字框
-            if (bullets != null && bullets.Length > 0)
+            // 內文 / 重點文字框（封面圖存在時略過內文，避免與圖重疊）。
+            if (!hasImage && bullets != null && bullets.Length > 0)
             {
                 var lines = bullets
                     .Where(b => !string.IsNullOrWhiteSpace(b))
@@ -245,10 +256,44 @@ namespace test
                 }
             }
 
+            // 封面圖：方形（1024x1024）置中於標題下方。
+            if (hasImage)
+            {
+                var imagePart = slidePart.AddImagePart(ImagePartType.Png);
+                using (var ms = new MemoryStream(coverImagePng!))
+                    imagePart.FeedData(ms);
+
+                string relId = slidePart.GetIdOfPart(imagePart);
+
+                const long side = 3886200;                 // 約 4.25 in 方形
+                long x = (SlideWidth - side) / 2;
+                const long y = 1828800;                     // 標題下方
+                shapeTree.Append(MakePicture(4U, "CoverImage", relId, x, y, side, side));
+            }
+
             slidePart.Slide = new P.Slide(new P.CommonSlideData(shapeTree), new P.ColorMapOverride(new A.MasterColorMapping()));
             slidePart.AddPart(slideLayoutPart);
 
             return slidePart;
+        }
+
+        private static P.Picture MakePicture(
+            uint shapeId, string name, string relId,
+            long xEmu, long yEmu, long cxEmu, long cyEmu)
+        {
+            return new P.Picture(
+                new P.NonVisualPictureProperties(
+                    new P.NonVisualDrawingProperties { Id = shapeId, Name = name },
+                    new P.NonVisualPictureDrawingProperties(new A.PictureLocks { NoChangeAspect = true }),
+                    new P.ApplicationNonVisualDrawingProperties()),
+                new P.BlipFill(
+                    new A.Blip { Embed = relId },
+                    new A.Stretch(new A.FillRectangle())),
+                new P.ShapeProperties(
+                    new A.Transform2D(
+                        new A.Offset { X = xEmu, Y = yEmu },
+                        new A.Extents { Cx = cxEmu, Cy = cyEmu }),
+                    new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle }));
         }
 
         private readonly struct BodyLine

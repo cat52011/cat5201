@@ -69,15 +69,17 @@ namespace test
                 SourceNodeId = sourceNodeId ?? "",
                 UserInputPreview = Trim(userInput, 160),
                 CreatesCanvasNodes = false,
-                ReplaySupported = false,
-                RerunSupported = false,
-                ResumeSupported = false,
+                ReplaySupported = true,
+                RerunSupported = true,
+                ResumeSupported = true,
                 Nodes = nodes,
                 Edges = edges,
                 Notes = new[]
                 {
-                    "Workflow schema v1 only records planned nodes and edges.",
-                    "It does not create, run, replay, or resume downstream canvas nodes yet."
+                    "Workflow v1.1: per-node run history is recorded for replay / resume / regenerate.",
+                    "Replay re-runs the whole workflow with the same input; resume retries a failed run; " +
+                    "regenerate re-runs only final synthesis, reusing the cached workspace (skips research/capabilities).",
+                    "Multi-node canvas execution (create downstream nodes, run them in order, per-node stop/skip) is §4, not yet wired."
                 }
             };
         }

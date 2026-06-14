@@ -97,6 +97,10 @@ namespace test
         /// 同時也是可直接閱讀的純 Markdown。
         /// </summary>
         public static string RenderMarkdownDeck(PresentationOutlinePayload outline)
+            => RenderMarkdownDeck(outline, null);
+
+        // coverImageFileName：非 null 時，在封面投影片嵌入圖片（與 .md 同資料夾，用相對檔名引用）。
+        public static string RenderMarkdownDeck(PresentationOutlinePayload outline, string? coverImageFileName)
         {
             outline ??= new PresentationOutlinePayload();
 
@@ -129,6 +133,11 @@ namespace test
                     {
                         sb.AppendLine();
                         sb.AppendLine(outline.Topic);
+                    }
+                    if (!string.IsNullOrWhiteSpace(coverImageFileName))
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine($"![{slide.Heading}]({coverImageFileName})");
                     }
                     if (!string.IsNullOrWhiteSpace(metadata))
                     {
@@ -342,7 +351,7 @@ namespace test
             ["三"] = 3, ["五"] = 5, ["十"] = 10, ["七"] = 7, ["八"] = 8, ["六"] = 6, ["四"] = 4, ["九"] = 9
         };
 
-        private static int DetectRequestedSlideCount(string userInput)
+        public static int DetectRequestedSlideCount(string userInput)
         {
             string text = userInput ?? "";
 

@@ -47,6 +47,10 @@ namespace test
             if (taskType == OrchestrationTaskType.ImageGeneration)
                 AddStage(stages, "generate_image", "Generate image", "image-agent");
 
+            // Video Gen v1：VideoGeneration 任務在最終答案之後，多一個（長時間、需輪詢的）產生影片階段。
+            if (taskType == OrchestrationTaskType.VideoGeneration)
+                AddStage(stages, "generate_video", "Generate video", "video-agent");
+
             return new OrchestrationPlanPayload
             {
                 Status = "pending",
@@ -66,7 +70,9 @@ namespace test
             };
         }
 
-        private static OrchestrationTaskType ResolveTaskType(string? text, NodeTaskMode mode)
+        // public：供 MainWindow 在不重跑整個 orchestration 的情況下，重推導任務型別
+        // （§4 自動下游節點：用節點 prompt + task mode 判斷是否為多階段任務）。
+        public static OrchestrationTaskType ResolveTaskType(string? text, NodeTaskMode mode)
         {
             string normalized = (text ?? "").Trim().ToLowerInvariant();
 

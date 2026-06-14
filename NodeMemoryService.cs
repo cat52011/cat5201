@@ -320,6 +320,68 @@ namespace test
                 PreferenceBlock = preferenceBlock
             };
         }
+        // Memory v1 視覺化：回報本次召回的偏好 / 記憶計數與簡短說明，供 decision-viz 顯示。
+        // 與實際執行（NodeExecutionCoreService）相同的略過規則，避免顯示與真正注入不一致。
+        public MemoryRecallStats GetRecallStats(
+            NodeControl currentNode,
+            string agentId,
+            string topText,
+            NodeTaskMode taskMode)
+        {
+            bool suppressed =
+                taskMode != NodeTaskMode.Translate &&
+                taskMode != NodeTaskMode.Rewrite &&
+                taskMode != NodeTaskMode.Summarize &&
+                FinanceTaskDetector.IsFinanceLike(topText);
+
+            if (suppressed)
+            {
+                return new MemoryRecallStats
+                {
+                    Suppressed = true,
+                    SuppressReason = "財經即時任務：本次略過記憶注入，僅用最新查證事實。"
+                };
+            }
+
+            var result = RecallRelevant(currentNode, agentId, topText, taskMode);
+            var preferences = _store.GetPreferences();
+
+            var details = new List<string>();
+
+            foreach (var p in preferences.Take(6))
+                details.Add($"偏好：{TrimText(p.Content, 60)}");
+
+            foreach (var item in result.Items.Take(6))
+            {
+                string label = string.IsNullOrWhiteSpace(item.Title) ? item.Content : item.Title;
+                details.Add($"記憶：{CategoryLabel(item.Category)} · {TrimText(label, 48)}");
+            }
+
+            return new MemoryRecallStats
+            {
+                PreferenceCount = preferences.Count,
+                EpisodicCount = result.Items.Count,
+                AgentCount = result.AgentItems.Count,
+                SharedCount = result.SharedItems.Count,
+                Details = details
+            };
+        }
+
+        private static string CategoryLabel(string? category)
+        {
+            return (category ?? "").ToLowerInvariant() switch
+            {
+                "execution_result" => "執行結果",
+                "capability_result" => "能力追蹤",
+                "delegation_result" => "委派追蹤",
+                "summary" => "摘要",
+                "fact" => "查證事實",
+                "source_note" => "來源註記",
+                "extracted_data" => "擷取資料",
+                _ => string.IsNullOrWhiteSpace(category) ? "記憶" : category
+            };
+        }
+
         // 偏好區塊：獨立於 episodic 記憶，由 prompt builder 放在最上方當硬指令。
         private string BuildPreferenceBlock(IReadOnlyList<MemoryItem> preferences)
         {

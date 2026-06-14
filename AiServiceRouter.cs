@@ -8,14 +8,19 @@ namespace test
         private ClaudeChatService? _claude;
         private PerplexityService? _perplexityTool;
         private PerplexitySonarService? _perplexitySonar;
+        private GeminiChatService? _gemini;
 
         private OpenAiProvider? _openAiProvider;
         private ClaudeProvider? _claudeProvider;
         private PerplexitySonarProvider? _perplexitySonarProvider;
+        private GeminiProvider? _geminiProvider;
+
+        private const string DefaultGeminiModel = "gemini-2.5-pro";
 
         private string _openAiModel = AiModels.DefaultOpenAiModel;
         private string _claudeModel = AiModels.DefaultClaudeModel;
         private string _perplexitySonarModel = AiModels.DefaultPerplexitySonarApiModel;
+        private string _geminiModel = DefaultGeminiModel;
 
         public string NormalizeNodeModel(string? model)
             => AiModelHelper.NormalizeNodeModel(model);
@@ -56,6 +61,7 @@ namespace test
             {
                 AiProviderKind.Claude => GetClaudeProvider(),
                 AiProviderKind.PerplexitySonar => GetPerplexitySonarProvider(),
+                AiProviderKind.Gemini => GetGeminiProvider(),
                 _ => GetOpenAiProvider()
             };
         }
@@ -78,6 +84,12 @@ namespace test
             return _perplexitySonarProvider;
         }
 
+        public GeminiProvider GetGeminiProvider()
+        {
+            _geminiProvider ??= new GeminiProvider(this);
+            return _geminiProvider;
+        }
+
         public void EnsureServiceReady(AiRouteInfo route)
         {
             if (route == null || !route.IsValid)
@@ -91,6 +103,10 @@ namespace test
 
                 case AiProviderKind.PerplexitySonar:
                     _ = GetPerplexitySonarService(route.ServiceModel);
+                    break;
+
+                case AiProviderKind.Gemini:
+                    _ = GetGeminiService(route.ServiceModel);
                     break;
 
                 case AiProviderKind.OpenAI:
@@ -153,6 +169,23 @@ namespace test
             return _perplexityTool;
         }
 
+        public GeminiChatService GetGeminiService(string model)
+        {
+            var def = GetDefinition(model);
+            var serviceModel = string.IsNullOrWhiteSpace(def.ServiceModel) ? def.Id : def.ServiceModel;
+
+            if (def.Provider != AiProviderType.Gemini)
+                serviceModel = DefaultGeminiModel;
+
+            if (_gemini == null || !string.Equals(_geminiModel, serviceModel, StringComparison.OrdinalIgnoreCase))
+            {
+                _gemini = new GeminiChatService(model: serviceModel);
+                _geminiModel = serviceModel;
+            }
+
+            return _gemini;
+        }
+
         public void WarmupSafely()
         {
             try { _openAi = new OpenAIChatService(model: AiModels.DefaultOpenAiModel); }
@@ -166,6 +199,9 @@ namespace test
 
             try { _perplexitySonar = new PerplexitySonarService(AiModels.DefaultPerplexitySonarApiModel); }
             catch { _perplexitySonar = null; }
+
+            try { _gemini = new GeminiChatService(model: DefaultGeminiModel); }
+            catch { _gemini = null; }
         }
     }
 }

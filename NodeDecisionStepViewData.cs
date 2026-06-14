@@ -24,7 +24,13 @@ namespace test
         public IReadOnlyList<string> DetailLines { get; init; }
             = new List<string>();
 
+        // Workspace v2：Workspace step 直接帶結構化 artifact 紀錄，
+        // 讓 UI 渲染成產品化卡片而非 re-parse 文字行（debug dump）。
+        public IReadOnlyList<AgentWorkspaceArtifactRecord> WorkspaceArtifacts { get; init; }
+            = new List<AgentWorkspaceArtifactRecord>();
+
         public bool IsExpandable =>
-            DetailLines != null && DetailLines.Count > 0;
+            (DetailLines != null && DetailLines.Count > 0) ||
+            (WorkspaceArtifacts != null && WorkspaceArtifacts.Count > 0);
     }
 }

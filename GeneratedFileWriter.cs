@@ -256,11 +256,61 @@ namespace test
             }
         }
 
+        public static GeneratedFilePayload WriteVideo(
+            string outputDir,
+            string title,
+            byte[] content,
+            string sourceSummary,
+            string extension = ".mp4")
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(outputDir))
+                    return Failed("輸出資料夾未設定。", title);
+
+                if (content == null || content.Length == 0)
+                    return Failed("影片內容為空。", title);
+
+                Directory.CreateDirectory(outputDir);
+
+                string baseName = SanitizeFileName(title);
+                if (string.IsNullOrWhiteSpace(baseName))
+                    baseName = "video";
+
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string fileName = $"{baseName}_{stamp}{extension}";
+                string fullPath = Path.GetFullPath(Path.Combine(outputDir, fileName));
+
+                string rootFull = Path.GetFullPath(outputDir);
+                if (!fullPath.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                    return Failed("輸出路徑超出允許範圍。", title);
+
+                File.WriteAllBytes(fullPath, content);
+
+                return new GeneratedFilePayload
+                {
+                    Format = "video",
+                    FileName = fileName,
+                    FilePath = fullPath,
+                    Title = title ?? "",
+                    CharacterCount = 0,
+                    ByteCount = content.Length,
+                    Success = true,
+                    SourceSummary = sourceSummary ?? ""
+                };
+            }
+            catch (Exception ex)
+            {
+                return Failed(ex.Message, title);
+            }
+        }
+
         private static GeneratedFilePayload Failed(string error, string title)
         {
             return new GeneratedFilePayload
             {
                 Success = false,
+                Status = "failed",
                 ErrorMessage = error ?? "未知錯誤",
                 Title = title ?? ""
             };

@@ -60,13 +60,15 @@ namespace test
 
             // 注意：新版 Images API 不接受 response_format 參數，移除以免 400。
             // dall-e-3 預設回傳 url，gpt-image-1 預設回傳 b64_json；下方解析兩者都支援。
-            var payload = new
-            {
-                model = _model,
-                prompt = prompt,
-                n = 1,
-                size = size
-            };
+            // 品質：gpt-image 系列預設品質偏低，明確帶 quality=high 才會輸出高品質圖（dall-e-3 用 hd）。
+            bool isGptImage = _model.StartsWith("gpt-image", StringComparison.OrdinalIgnoreCase);
+            bool isDalle3 = _model.StartsWith("dall-e-3", StringComparison.OrdinalIgnoreCase);
+
+            object payload = isGptImage
+                ? new { model = _model, prompt, n = 1, size, quality = "high" }
+                : isDalle3
+                    ? (object)new { model = _model, prompt, n = 1, size, quality = "hd" }
+                    : new { model = _model, prompt, n = 1, size };
 
             try
             {
@@ -74,7 +76,8 @@ namespace test
                     HttpMethod.Post, "https://api.openai.com/v1/images/generations");
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
                 req.Content = new StringContent(
-                    JsonSerializer.Serialize(payload),
+                    // payload 宣告為 object（三元運算），明確帶入 runtime 型別確保匿名物件欄位被序列化。
+                    JsonSerializer.Serialize(payload, payload.GetType()),
                     Encoding.UTF8,
                     "application/json");
 

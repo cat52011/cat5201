@@ -36,6 +36,35 @@ namespace test
         private const int AutoFlowMaxSteps = 12;
         private readonly AgentRuntimeFactory _agentRuntimeFactory;
 
+        // 只有當圖片本身就是這次的主要產出（純圖片生成）時，才在輸出區直接顯示大圖。
+        // 若同一次還產出了簡報 / 報告（pptx / md / docx），那張圖只是封面配圖，
+        // 已嵌入 deck 並以可點擊 chip 列出，輸出區不再重複丟一張大圖。
+        private static string? ResolveInlineOutputImage(AgentWorkspace workspace)
+        {
+            if (workspace == null)
+                return null;
+
+            var generatedFiles = workspace.GetByType("generated_file")
+                .Select(x => x.Payload)
+                .OfType<GeneratedFilePayload>()
+                .Where(f => f != null && f.Success)
+                .ToList();
+
+            if (generatedFiles.Count == 0)
+                return null;
+
+            bool hasNonImageDeliverable = generatedFiles.Any(f =>
+                !string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase));
+
+            if (hasNonImageDeliverable)
+                return null;
+
+            return generatedFiles
+                .Where(f => string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
+                .Select(f => f.FilePath)
+                .FirstOrDefault();
+        }
+
         public NodeService(AiServiceRouter router, MainWindow main)
         {
             _router = router;
@@ -100,6 +129,7 @@ namespace test
         private string? _currentExecutionInstructions;
         private readonly MemoryStore _memoryStore;
         private readonly NodeMemoryService _memoryService;
+        private readonly WorkflowRunStore _workflowRuns = new();
 
         // ===== Memory v1：給 MainWindow 側邊欄記憶/偏好面板用的公開 API =====
 
@@ -222,6 +252,13 @@ namespace test
                 var decision = agentResult.Decision;
                 var execution = agentResult.Execution;
 
+                // Memory v1 視覺化：記錄本次召回的偏好 / 記憶，供 decision-viz 顯示。
+                decision.MemoryRecall = _memoryService.GetRecallStats(
+                    node,
+                    string.IsNullOrWhiteSpace(decision.ActualAgentId) ? agent.Id : decision.ActualAgentId,
+                    topText,
+                    decision.TaskMode);
+
                 if (!execution.IsSuccess)
                 {
                     ApplyDecisionVisualization(decision);
@@ -243,14 +280,7 @@ namespace test
                     .Where(f => f != null && f.Success)
                     .ToList());
 
-                // 生成圖片任務：把圖片直接顯示在輸出區。
-                node.SetOutputImage(workspace.GetByType("generated_file")
-                    .Select(x => x.Payload)
-                    .OfType<GeneratedFilePayload>()
-                    .Where(f => f != null && f.Success &&
-                                string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
-                    .Select(f => f.FilePath)
-                    .FirstOrDefault());
+                node.SetOutputImage(ResolveInlineOutputImage(workspace));
 
                 await _memoryService.RememberExecutionResultAsync(
     node,
@@ -293,6 +323,10 @@ namespace test
                         ct);
                 }
 
+                // §3：記錄本次工作流執行，並快取成功的 workspace 供「重新生成答案」沿用。
+                RecordWorkflowRun(node, workspace, topText, WorkflowRunKind.Initial, success: true,
+                    outputPreview: execution.Text, errorMessage: "", startedAtUtc: startedAtUtc);
+
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
@@ -318,7 +352,7 @@ namespace test
             }
         }
 
-        public async Task<string> GenerateStreamAsync(
+        public Task<string> GenerateStreamAsync(
             NodeControl node,
             string topText,
             Action<string> onDelta,
@@ -328,16 +362,106 @@ namespace test
                 topText = injectedTopText;
 
             if (string.IsNullOrWhiteSpace(topText))
-                return "";
+                return Task.FromResult("");
 
+            return ExecuteNodeStreamAsync(
+                node,
+                topText,
+                onDelta,
+                ct,
+                reuseWorkspace: null,
+                skipCapabilitiesOverride: null,
+                runKind: WorkflowRunKind.Initial);
+        }
+
+        // ===== §3 Workflow replay / rerun / resume：對外操作 =====
+
+        /// <summary>用上一次的相同輸入整段重播；若上一次失敗則語意上等同「從失敗續跑」。</summary>
+        public Task<string> ReplayWorkflowStreamAsync(
+            NodeControl node,
+            Action<string> onDelta,
+            CancellationToken ct)
+        {
+            var last = _workflowRuns.GetLast(node.Id);
+            string input = last?.OriginalInput ?? "";
+
+            if (string.IsNullOrWhiteSpace(input) &&
+                _main.TryBuildInputFromFirstUpstream(node, out var injected))
+            {
+                input = injected;
+            }
+
+            if (string.IsNullOrWhiteSpace(input))
+                return Task.FromResult("");
+
+            var kind = (last != null && !last.Success)
+                ? WorkflowRunKind.Resume
+                : WorkflowRunKind.Replay;
+
+            return ExecuteNodeStreamAsync(
+                node,
+                input,
+                onDelta,
+                ct,
+                reuseWorkspace: null,
+                skipCapabilitiesOverride: null,
+                runKind: kind);
+        }
+
+        /// <summary>
+        /// 只重新生成最終答案：沿用上一次成功的 workspace（research / capability 成果），
+        /// 跳過 capability 層，因此不會重跑昂貴的搜尋/分析，只重做 final synthesis。
+        /// 沒有快取可用時退回整段重播。
+        /// </summary>
+        public Task<string> RegenerateAnswerStreamAsync(
+            NodeControl node,
+            Action<string> onDelta,
+            CancellationToken ct)
+        {
+            if (_workflowRuns.TryGetCachedWorkspace(node.Id, out var ws, out var input) &&
+                ws != null &&
+                !string.IsNullOrWhiteSpace(input))
+            {
+                return ExecuteNodeStreamAsync(
+                    node,
+                    input,
+                    onDelta,
+                    ct,
+                    reuseWorkspace: ws,
+                    skipCapabilitiesOverride: true,
+                    runKind: WorkflowRunKind.RegenerateAnswer);
+            }
+
+            return ReplayWorkflowStreamAsync(node, onDelta, ct);
+        }
+
+        public IReadOnlyList<WorkflowRunRecord> GetWorkflowRuns(NodeControl node)
+            => node == null ? Array.Empty<WorkflowRunRecord>() : _workflowRuns.GetRuns(node.Id);
+
+        public WorkflowRunRecord? GetLastWorkflowRun(NodeControl node)
+            => node == null ? null : _workflowRuns.GetLast(node.Id);
+
+        /// <summary>是否有可沿用的成功 workspace（決定「重新生成答案」是否能省略 research）。</summary>
+        public bool CanRegenerateAnswer(NodeControl node)
+            => node != null && _workflowRuns.HasCachedWorkspace(node.Id);
+
+        private async Task<string> ExecuteNodeStreamAsync(
+            NodeControl node,
+            string topText,
+            Action<string>? onDelta,
+            CancellationToken ct,
+            AgentWorkspace? reuseWorkspace,
+            bool? skipCapabilitiesOverride,
+            WorkflowRunKind runKind)
+        {
             var startedAtUtc = DateTime.UtcNow;
             var agent = AgentRegistry.Get(_main.GetNodeSelectedAgent(node));
             var runtime = _agentRuntimeFactory.Create();
+            var workspace = reuseWorkspace ?? new AgentWorkspace();
+            bool skipCapabilities = skipCapabilitiesOverride ?? ShouldSkipCapabilities(topText);
 
             try
             {
-                var workspace = new AgentWorkspace();
-
                 var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
                 {
                     Node = node,
@@ -346,13 +470,20 @@ namespace test
                     UseStreaming = true,
                     OnDelta = onDelta,
                     CancellationToken = ct,
-                    SkipCapabilities = ShouldSkipCapabilities(topText),
+                    SkipCapabilities = skipCapabilities,
                     Workspace = workspace,
                     PreferenceBlock = _memoryService.GetPreferenceBlock()
                 });
 
                 var decision = agentResult.Decision;
                 var execution = agentResult.Execution;
+
+                // Memory v1 視覺化：記錄本次召回的偏好 / 記憶，供 decision-viz 顯示。
+                decision.MemoryRecall = _memoryService.GetRecallStats(
+                    node,
+                    string.IsNullOrWhiteSpace(decision.ActualAgentId) ? agent.Id : decision.ActualAgentId,
+                    topText,
+                    decision.TaskMode);
 
                 if (!execution.IsSuccess)
                 {
@@ -375,14 +506,7 @@ namespace test
                     .Where(f => f != null && f.Success)
                     .ToList());
 
-                // 生成圖片任務：把圖片直接顯示在輸出區。
-                node.SetOutputImage(workspace.GetByType("generated_file")
-                    .Select(x => x.Payload)
-                    .OfType<GeneratedFilePayload>()
-                    .Where(f => f != null && f.Success &&
-                                string.Equals(f.Format, "image", StringComparison.OrdinalIgnoreCase))
-                    .Select(f => f.FilePath)
-                    .FirstOrDefault());
+                node.SetOutputImage(ResolveInlineOutputImage(workspace));
 
                 await _memoryService.RememberExecutionResultAsync(
     node,
@@ -425,6 +549,10 @@ namespace test
                         ct);
                 }
 
+                // §3：記錄本次工作流執行，並快取成功的 workspace 供「重新生成答案」沿用。
+                RecordWorkflowRun(node, workspace, topText, runKind, success: true,
+                    outputPreview: execution.Text, errorMessage: "", startedAtUtc: startedAtUtc);
+
                 var flowContext = new AutoFlowRunContext();
                 flowContext.VisitedNodeIds.Add(node.Id);
                 flowContext.StepCount = 1;
@@ -446,9 +574,84 @@ namespace test
                 _main.SetLiveDecisionFailed(node, failedDecision, ex.Message);
                 _main.ClearLiveDecisionState(node);
                 CommitExecutionLog(node, failedDecision, startedAtUtc, success: false, errorMessage: ex.Message);
+
+                // §3：失敗也記錄，讓「從失敗續跑」與執行 log 有依據。
+                RecordWorkflowRun(node, workspace, topText, runKind, success: false,
+                    outputPreview: "", errorMessage: ex.Message, startedAtUtc: startedAtUtc);
+
                 throw;
             }
         }
+
+        // 從 workspace 的 orchestration_plan 取各 step 狀態，建立一筆工作流執行紀錄。
+        private void RecordWorkflowRun(
+            NodeControl node,
+            AgentWorkspace workspace,
+            string originalInput,
+            WorkflowRunKind kind,
+            bool success,
+            string outputPreview,
+            string errorMessage,
+            DateTime startedAtUtc)
+        {
+            try
+            {
+                var plan = workspace.GetByType("workflow")
+                    .Select(x => x.Payload)
+                    .OfType<OrchestrationPlanPayload>()
+                    .FirstOrDefault();
+
+                var steps = new List<WorkflowRunStep>();
+                if (plan?.Stages != null)
+                {
+                    foreach (var s in plan.Stages)
+                    {
+                        if (s == null)
+                            continue;
+
+                        steps.Add(new WorkflowRunStep
+                        {
+                            Order = s.Order,
+                            Id = s.Id,
+                            Label = s.Label,
+                            Status = s.Status,
+                            Detail = s.Detail
+                        });
+                    }
+                }
+
+                string resumedFrom = kind == WorkflowRunKind.Resume
+                    ? steps.FirstOrDefault(x => !IsStepTerminalSuccess(x.Status))?.Id ?? ""
+                    : "";
+
+                var record = new WorkflowRunRecord
+                {
+                    NodeId = node.Id,
+                    Kind = kind,
+                    StartedAtUtc = startedAtUtc,
+                    FinishedAtUtc = DateTime.UtcNow,
+                    OriginalInput = originalInput ?? "",
+                    Success = success,
+                    OverallStatus = plan?.Status ?? (success ? "success" : "failed"),
+                    OutputPreview = Truncate(outputPreview ?? "", 400),
+                    ErrorMessage = Truncate(errorMessage ?? "", 400),
+                    ResumedFromStepId = resumedFrom,
+                    Steps = steps
+                };
+
+                _workflowRuns.Record(node.Id, record);
+
+                if (success)
+                    _workflowRuns.CacheWorkspace(node.Id, workspace, originalInput ?? "");
+            }
+            catch
+            {
+                // 記錄失敗不可影響主流程。
+            }
+        }
+
+        private static bool IsStepTerminalSuccess(string status)
+            => string.Equals(status, "success", StringComparison.OrdinalIgnoreCase);
 
         private void InitializeAgentCapabilities()
         {

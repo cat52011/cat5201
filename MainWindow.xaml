@@ -937,6 +937,83 @@ Margin="0,20,20,0">
                                 </Button.Template>
                             </Button>
                         </Grid>
+
+                        <!-- §4 多階段任務自動展開 -->
+                        <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
+
+                        <TextBlock Text="多階段任務自動展開"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,14,0,2"/>
+                        <TextBlock Text="偵測到多階段任務（研究→撰寫→簡報／檔案等）時，要怎麼把它拆成下游節點並執行。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+
+                        <StackPanel>
+                            <RadioButton x:Name="DownstreamModeOneClick"
+                                         GroupName="DownstreamAutoMode"
+                                         Content="一鍵展開並自動執行（建議）"
+                                         FontSize="12.5"
+                                         Foreground="#333"
+                                         Margin="0,3"
+                                         Checked="DownstreamMode_Checked"/>
+                            <RadioButton x:Name="DownstreamModeFullyAuto"
+                                         GroupName="DownstreamAutoMode"
+                                         Content="完全自動（送出後立即展開並執行）"
+                                         FontSize="12.5"
+                                         Foreground="#333"
+                                         Margin="0,3"
+                                         Checked="DownstreamMode_Checked"/>
+                            <RadioButton x:Name="DownstreamModeOff"
+                                         GroupName="DownstreamAutoMode"
+                                         Content="關閉（只用單一節點作答）"
+                                         FontSize="12.5"
+                                         Foreground="#333"
+                                         Margin="0,3"
+                                         Checked="DownstreamMode_Checked"/>
+                        </StackPanel>
+
+                        <!-- 簡報生成器 -->
+                        <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
+
+                        <TextBlock Text="簡報生成器"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,14,0,2"/>
+                        <TextBlock Text="做簡報時，先重寫需求並併入 Perplexity 查到的資料，再交給選定的 AI 撰寫內容。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+
+                        <StackPanel>
+                            <RadioButton x:Name="PresentationEngineClaude"
+                                         GroupName="PresentationEngine"
+                                         Content="Claude（建議）"
+                                         FontSize="12.5"
+                                         Foreground="#333"
+                                         Margin="0,3"
+                                         Checked="PresentationEngine_Checked"/>
+                            <RadioButton x:Name="PresentationEngineGpt"
+                                         GroupName="PresentationEngine"
+                                         Content="GPT"
+                                         FontSize="12.5"
+                                         Foreground="#333"
+                                         Margin="0,3"
+                                         Checked="PresentationEngine_Checked"/>
+                            <RadioButton x:Name="PresentationEngineGamma"
+                                         GroupName="PresentationEngine"
+                                         Content="Gamma（九月開放，暫停用）"
+                                         IsEnabled="False"
+                                         FontSize="12.5"
+                                         Foreground="#BBB"
+                                         Margin="0,3"
+                                         Checked="PresentationEngine_Checked"/>
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- 已記住的偏好（整句完整保留，可捲動） -->

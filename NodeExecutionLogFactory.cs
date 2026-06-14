@@ -62,6 +62,8 @@ namespace test
                 FallbackAttempts = decision.RuntimeFallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>(),
                 RequestedAgentId = decision.RequestedAgentId ?? "",
                 ActualAgentId = decision.ActualAgentId ?? "",
+
+                MemoryRecall = decision.MemoryRecall ?? MemoryRecallStats.Empty,
             };
         }
 

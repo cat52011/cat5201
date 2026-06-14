@@ -148,8 +148,10 @@ namespace test
 
             steps.Add(BuildTaskModeStep(log));
             steps.Add(BuildModelSelectionStep(log, requestedLabel, plannedLabel, actualLabel));
+            steps.Add(BuildAiTeamStep(log));
             steps.Add(BuildResolverStep(log, resolver, apiFallbackUsed));
             steps.Add(BuildCapabilityStep(log));
+            steps.Add(BuildMemoryStep(log));
             steps.Add(BuildWorkspaceStep(log));
             steps.Add(BuildFallbackStep(log, apiFallbackUsed));
             steps.Add(BuildExecutionStep(log));
@@ -214,6 +216,14 @@ namespace test
                 lines.Add($"Capability Redirect: {GetModelLabel(log.CapabilityRequestedModelId)} → {GetModelLabel(log.CapabilityResolvedModelId)}");
             }
 
+            // Multi-Model v1：顯示實際模型的能力標籤與成本層級。
+            var actualDef = AiModelHelper.GetDefinition(log.ActualModelId);
+            if (actualDef != null)
+            {
+                lines.Add($"成本層級：{actualDef.CostTierLabel}");
+                lines.Add($"能力：{actualDef.CapabilitySummary}");
+            }
+
             var state =
                 string.Equals(requestedLabel, plannedLabel, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(plannedLabel, actualLabel, StringComparison.OrdinalIgnoreCase)
@@ -228,6 +238,188 @@ namespace test
                 Highlight = true,
                 DetailLines = lines
             };
+        }
+
+        // 「參與的 AI」：用白話列出這個節點裡有哪些 AI 參與、各自做了什麼。
+        //
+        // 設計原則：以「產出物的種類（ArtifactKind）」反推是哪個 AI 做的，而不是讀每個 artifact
+        // 自帶的 ModelId / SourceAgentId——後者對 facts/search/presentation/file 常常沒填或被覆寫，
+        // 直接用會得到「圖片 — 事實」這種錯誤掛名。種類是可靠的，且每種產出物固定由哪個 AI 產生是已知的。
+        // 同一個 AI 做的多件事聚合成一行（例：研究 AI — 查資料、查證事實）。
+        private static NodeDecisionStepViewData BuildAiTeamStep(AiExecutionLogEntry log)
+        {
+            var roles = new List<TeamRole>();
+            var index = new Dictionary<string, TeamRole>(StringComparer.Ordinal);
+
+            TeamRole RoleFor(string key, string icon, string label, int order)
+            {
+                if (!index.TryGetValue(key, out var r))
+                {
+                    r = new TeamRole { Icon = icon, Label = label, Order = order };
+                    index[key] = r;
+                    roles.Add(r);
+                }
+                return r;
+            }
+
+            var artifacts = (log.WorkspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>())
+                .Where(x => x != null)
+                .ToList();
+
+            foreach (var a in artifacts)
+            {
+                string kind = (a.ArtifactKind ?? "").Trim().ToLowerInvariant();
+                string itemType = (a.ItemType ?? "").Trim().ToLowerInvariant();
+                string format = (a.ContentFormat ?? "").Trim().ToLowerInvariant();
+                string k = (kind.Length == 0 || kind == "artifact") ? itemType : kind;
+
+                switch (k)
+                {
+                    // 編排 / workflow 計畫是「路由 meta」，不是某個 AI 做的內容交付，且其 model 是節點被路由到的
+                    // 模型（簡報任務常被路由成 pplx），掛上去會誤導。這張卡只列真正做事的 AI，編排細節留在 Workspace/Capability 步驟。
+                    case "workflow":
+                    case "orchestration":
+                    case "orchestration_plan":
+                        break;
+
+                    case "facts":
+                    case "verified_facts":
+                        RoleFor("research", "🔍", "研究 AI", 1).Add("查證事實", a.ModelId);
+                        break;
+
+                    case "search":
+                    case "search_summary":
+                        RoleFor("research", "🔍", "研究 AI", 1).Add("查資料", a.ModelId);
+                        break;
+
+                    case "analysis":
+                    case "reasoning_analysis":
+                        RoleFor("reasoning", "🧠", "分析 AI", 2).Add("分析推理", a.ModelId);
+                        break;
+
+                    case "presentation":
+                    case "presentation_outline":
+                        RoleFor("author", "📊", "簡報 AI", 3).Add("撰寫簡報", a.ModelId);
+                        break;
+
+                    case "media":
+                    case "image":
+                        if (format.Contains("video") || itemType.Contains("video"))
+                            RoleFor("video", "🎬", "影片 AI", 5).Add("生成影片", a.ModelId);
+                        else
+                            RoleFor("image", "🖼", "圖片 AI", 4).Add("生成圖片", a.ModelId);
+                        break;
+
+                    case "video":
+                        RoleFor("video", "🎬", "影片 AI", 5).Add("生成影片", a.ModelId);
+                        break;
+
+                    case "code":
+                    case "code_snapshot":
+                        RoleFor("coder", "💻", "程式 AI", 6).Add("產生程式碼", a.ModelId);
+                        break;
+
+                    case "diff":
+                    case "patch":
+                    case "code_diff":
+                        RoleFor("coder", "💻", "程式 AI", 6).Add("產生修改", a.ModelId);
+                        break;
+
+                    case "final":
+                    case "final_synthesis":
+                        RoleFor("primary", "🧠", "統整 AI", 7).Add("統整最終答案", a.ModelId);
+                        break;
+
+                    case "file":
+                    case "generated_file":
+                        var f = RoleFor("file", "📄", "檔案輸出", 8);
+                        f.IsSystem = true;
+                        f.Add(StripGeneratedFilePrefix(a.Title), null);
+                        break;
+
+                    // sandbox / downstream_node_plan / 其餘 meta：不算「某個 AI 做了一件交付的事」，略過。
+                }
+            }
+
+            // 純對話（沒有任何管線產出物）：就是主模型直接回答。
+            bool hasAiRole = roles.Any(r => !r.IsSystem);
+            if (!hasAiRole)
+            {
+                RoleFor("primary", "🧠", "", 7)
+                    .Add("回答", log.ActualModelId);
+            }
+
+            var lines = roles
+                .OrderBy(r => r.Order)
+                .Select(r => r.Render())
+                .ToList();
+
+            int aiCount = roles.Count(r => !r.IsSystem);
+            string detail = aiCount <= 1
+                ? (roles.FirstOrDefault(r => !r.IsSystem)?.Head() ?? GetModelLabel(log.ActualModelId))
+                : $"{aiCount} 個 AI 協作";
+
+            return new NodeDecisionStepViewData
+            {
+                Title = "參與的 AI",
+                Detail = detail,
+                State = NodeDecisionStepState.Info,
+                Highlight = aiCount > 1,
+                DetailLines = lines
+            };
+        }
+
+        // 一個參與角色（依產出物種類聚合）：固定的 AI 角色 + 它做過的事 + 已知的模型名。
+        private sealed class TeamRole
+        {
+            public string Icon = "";
+            public string Label = "";
+            public string Model = "";
+            public int Order;
+            public bool IsSystem;
+            private readonly List<string> _actions = new();
+
+            public void Add(string action, string? modelId)
+            {
+                if (!string.IsNullOrWhiteSpace(action) && !_actions.Contains(action))
+                    _actions.Add(action);
+
+                // 只在 artifact 真的帶了模型 id 時才掛名，避免假資訊。
+                if (string.IsNullOrWhiteSpace(Model) &&
+                    !string.IsNullOrWhiteSpace(modelId) &&
+                    modelId.Trim() != "-")
+                {
+                    Model = GetModelLabel(modelId);
+                }
+            }
+
+            // 「角色（模型）」；模型未知就只顯示角色，不硬湊。
+            public string Head()
+            {
+                if (string.IsNullOrWhiteSpace(Label))
+                    return string.IsNullOrWhiteSpace(Model) ? "AI" : Model;
+                return string.IsNullOrWhiteSpace(Model) ? Label : $"{Label}（{Model}）";
+            }
+
+            public string Render()
+            {
+                string actions = _actions.Count > 0 ? string.Join("、", _actions) : "—";
+                return $"{Icon} {Head()} — {actions}";
+            }
+        }
+
+        // "Generated File - NVIDIA….pptx" → "NVIDIA….pptx"；失敗則白話化。
+        private static string StripGeneratedFilePrefix(string? title)
+        {
+            string t = (title ?? "").Trim();
+            const string prefix = "Generated File - ";
+            if (t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                t = t.Substring(prefix.Length).Trim();
+
+            if (t.Length == 0 || string.Equals(t, "failed", StringComparison.OrdinalIgnoreCase))
+                return "產生檔案失敗";
+
+            return Trim(t, 40);
         }
 
         private static NodeDecisionStepViewData BuildResolverStep(
@@ -295,6 +487,55 @@ namespace test
             };
         }
 
+        private static NodeDecisionStepViewData BuildMemoryStep(AiExecutionLogEntry log)
+        {
+            var recall = log.MemoryRecall ?? MemoryRecallStats.Empty;
+
+            if (recall.Suppressed)
+            {
+                return new NodeDecisionStepViewData
+                {
+                    Title = "Memory",
+                    Detail = "本次略過記憶",
+                    State = NodeDecisionStepState.Info,
+                    DetailLines = new List<string>
+                    {
+                        string.IsNullOrWhiteSpace(recall.SuppressReason)
+                            ? "本次未注入記憶。"
+                            : recall.SuppressReason
+                    }
+                };
+            }
+
+            string detail = $"偏好 {recall.PreferenceCount}・記憶 {recall.EpisodicCount}";
+
+            var lines = new List<string>
+            {
+                $"偏好（一律注入）：{recall.PreferenceCount} 條",
+                $"相關記憶（召回）：{recall.EpisodicCount} 筆"
+                    + (recall.EpisodicCount > 0 ? $"（Agent {recall.AgentCount}・共享 {recall.SharedCount}）" : "")
+            };
+
+            if (recall.Details != null && recall.Details.Count > 0)
+            {
+                lines.Add("--- 本次召回內容 ---");
+                lines.AddRange(recall.Details);
+            }
+            else if (!recall.HasAny)
+            {
+                lines.Add("本次沒有可用的偏好或相關記憶。");
+            }
+
+            return new NodeDecisionStepViewData
+            {
+                Title = "Memory",
+                Detail = detail,
+                State = recall.HasAny ? NodeDecisionStepState.Success : NodeDecisionStepState.Info,
+                Highlight = recall.HasAny,
+                DetailLines = lines
+            };
+        }
+
         private static NodeDecisionStepViewData BuildWorkspaceStep(AiExecutionLogEntry log)
         {
             var detailLines = new List<string>();
@@ -357,13 +598,23 @@ namespace test
                 state = factCount > 0 ? NodeDecisionStepState.Success : NodeDecisionStepState.Info;
             }
 
+            var artifactRecords = log.WorkspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>();
+
+            if (detail == "-" && artifactRecords.Count > 0)
+            {
+                int visible = artifactRecords.Count(x => x != null && x.IsUserVisible);
+                detail = $"產出物 {artifactRecords.Count} 項（可見 {visible}）";
+                state = NodeDecisionStepState.Success;
+            }
+
             return new NodeDecisionStepViewData
             {
                 Title = "Workspace",
                 Detail = detail,
                 State = state,
-                Highlight = detailLines.Count > 0,
-                DetailLines = detailLines
+                Highlight = detailLines.Count > 0 || artifactRecords.Count > 0,
+                DetailLines = detailLines,
+                WorkspaceArtifacts = artifactRecords
             };
         }
 

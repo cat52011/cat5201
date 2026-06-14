@@ -33,6 +33,22 @@ namespace test
         private bool _isGenerating = false;
         private bool _isShowingLoadingText = false;
 
+        // 等待計時：讓使用者在長任務（特別是生成圖片）時看到已等待秒數，而不是空轉。
+        private DispatcherTimer? _loadingTimer;
+        private DateTime _loadingStartUtc;
+        private string _loadingBaseText = "AI 正在生成";
+        private bool _loadingIsImageTask = false;
+
+        // 長任務（影片生成等）的即時進度提示，附加在 loading 文字後面，由執行端動態更新。
+        private string _loadingExtraHint = "";
+
+        // Product UX：節點執行狀態（邊框顏色 + 狀態列）。
+        private enum NodeRunStatus { Idle, Running, Success, Failed }
+        private NodeRunStatus _runStatus = NodeRunStatus.Idle;
+        private DispatcherTimer? _statusRevertTimer;
+        // 失敗後「重新執行」要用的上一次實際送出 prompt。
+        private string _lastRunPrompt = "";
+
         private double _fontSize = 20;
 
         private bool _isSyncingModelSelector = false;
@@ -410,7 +426,8 @@ namespace test
             try
             {
                 ModelSelector.ItemsSource = null;
-                ModelSelector.ItemsSource = AiModelRegistry.All;
+                // Multi-Model v1：只列已啟用模型（休眠擴充點如 Gemini 不顯示）。
+                ModelSelector.ItemsSource = AiModelRegistry.Available;
             }
             finally
             {
@@ -441,7 +458,9 @@ namespace test
             _isSyncingModelSelector = true;
             try
             {
-                var match = AiModelRegistry.All.FirstOrDefault(x =>
+                var available = AiModelRegistry.Available;
+
+                var match = available.FirstOrDefault(x =>
                     string.Equals(x.Id, modelId, StringComparison.OrdinalIgnoreCase));
 
                 if (match != null)
@@ -450,8 +469,8 @@ namespace test
                     return;
                 }
 
-                if (AiModelRegistry.All.Count > 0)
-                    ModelSelector.SelectedItem = AiModelRegistry.All[0];
+                if (available.Count > 0)
+                    ModelSelector.SelectedItem = available[0];
             }
             finally
             {
@@ -1011,6 +1030,16 @@ namespace test
             }
         }
 
+        // 輸出區（文字+圖片+檔案）統一捲動：唯讀 TextBox 會吃掉滾輪事件，這裡在 tunnel 階段先攔下來捲外層。
+        private void OutputScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (sender is System.Windows.Controls.ScrollViewer sv)
+            {
+                sv.ScrollToVerticalOffset(sv.VerticalOffset - e.Delta);
+                e.Handled = true;
+            }
+        }
+
         private void AttachmentDelete_Click(object sender, RoutedEventArgs e)
         {
             if (_parent == null) return;
@@ -1080,11 +1109,35 @@ namespace test
         private void ContextMenu_Opened(object sender, RoutedEventArgs e)
         {
             if (_parent == null) return;
+            bool busy = _isGenerating || _parent.IsWorkflowChainRunning;
             DeleteMenuItem.IsEnabled = !_parent.IsInitialNode(this);
             EditMenuItem.IsEnabled = true;
             FontSizeMenuItem.IsEnabled = true;
-            RunWorkflowMenuItem.IsEnabled = !_isGenerating && !string.IsNullOrWhiteSpace(GetTopText());
-            DryRunWorkflowMenuItem.IsEnabled = !_isGenerating && !string.IsNullOrWhiteSpace(GetTopText());
+            // 不可用時直接隱藏（與 ⚡展開 / ⏭略過 / ⏹停止 一致），避免「灰著佔位」。
+            bool canRunChain = !busy && !string.IsNullOrWhiteSpace(GetTopText());
+            RunWorkflowMenuItem.IsEnabled = canRunChain;
+            RunWorkflowMenuItem.Visibility = canRunChain ? Visibility.Visible : Visibility.Collapsed;
+            DryRunWorkflowMenuItem.IsEnabled = canRunChain;
+            DryRunWorkflowMenuItem.Visibility = canRunChain ? Visibility.Visible : Visibility.Collapsed;
+
+            // §4：只有「可拆成多階段工作流」的節點才啟用一鍵展開（一般對話不顯示啟用）。
+            bool canExpand = !busy &&
+                             !string.IsNullOrWhiteSpace(GetTopText()) &&
+                             _parent.NodeCanExpandToWorkflow(this);
+            ExpandWorkflowMenuItem.IsEnabled = canExpand;
+            ExpandWorkflowMenuItem.Visibility = canExpand
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            // §4 stop：只有「鏈正在跑」時才顯示「停止工作流」。
+            bool chainRunning = _parent.IsWorkflowChainRunning;
+            StopWorkflowMenuItem.IsEnabled = chainRunning;
+            StopWorkflowMenuItem.Visibility = chainRunning ? Visibility.Visible : Visibility.Collapsed;
+
+            // §4 skip：鏈未在跑、此節點未在生成、且有下游節點時，才提供「略過此步」。
+            bool canSkip = !chainRunning && !_isGenerating && _parent.NodeHasDownstream(this);
+            SkipStepMenuItem.IsEnabled = canSkip;
+            SkipStepMenuItem.Visibility = canSkip ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void EditMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1108,6 +1161,14 @@ namespace test
             else ApplyFontSize(_fontSize);
         }
 
+        private async void ExpandWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_parent == null || _isGenerating)
+                return;
+
+            await _parent.ExpandAndRunDownstreamWorkflowAsync(this);
+        }
+
         private async void RunWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (_parent == null || _isGenerating)
@@ -1122,6 +1183,42 @@ namespace test
                 return;
 
             _parent.RunDryWorkflowChain(this);
+        }
+
+        // §4 stop：停止整條正在跑的工作流鏈。
+        private void StopWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.StopWorkflowChain();
+        }
+
+        // §4 skip：略過此步，從下一步繼續整條鏈。
+        private async void SkipStepMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_parent == null || _isGenerating)
+                return;
+
+            await _parent.SkipStepAndContinueAsync(this);
+        }
+
+        // §4 skip：把此節點標成「已略過」（琥珀框 + 狀態列），但保留 bottom 文字作為下游 passthrough。
+        public void MarkChainStepSkipped()
+        {
+            _runStatus = NodeRunStatus.Idle;
+            StopStatusRevertTimer();
+
+            var amber = new SolidColorBrush(Color.FromRgb(0xB9, 0x7B, 0x16));
+            if (NodeBorder != null)
+                NodeBorder.BorderBrush = amber;
+            if (StatusText != null)
+            {
+                StatusText.Text = "已略過此步（沿用上一步結果）";
+                StatusText.Foreground = amber;
+            }
+            if (CostText != null) CostText.Text = "";
+            if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
+            if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
+            if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
+            if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
         }
 
         private void DeleteMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1236,57 +1333,99 @@ namespace test
             _parent?.NotifyNodeSubmitted(this);
 
             await GenerateBottomReplyFromTopAsync(runTop);
+
+            // §4 Mode 2（完全自動）：送出且成功後，若為多階段任務且策略為 FullyAuto，
+            // 自動展開下游節點並依序執行整條工作流。
+            if (_parent != null && RunProducedUsableOutput())
+                await _parent.MaybeAutoExpandAfterSubmitAsync(this);
         }
 
-        private async Task GenerateBottomReplyFromTopAsync(string topText)
+        // 本次執行是否產出可作為下游輸入的有效內容（排除錯誤 / 逾時 / 無回應訊息）。
+        private bool RunProducedUsableOutput()
+        {
+            string bottom = (GetBottomText() ?? "").TrimStart();
+            if (string.IsNullOrWhiteSpace(bottom))
+                return false;
+
+            return !bottom.StartsWith("（AI 產生失敗）", StringComparison.Ordinal)
+                && !bottom.StartsWith("（AI 產生逾時）", StringComparison.Ordinal)
+                && !bottom.StartsWith("（AI 沒有回傳文字）", StringComparison.Ordinal)
+                && !bottom.StartsWith("AI 這次沒有回傳內容", StringComparison.Ordinal)
+                && !bottom.StartsWith("AI 回應逾時", StringComparison.Ordinal)
+                && !bottom.StartsWith("找不到主視窗", StringComparison.Ordinal)
+                && !bottom.StartsWith("AI 服務尚未準備好", StringComparison.Ordinal);
+        }
+
+        private async Task GenerateBottomReplyFromTopAsync(
+            string topText,
+            Func<Action<string>, CancellationToken, Task<string>>? executor = null,
+            CancellationToken externalToken = default)
         {
             _isGenerating = true;
+            topText ??= "";
+            _lastRunPrompt = topText;
+            bool isImageTask = IsImageTask(topText);
             UpdateEditButtons();
             ClearOutputFiles();
+            ApplyRunStatus(NodeRunStatus.Running);
             TimeSpan executionTimeout = ResolveExecutionTimeout(topText);
 
             try
             {
-                StartBottomLoadingAnimation();
+                StartBottomLoadingAnimation(isImageTask);
                 await Dispatcher.Yield(DispatcherPriority.Render);
 
                 if (_parent == null)
                 {
                     StopBottomLoadingAnimation(clearIfLoading: true);
-                    BottomDisplay.Text = "（找不到 MainWindow，無法呼叫 AI）";
+                    BottomDisplay.Text = "找不到主視窗，目前無法呼叫 AI。請重新開啟節點再試。";
+                    ApplyRunStatus(NodeRunStatus.Failed, "主視窗未連接");
                     return;
                 }
 
                 if (_parent.NodeService == null)
                 {
                     StopBottomLoadingAnimation(clearIfLoading: true);
-                    BottomDisplay.Text = "（NodeService 尚未初始化）";
+                    BottomDisplay.Text = "AI 服務尚未準備好，請稍候幾秒再試一次。";
+                    ApplyRunStatus(NodeRunStatus.Failed, "服務初始化中");
                     return;
                 }
 
-                using var cts = new CancellationTokenSource(executionTimeout);
+                // 外部（工作流鏈「停止」）token 與本步逾時 token 連動：任一觸發都會取消這次執行。
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+                cts.CancelAfter(executionTimeout);
 
-                string finalReply = await _parent.NodeService.GenerateStreamAsync(
-                    this,
-                    topText,
-                    delta =>
+                Action<string> deltaHandler = delta =>
+                {
+                    Dispatcher.Invoke(() =>
                     {
-                        Dispatcher.Invoke(() =>
-                        {
-                            if (_isShowingLoadingText)
-                                StopBottomLoadingAnimation(clearIfLoading: true);
+                        if (_isShowingLoadingText)
+                            StopBottomLoadingAnimation(clearIfLoading: true);
 
-                            BottomDisplay.AppendText(delta);
-                            BottomDisplay.ScrollToEnd();
-                        });
-                    },
-                    cts.Token);
+                        BottomDisplay.AppendText(delta);
+                        BottomDisplay.ScrollToEnd();
+                    });
+                };
+
+                string finalReply = await (executor != null
+                    ? executor(deltaHandler, cts.Token)
+                    : _parent.NodeService.GenerateStreamAsync(this, topText, deltaHandler, cts.Token));
 
                 StopBottomLoadingAnimation(clearIfLoading: string.IsNullOrWhiteSpace(finalReply));
 
                 if (string.IsNullOrWhiteSpace(finalReply))
                 {
-                    BottomDisplay.Text = "（AI 沒有回傳文字）";
+                    // 有 chip（檔案型任務成功）：不視為失敗，晶片本身就是輸出。
+                    if (_outputFiles.Count > 0)
+                    {
+                        ApplyRunStatus(NodeRunStatus.Success);
+                        ShowCostEstimate(topText, "", isImageTask);
+                    }
+                    else
+                    {
+                        BottomDisplay.Text = "AI 這次沒有回傳內容，可能是請求被中斷或模型無回應。請再試一次。";
+                        ApplyRunStatus(NodeRunStatus.Failed, "沒有回傳內容");
+                    }
                 }
                 else
                 {
@@ -1294,6 +1433,9 @@ namespace test
                     {
                         BottomDisplay.Text = finalReply.Trim();
                     }
+
+                    ApplyRunStatus(NodeRunStatus.Success);
+                    ShowCostEstimate(topText, finalReply, isImageTask);
                 }
 
                 UpdateAutoTaskPreview();
@@ -1302,13 +1444,29 @@ namespace test
             catch (OperationCanceledException)
             {
                 StopBottomLoadingAnimation(clearIfLoading: true);
-                BottomDisplay.Text =
-                    $"（AI 產生逾時）\n這次任務超過 {FormatTimeout(executionTimeout)}，已自動取消。";
+
+                if (externalToken.IsCancellationRequested)
+                {
+                    // 使用者主動「停止工作流」：不是逾時，給對應訊息與狀態。
+                    BottomDisplay.Text =
+                        "已手動停止工作流。這一步尚未完成。\n" +
+                        "可右鍵「執行此節點與下游」從這裡重跑，或「略過此步、從下一步續跑」。";
+                    ApplyRunStatus(NodeRunStatus.Failed, "已停止");
+                }
+                else
+                {
+                    BottomDisplay.Text =
+                        $"AI 回應逾時。這次任務超過 {FormatTimeout(executionTimeout)} 仍未完成，已自動取消。\n" +
+                        "可以試著縮短問題、減少附件，或換一個較快的模型再試。";
+                    ApplyRunStatus(NodeRunStatus.Failed, $"逾時（超過 {FormatTimeout(executionTimeout)}）");
+                }
             }
             catch (Exception ex)
             {
                 StopBottomLoadingAnimation(clearIfLoading: true);
-                BottomDisplay.Text = $"（AI 產生失敗）\n{ex.Message}";
+                string friendly = BuildFriendlyError(ex);
+                BottomDisplay.Text = friendly;
+                ApplyRunStatus(NodeRunStatus.Failed, friendly);
             }
             finally
             {
@@ -1318,7 +1476,214 @@ namespace test
             }
         }
 
-        public async Task<bool> RunCurrentTopTextAsync()
+        // ===== Product UX：節點狀態（邊框顏色）+ 狀態列 =====
+
+        private void ApplyRunStatus(NodeRunStatus status, string? detail = null)
+        {
+            _runStatus = status;
+
+            StopStatusRevertTimer();
+
+            if (NodeBorder != null)
+            {
+                NodeBorder.BorderBrush = status switch
+                {
+                    NodeRunStatus.Running => new SolidColorBrush(Color.FromRgb(0x1E, 0x73, 0xE6)), // 藍：執行中
+                    NodeRunStatus.Success => new SolidColorBrush(Color.FromRgb(0x2E, 0x9E, 0x5B)), // 綠：成功
+                    NodeRunStatus.Failed => new SolidColorBrush(Color.FromRgb(0xD1, 0x43, 0x43)),  // 紅：失敗
+                    _ => new SolidColorBrush(Color.FromRgb(0x00, 0x00, 0x00)),                      // 黑：閒置
+                };
+            }
+
+            switch (status)
+            {
+                case NodeRunStatus.Running:
+                    if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
+                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
+                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
+                    if (StatusText != null) StatusText.Text = "";
+                    if (CostText != null) CostText.Text = "";
+                    if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
+                    break;
+
+                case NodeRunStatus.Success:
+                    if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
+                    // §3：成功後提供「重新生成答案」(沿用 research) 與「重播整段」。
+                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Visible;
+                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Visible;
+                    if (StatusText != null)
+                    {
+                        StatusText.Text = "";
+                        StatusText.Foreground = new SolidColorBrush(Color.FromRgb(0x9E, 0x9E, 0x9E));
+                    }
+                    if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
+                    // 成功的綠框只短暫提示，之後回到黑框，避免畫布上一片綠。
+                    StartStatusRevertTimer();
+                    break;
+
+                case NodeRunStatus.Failed:
+                    if (RerunButton != null) RerunButton.Visibility = Visibility.Visible;
+                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
+                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
+                    if (StatusText != null)
+                    {
+                        StatusText.Text = string.IsNullOrWhiteSpace(detail) ? "執行失敗" : detail;
+                        StatusText.Foreground = new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B));
+                    }
+                    if (CostText != null) CostText.Text = "";
+                    if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
+                    break;
+
+                default: // Idle
+                    if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
+                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
+                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
+                    if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
+                    break;
+            }
+        }
+
+        private void StartStatusRevertTimer()
+        {
+            StopStatusRevertTimer();
+
+            _statusRevertTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(2.5)
+            };
+            _statusRevertTimer.Tick += (_, _) =>
+            {
+                StopStatusRevertTimer();
+                // 仍維持在成功狀態才回復黑框（避免覆蓋後續的新執行 / 失敗）。
+                if (_runStatus == NodeRunStatus.Success && NodeBorder != null)
+                    NodeBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x00, 0x00));
+            };
+            _statusRevertTimer.Start();
+        }
+
+        private void StopStatusRevertTimer()
+        {
+            if (_statusRevertTimer != null)
+            {
+                _statusRevertTimer.Stop();
+                _statusRevertTimer = null;
+            }
+        }
+
+        private void ShowCostEstimate(string inputText, string outputText, bool isImageTask)
+        {
+            if (CostText == null)
+                return;
+
+            // 圖片任務的輸出是檔案路徑，用文字長度估 token 會誤導，因此不顯示成本。
+            if (isImageTask)
+            {
+                CostText.Text = "";
+                return;
+            }
+
+            try
+            {
+                var est = ModelCostEstimator.Compute(GetCommittedModelId(), inputText, outputText);
+                CostText.Text = est.Display;
+                CostText.ToolTip =
+                    $"輸入 ≈ {est.InputTokens} tokens、輸出 ≈ {est.OutputTokens} tokens。" +
+                    "數值為依字數估算，非 API 實際計費。";
+            }
+            catch
+            {
+                CostText.Text = "";
+            }
+        }
+
+        // 把底層拋出的技術性錯誤轉成使用者看得懂的訊息。
+        private static string BuildFriendlyError(Exception ex)
+        {
+            string raw = ex?.Message ?? "";
+            string lower = raw.ToLowerInvariant();
+
+            if (lower.Contains("401") || lower.Contains("unauthorized") || lower.Contains("api key") || lower.Contains("api 金鑰"))
+                return "API 金鑰無效或尚未設定，請檢查模型設定後再試。";
+
+            if (lower.Contains("429") || lower.Contains("rate limit") || lower.Contains("quota") || lower.Contains("insufficient"))
+                return "請求太頻繁或額度不足，請稍候再試，或改用其他模型。";
+
+            if (ex is System.Net.Http.HttpRequestException ||
+                lower.Contains("network") || lower.Contains("connection") || lower.Contains("socket") ||
+                lower.Contains("name resolution") || lower.Contains("無法連線") || lower.Contains("timed out"))
+                return "無法連線到 AI 服務，請確認網路後再試一次。";
+
+            if (lower.Contains("500") || lower.Contains("502") || lower.Contains("503") || lower.Contains("server error") || lower.Contains("overloaded"))
+                return "AI 服務暫時無法使用，請稍後再試。";
+
+            if ((lower.Contains("content") && (lower.Contains("policy") || lower.Contains("blocked"))) ||
+                lower.Contains("refus") || lower.Contains("safety"))
+                return "這個請求被模型拒絕，可能涉及受限制的內容。";
+
+            string trimmed = raw.Length > 140 ? raw.Substring(0, 140).TrimEnd() + "…" : raw;
+            return string.IsNullOrWhiteSpace(trimmed)
+                ? "發生未預期的錯誤，請重試一次。"
+                : $"執行時發生錯誤：{trimmed}";
+        }
+
+        private async void RerunButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isGenerating)
+                return;
+
+            string prompt = string.IsNullOrWhiteSpace(_lastRunPrompt)
+                ? BuildPromptForCurrentRun(GetTopText())
+                : _lastRunPrompt;
+
+            if (string.IsNullOrWhiteSpace(prompt))
+                return;
+
+            await GenerateBottomReplyFromTopAsync(prompt);
+        }
+
+        // §3：只重新生成最終答案，沿用上一次的 research / capability 成果（較快、不重跑搜尋）。
+        private async void RegenerateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isGenerating)
+                return;
+
+            if (_parent?.NodeService == null)
+                return;
+
+            string prompt = string.IsNullOrWhiteSpace(_lastRunPrompt)
+                ? BuildPromptForCurrentRun(GetTopText())
+                : _lastRunPrompt;
+
+            if (string.IsNullOrWhiteSpace(prompt))
+                return;
+
+            await GenerateBottomReplyFromTopAsync(
+                prompt,
+                (delta, token) => _parent.NodeService.RegenerateAnswerStreamAsync(this, delta, token));
+        }
+
+        // §3：用相同輸入整段重播工作流。
+        private async void ReplayButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isGenerating)
+                return;
+
+            if (_parent?.NodeService == null)
+                return;
+
+            string prompt = string.IsNullOrWhiteSpace(_lastRunPrompt)
+                ? BuildPromptForCurrentRun(GetTopText())
+                : _lastRunPrompt;
+
+            if (string.IsNullOrWhiteSpace(prompt))
+                return;
+
+            await GenerateBottomReplyFromTopAsync(
+                prompt,
+                (delta, token) => _parent.NodeService.ReplayWorkflowStreamAsync(this, delta, token));
+        }
+
+        public async Task<bool> RunCurrentTopTextAsync(CancellationToken externalToken = default)
         {
             if (_isGenerating)
                 return false;
@@ -1338,7 +1703,7 @@ namespace test
             ContentChanged?.Invoke(this, EventArgs.Empty);
             _parent?.NotifyNodeSubmitted(this);
 
-            await GenerateBottomReplyFromTopAsync(runTop);
+            await GenerateBottomReplyFromTopAsync(runTop, externalToken: externalToken);
 
             string bottom = GetBottomText() ?? "";
             return !string.IsNullOrWhiteSpace(bottom) &&
@@ -1361,7 +1726,7 @@ namespace test
             return prompt;
         }
 
-        private TimeSpan ResolveExecutionTimeout(string topText)
+        private TimeSpan ResolveExecutionTimeout(string? topText)
         {
             bool hasAttachments = _attachments.Count > 0;
             string text = topText ?? "";
@@ -1377,12 +1742,7 @@ namespace test
                     "簡報", "投影片", "ppt", "pptx", "slides", "slide", "presentation");
 
             // 生成圖片：gpt-image-2 出圖較慢（可能 1～3 分鐘），需要更寬鬆的逾時。
-            // 關鍵詞需與 OrchestrationPlanner.ResolveTaskType 的 ImageGeneration 清單保持一致。
-            bool imageTask =
-                ContainsAny(text, lower,
-                    "圖片", "圖像", "生成圖片", "產生圖片",
-                    "畫一張", "畫一隻", "畫一幅", "畫個", "畫張", "幫我畫", "請畫",
-                    "image", "generate image", "draw");
+            bool imageTask = IsImageTask(text);
 
             if (hasAttachments && codePatchTask)
                 return TimeSpan.FromMinutes(10);
@@ -1399,6 +1759,18 @@ namespace test
             return TimeSpan.FromMinutes(3);
         }
 
+        // 生成圖片偵測：關鍵詞需與 OrchestrationPlanner.ResolveTaskType 的 ImageGeneration 清單保持一致。
+        private static bool IsImageTask(string? topText)
+        {
+            string text = topText ?? "";
+            string lower = text.ToLowerInvariant();
+
+            return ContainsAny(text, lower,
+                "圖片", "圖像", "生成圖片", "產生圖片",
+                "畫一張", "畫一隻", "畫一幅", "畫個", "畫張", "幫我畫", "請畫",
+                "image", "generate image", "draw");
+        }
+
         private static string FormatTimeout(TimeSpan timeout)
         {
             if (timeout.TotalMinutes >= 1)
@@ -1407,15 +1779,78 @@ namespace test
             return $"{(int)Math.Round(timeout.TotalSeconds)} 秒";
         }
 
-        private void StartBottomLoadingAnimation()
+        private void StartBottomLoadingAnimation() => StartBottomLoadingAnimation(false);
+
+        private void StartBottomLoadingAnimation(bool imageTask)
         {
             _isShowingLoadingText = true;
             BottomDisplay.Text = "";
+
+            _loadingIsImageTask = imageTask;
+            _loadingBaseText = imageTask ? "正在生成圖片" : "AI 正在生成";
+            _loadingExtraHint = "";
+            _loadingStartUtc = DateTime.UtcNow;
+
+            if (BottomLoadingText != null)
+                BottomLoadingText.Text = _loadingBaseText + "…";
 
             if (BottomLoadingOverlay != null)
                 BottomLoadingOverlay.Visibility = Visibility.Visible;
 
             StartSpinnerAnimation();
+            StartLoadingTimer();
+        }
+
+        private void StartLoadingTimer()
+        {
+            StopLoadingTimer();
+
+            _loadingTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _loadingTimer.Tick += LoadingTimer_Tick;
+            _loadingTimer.Start();
+        }
+
+        private void LoadingTimer_Tick(object? sender, EventArgs e)
+        {
+            if (BottomLoadingText == null)
+                return;
+
+            var elapsed = DateTime.UtcNow - _loadingStartUtc;
+
+            string clock = elapsed.TotalMinutes >= 1
+                ? $"{(int)elapsed.TotalMinutes}:{elapsed.Seconds:D2}"
+                : $"{elapsed.Seconds} 秒";
+
+            string hint = string.IsNullOrWhiteSpace(_loadingExtraHint)
+                ? (_loadingIsImageTask ? "（gpt-image 通常需 1～3 分鐘）" : "")
+                : $"（{_loadingExtraHint}）";
+
+            BottomLoadingText.Text = $"{_loadingBaseText}… {clock}{hint}";
+        }
+
+        /// <summary>長任務（影片生成等）即時進度提示，可從背景執行緒呼叫。傳 null/空字串清除。</summary>
+        public void SetLoadingHint(string? hint)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetLoadingHint(hint));
+                return;
+            }
+
+            _loadingExtraHint = hint ?? "";
+        }
+
+        private void StopLoadingTimer()
+        {
+            if (_loadingTimer != null)
+            {
+                _loadingTimer.Stop();
+                _loadingTimer.Tick -= LoadingTimer_Tick;
+                _loadingTimer = null;
+            }
         }
 
         private void StartSpinnerAnimation()
@@ -1442,6 +1877,8 @@ namespace test
 
         private void StopBottomLoadingAnimation(bool clearIfLoading)
         {
+            StopLoadingTimer();
+
             if (BottomLoadingSpinnerRotate != null)
             {
                 BottomLoadingSpinnerRotate.BeginAnimation(

@@ -46,7 +46,8 @@ namespace test
 
             Add(AiModelRegistry.Default.Id, "default fallback");
 
-            foreach (var def in AiModelRegistry.All)
+            // Multi-Model v1：最後手段依成本由便宜到貴，且只含已啟用模型。
+            foreach (var def in AiModelRegistry.Available.OrderBy(x => (int)x.CostTier))
                 Add(def.Id, "last-resort fallback");
 
             return result;

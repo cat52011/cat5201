@@ -53,5 +53,8 @@ namespace test
             = Array.Empty<string>();
         public IReadOnlyList<AgentWorkspaceArtifactRecord> WorkspaceArtifacts { get; set; }
             = Array.Empty<AgentWorkspaceArtifactRecord>();
+
+        // Memory v1 視覺化：本次召回的偏好 / 記憶統計。
+        public MemoryRecallStats MemoryRecall { get; set; } = MemoryRecallStats.Empty;
     }
 }

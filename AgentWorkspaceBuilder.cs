@@ -52,6 +52,9 @@ namespace test
             if (value is CodeDiffValidationPayload)
                 return "sandbox";
 
+            if (value is CodeTaskAssessmentPayload)
+                return "analysis";
+
             if (value is ReasoningPayload ||
                 value is TaskDecompositionPayload ||
                 value is DelegateOutputPayload)
@@ -68,6 +71,9 @@ namespace test
 
             if (value is PresentationOutlinePayload)
                 return "presentation";
+
+            if (value is VideoPlanPayload || value is VideoRequestPayload)
+                return "media";
 
             if (value is FinalSynthesisPayload)
                 return "final";
@@ -100,6 +106,10 @@ namespace test
         {
             key ??= "";
 
+            // VideoPlan 是 Claude 產出的文字計畫（劇本/分鏡），非影片二進位。
+            if (value is VideoPlanPayload)
+                return "markdown";
+
             if (key.Contains("image", StringComparison.OrdinalIgnoreCase))
                 return "image";
 
@@ -122,6 +132,9 @@ namespace test
                 return "diff";
 
             if (value is CodeDiffValidationPayload)
+                return "markdown";
+
+            if (value is CodeTaskAssessmentPayload)
                 return "markdown";
 
             if (value is VerifiedFactPayload ||
@@ -152,6 +165,8 @@ namespace test
                 value is GeneratedFilePayload ||
                 value is FinalSynthesisPayload ||
                 value is PresentationOutlinePayload ||
+                value is VideoRequestPayload ||
+                value is VideoPlanPayload ||
                 value is CodeDiffArtifactPayload)
             {
                 return true;
@@ -193,6 +208,9 @@ namespace test
             if (value is CodeDiffValidationPayload validation)
                 return $"Code Diff Validation - {validation.Status}";
 
+            if (value is CodeTaskAssessmentPayload assessment)
+                return $"Code Task Assessment - {assessment.SizeTier}/{assessment.RiskLevel}";
+
             if (value is ReasoningPayload reasoning)
                 return $"Reasoning - {reasoning.ReasoningType}";
 
@@ -217,6 +235,21 @@ namespace test
 
             if (value is PresentationOutlinePayload presentation)
                 return $"Presentation Outline - {presentation.Title} ({presentation.SlideCount} slides)";
+
+            if (value is VideoPlanPayload plan)
+                return string.IsNullOrWhiteSpace(plan.Title)
+                    ? $"Video Plan - {plan.Scenes?.Count ?? 0} scenes"
+                    : $"Video Plan - {plan.Title}";
+
+            if (value is VideoRequestPayload video)
+            {
+                string fileName = string.IsNullOrWhiteSpace(video.FilePath)
+                    ? ""
+                    : System.IO.Path.GetFileName(video.FilePath);
+                return string.IsNullOrWhiteSpace(fileName)
+                    ? $"Video Request - {video.Status}"
+                    : $"Video - {fileName}";
+            }
 
             if (value is FinalSynthesisPayload final)
             {
@@ -283,6 +316,9 @@ namespace test
             if (value is CodeDiffValidationPayload validation)
                 return validation.Summary ?? "";
 
+            if (value is CodeTaskAssessmentPayload assessment)
+                return assessment.Summary ?? "";
+
             if (value is ReasoningPayload reasoning)
                 return reasoning.OutputGuidance ?? "";
 
@@ -322,6 +358,18 @@ namespace test
                     ? $", Requested={presentation.RequestedSlideCount}"
                     : "";
                 return $"Slides={presentation.SlideCount}{requested}, Pipeline={presentation.PipelineId}";
+            }
+
+            if (value is VideoPlanPayload plan)
+            {
+                string logline = string.IsNullOrWhiteSpace(plan.Logline) ? "" : $" - {plan.Logline}";
+                return $"Scenes={plan.Scenes?.Count ?? 0}, {plan.TotalDurationSeconds}s{logline}";
+            }
+
+            if (value is VideoRequestPayload video)
+            {
+                string err = string.IsNullOrWhiteSpace(video.ErrorMessage) ? "" : $", Error={video.ErrorMessage}";
+                return $"Status={video.Status}, Model={video.Model}, {video.DurationSeconds}s, Progress={video.ProgressPercent}%{err}";
             }
 
             if (value is FinalSynthesisPayload final)

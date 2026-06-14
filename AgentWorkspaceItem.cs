@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 
 namespace test
 {
@@ -24,6 +25,19 @@ namespace test
         public bool IsUserVisible { get; init; } = true;
 
         public string Title { get; init; } = "";
+
+        // Workspace v2：source metadata + status + dependencies。
+        // 空字串時由 AgentWorkspace.BuildArtifactRecords 依 payload 型別集中推導，
+        // 因此各 capability 不必每處都填，schema 仍維持一致。
+        public string ModelId { get; init; } = "";
+
+        public string CapabilityId { get; init; } = "";
+
+        public string Status { get; init; } = "";
+        // ArtifactStatus: draft / ready / validated / exported / failed
+
+        public IReadOnlyList<string> DependsOn { get; init; } = Array.Empty<string>();
+        // 上游 artifact 的 ItemType（或 Id），用來顯示產出物之間的依賴。
 
         public object? Payload { get; init; }
 

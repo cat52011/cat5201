@@ -301,6 +301,10 @@
                       Header="字體大小…"
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="FontSizeMenuItem_Click"/>
+            <MenuItem x:Name="ExpandWorkflowMenuItem"
+                      Header="⚡ 展開並自動執行工作流"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="ExpandWorkflowMenuItem_Click"/>
             <MenuItem x:Name="RunWorkflowMenuItem"
                       Header="執行此節點與下游"
                       Style="{StaticResource NodeMenuItemStyle}"
@@ -309,6 +313,15 @@
                       Header="Dry run 此節點與下游"
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="DryRunWorkflowMenuItem_Click"/>
+            <MenuItem x:Name="SkipStepMenuItem"
+                      Header="⏭ 略過此步、從下一步續跑"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="SkipStepMenuItem_Click"/>
+            <MenuItem x:Name="StopWorkflowMenuItem"
+                      Header="⏹ 停止工作流"
+                      Foreground="#D32F2F"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="StopWorkflowMenuItem_Click"/>
             <Separator Style="{StaticResource NodeMenuSeparatorStyle}"/>
             <MenuItem x:Name="DeleteMenuItem"
                       Header="刪除"
@@ -540,7 +553,8 @@
 
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate>
-                                        <StackPanel Orientation="Horizontal">
+                                        <StackPanel Orientation="Horizontal"
+                                                    ToolTip="{Binding CapabilitySummary}">
                                             <Image Source="{Binding IconPath}"
                                                    Width="14"
                                                    Height="14"
@@ -548,6 +562,17 @@
                                                    VerticalAlignment="Center"/>
                                             <TextBlock Text="{Binding DisplayName}"
                                                        VerticalAlignment="Center"/>
+                                            <!-- Multi-Model v1：成本層級徽章 -->
+                                            <Border Background="#F0F2F5"
+                                                    CornerRadius="6"
+                                                    Padding="5,1,5,1"
+                                                    Margin="6,0,0,0"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding CostTierLabel}"
+                                                           FontSize="9.5"
+                                                           Foreground="#667085"
+                                                           VerticalAlignment="Center"/>
+                                            </Border>
                                         </StackPanel>
                                     </DataTemplate>
                                 </ComboBox.ItemTemplate>
@@ -566,7 +591,6 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
@@ -598,14 +622,20 @@
                                       Data="M 32 8 A 24 24 0 1 1 10 40"/>
                             </Canvas>
                         </Viewbox>
-                        <TextBlock Text="AI 正在生成"
+                        <TextBlock x:Name="BottomLoadingText"
+                                   Text="AI 正在生成…"
                                    FontSize="15"
                                    Foreground="#4A4A4A"
                                    VerticalAlignment="Center"/>
                     </StackPanel>
 
+                    <!-- 文字 + 圖片 + 檔案 同一捲動區：圖片不再擠壓文字，內容變長就一起捲動 -->
+                    <ScrollViewer Grid.Row="0"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  PreviewMouseWheel="OutputScroll_PreviewMouseWheel">
+                        <StackPanel>
                     <TextBox x:Name="BottomDisplay"
-                             Grid.Row="0"
                              Margin="20,10,20,10"
                              Panel.ZIndex="0"
                              TextWrapping="Wrap"
@@ -617,12 +647,11 @@
                              CaretBrush="Transparent"
                              FocusVisualStyle="{x:Null}"
                              IsReadOnlyCaretVisible="False"
-                             VerticalScrollBarVisibility="Auto"
+                             VerticalScrollBarVisibility="Disabled"
                              HorizontalScrollBarVisibility="Disabled"/>
 
                     <!-- 生成圖片：直接在輸出區內顯示，點擊可開啟原圖 -->
                     <Border x:Name="OutputImageHost"
-                            Grid.Row="1"
                             Margin="20,4,20,10"
                             HorizontalAlignment="Left"
                             CornerRadius="8"
@@ -642,7 +671,6 @@
 
                     <!-- 生成檔案連結：垂直排列，「檔案：[可點擊藍色底線檔名]」 -->
                     <StackPanel x:Name="OutputFileHost"
-                                Grid.Row="2"
                                 Margin="20,0,20,10"
                                 Visibility="Collapsed">
                         <ItemsControl x:Name="OutputFileItems">
@@ -677,6 +705,90 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- 狀態列：失敗時的重新執行 + 失敗原因摘要；成功時的 token / 成本估算（固定在底部） -->
+                    <Grid x:Name="StatusFooter"
+                          Grid.Row="1"
+                          Margin="20,2,20,4"
+                          Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <StackPanel.Resources>
+                                <Style TargetType="Border">
+                                    <Setter Property="CornerRadius" Value="6"/>
+                                </Style>
+                            </StackPanel.Resources>
+
+                            <!-- 失敗時：從失敗續跑（整段重新執行） -->
+                            <Button x:Name="RerunButton"
+                                    Content="↻ 重新執行"
+                                    Visibility="Collapsed"
+                                    FontSize="13"
+                                    Foreground="#C0392B"
+                                    Background="#FBEAE8"
+                                    BorderBrush="#E8C5C0"
+                                    BorderThickness="1"
+                                    Padding="10,3,10,3"
+                                    Cursor="Hand"
+                                    VerticalAlignment="Center"
+                                    Click="RerunButton_Click"/>
+
+                            <!-- 成功時：只重新生成答案（沿用既有 research / capability 成果） -->
+                            <Button x:Name="RegenerateButton"
+                                    Content="↻ 重新生成答案"
+                                    Visibility="Collapsed"
+                                    FontSize="13"
+                                    Foreground="#2E6FE0"
+                                    Background="#EAF1FD"
+                                    BorderBrush="#C3D6F7"
+                                    BorderThickness="1"
+                                    Padding="10,3,10,3"
+                                    Margin="0,0,6,0"
+                                    Cursor="Hand"
+                                    VerticalAlignment="Center"
+                                    ToolTip="沿用這次的搜尋與分析成果，只重新生成最終答案（較快、不重跑 research）"
+                                    Click="RegenerateButton_Click"/>
+
+                            <!-- 成功時：整段重播（重新跑完整工作流） -->
+                            <Button x:Name="ReplayButton"
+                                    Content="⟳ 重播整段"
+                                    Visibility="Collapsed"
+                                    FontSize="13"
+                                    Foreground="#5A6675"
+                                    Background="#EFF1F4"
+                                    BorderBrush="#D5DAE1"
+                                    BorderThickness="1"
+                                    Padding="10,3,10,3"
+                                    Cursor="Hand"
+                                    VerticalAlignment="Center"
+                                    ToolTip="用相同輸入，從頭重新執行整個工作流"
+                                    Click="ReplayButton_Click"/>
+                        </StackPanel>
+
+                        <TextBlock x:Name="StatusText"
+                                   Grid.Column="1"
+                                   Margin="10,0,10,0"
+                                   FontSize="12.5"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"
+                                   Foreground="#9E9E9E"/>
+
+                        <TextBlock x:Name="CostText"
+                                   Grid.Column="2"
+                                   FontSize="12.5"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Right"
+                                   Foreground="#9E9E9E"/>
+                    </Grid>
 
                 </Grid>
             </Border>
