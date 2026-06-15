@@ -686,14 +686,14 @@ namespace test
     bool useStreaming,
     CancellationToken ct)
         {
-            bool allowExpensiveFallbacks =
-                string.Equals(decision.StatusLabel, "Manual", StringComparison.OrdinalIgnoreCase) &&
-                AiAutoCostPolicy.IsExpensiveAutoModel(decision.ModelId);
+            // §15 個人化：fallback 鏈的成本過濾只在 Auto / API 模式套用個人化開關；
+            // 手動模式永遠獨立——使用者選什麼就以它為主，不做任何成本剔除。
+            bool applyUserCostBlock = _main.IsAutoModelSelectionEnabled();
 
             var candidates = AiFallbackPlanner.BuildCandidates(
                 decision.ModelId,
                 decision.TaskMode,
-                allowExpensiveFallbacks);
+                applyUserCostBlock);
 
             if (decision.ForceSingleModel)
             {
@@ -712,7 +712,7 @@ namespace test
                     candidates = AiFallbackPlanner.BuildCandidates(
                             decision.ModelId,
                             decision.TaskMode,
-                            allowExpensiveFallbacks)
+                            applyUserCostBlock)
                         .Take(1)
                         .ToList();
                 }

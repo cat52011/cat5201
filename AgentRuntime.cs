@@ -98,9 +98,11 @@ namespace test
                     preferredModelId: forcedAgent.DefaultModelId,
                     preferredTaskMode: decision.TaskMode);
 
-                string forcedRuntimeModel = _main.IsAutoModelSelectionEnabled()
-                    ? AiAutoCostPolicy.NormalizeForAuto(profile.RuntimeModelId)
-                    : AiModelHelper.NormalizeNodeModel(profile.RuntimeModelId);
+                string normalizedRuntime = AiModelHelper.NormalizeNodeModel(profile.RuntimeModelId);
+                string forcedRuntimeModel = (_main.IsAutoModelSelectionEnabled() &&
+                    AiAutoCostPolicy.TryEnforceUserBlock(normalizedRuntime, out var blockedModel))
+                    ? blockedModel
+                    : normalizedRuntime;
 
                 decision.RequestedAgentId = forcedAgent.Id;
                 decision.ActualAgentId = forcedAgent.Id;
@@ -2039,9 +2041,9 @@ namespace test
                 return;
 
             string requested = AiModelHelper.NormalizeNodeModel(decision.ModelId);
-            string resolved = AiAutoCostPolicy.NormalizeForAuto(requested);
-
-            if (string.Equals(requested, resolved, StringComparison.OrdinalIgnoreCase))
+            // §15 個人化：成本降級的唯一依據＝使用者的個人化開關。
+            // 只有使用者明確關閉該高成本模型時才降級；未關閉就原樣保留。
+            if (!AiAutoCostPolicy.TryEnforceUserBlock(requested, out string resolved))
                 return;
 
             decision.ModelId = resolved;

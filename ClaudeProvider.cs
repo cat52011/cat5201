@@ -31,16 +31,20 @@ namespace test
             var svc = _router.GetClaudeService(route.ServiceModel);
 
             var contentBlocks = await BuildContentBlocksAsync(request, ct).ConfigureAwait(false);
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateAsync(
                 request.SystemPrompt,
                 contentBlocks,
                 request.MaxOutputTokens,
-                ct).ConfigureAwait(false);
+                ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
             return AiResponse.Success(
                 text: text,
                 modelUsed: route.NodeModel,
-                providerUsed: Kind);
+                providerUsed: Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
 
         public async Task<AiResponse> GenerateStreamAsync(
@@ -52,17 +56,21 @@ namespace test
             var svc = _router.GetClaudeService(route.ServiceModel);
 
             var contentBlocks = await BuildContentBlocksAsync(request, ct).ConfigureAwait(false);
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateStreamAsync(
                 request.SystemPrompt,
                 contentBlocks,
                 onDelta,
                 request.MaxOutputTokens,
-                ct).ConfigureAwait(false);
+                ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
             return AiResponse.Success(
                 text: text,
                 modelUsed: route.NodeModel,
-                providerUsed: Kind);
+                providerUsed: Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
 
         private static async Task<List<object>> BuildContentBlocksAsync(AiRequest request, CancellationToken ct)

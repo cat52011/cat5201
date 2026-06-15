@@ -21,8 +21,11 @@ namespace test
                     ? decision.ModelId
                     : decision.ActualModelId);
 
-            // Token / 成本估算：用節點的輸入（top）與輸出（bottom）文字推估，與底部成本列同一來源。
-            var costEst = ModelCostEstimator.Compute(actualModelId, node.GetTopText(), node.GetBottomText());
+            // Token / 成本：優先用 API 回傳的真實 usage（含系統提示/記憶/上下文，數字才準）；
+            // 該模型尚未接真實 usage 時，退回用節點輸入（top）/輸出（bottom）字元數推估。
+            var costEst = node.TryGetRealTokenUsage(out int realIn, out int realOut)
+                ? ModelCostEstimator.FromUsage(actualModelId, realIn, realOut)
+                : ModelCostEstimator.Compute(actualModelId, node.GetTopText(), node.GetBottomText());
 
             return new AiExecutionLogEntry
             {

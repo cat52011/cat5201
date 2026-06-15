@@ -213,6 +213,17 @@ namespace test
             NodeControl node,
             NodeExecutionDecision decision)
         {
+            // §15 成本控制：關閉高成本模型「只影響自動 / API 模式」；手動模式永遠尊重使用者明確選的模型。
+            if (_main.IsAutoModelSelectionEnabled() &&
+                AiAutoCostPolicy.TryEnforceUserBlock(decision.ModelId, out var costSafeModel))
+            {
+                string originalLabel = AiModelHelper.GetDefinition(decision.ModelId).DisplayName;
+                string safeLabel = AiModelHelper.GetDefinition(costSafeModel).DisplayName;
+                decision.ModelId = costSafeModel;
+                decision.ResolverReason = (decision.ResolverReason ?? "").TrimEnd()
+                    + $" / 成本控制：已關閉高成本模型，{originalLabel} → {safeLabel}";
+            }
+
             var attachments = _main.GetAttachmentsForNode(node);
 
             bool hasImageAttachments = attachments.Any(a =>

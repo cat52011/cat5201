@@ -61,6 +61,44 @@ namespace test
         // 目前編輯中的暫時模型
         private string _editingModelId = AiModels.DefaultNodeModel;
 
+        // ===== #1 真實 token 用量載體 =====
+        // 本次主回覆執行從 API usage 累積的真實 token 數（跨 continuation 多輪相加）。
+        // 以「節點」為載體：不同節點各自獨立，多節點並行執行也安全。null/0 = 該模型尚未接真實 usage。
+        private int _lastInputTokens;
+        private int _lastOutputTokens;
+        private bool _hasRealTokenUsage;
+
+        /// <summary>每次主回覆執行開始時清零（之後同一次執行的多輪累加）。</summary>
+        public void ResetTokenUsage()
+        {
+            _lastInputTokens = 0;
+            _lastOutputTokens = 0;
+            _hasRealTokenUsage = false;
+        }
+
+        /// <summary>累加一次 API 呼叫回傳的真實用量；任一為 null 表示該 provider 未提供，略過。</summary>
+        public void RecordTokenUsage(int? inputTokens, int? outputTokens)
+        {
+            if (inputTokens.HasValue && inputTokens.Value > 0)
+            {
+                _lastInputTokens += inputTokens.Value;
+                _hasRealTokenUsage = true;
+            }
+            if (outputTokens.HasValue && outputTokens.Value > 0)
+            {
+                _lastOutputTokens += outputTokens.Value;
+                _hasRealTokenUsage = true;
+            }
+        }
+
+        /// <summary>取本次執行的真實用量；無真實資料回 false（呼叫端退回估算）。</summary>
+        public bool TryGetRealTokenUsage(out int inputTokens, out int outputTokens)
+        {
+            inputTokens = _lastInputTokens;
+            outputTokens = _lastOutputTokens;
+            return _hasRealTokenUsage;
+        }
+
         public event EventHandler? Moved;
         public event EventHandler? ContentChanged;
 
@@ -1172,7 +1210,8 @@ namespace test
             if (_parent == null || _isGenerating)
                 return;
 
-            await _parent.RunManualWorkflowChainAsync(this);
+            // #4：沿「流動模式」邊扇出執行（先跑本節點，再等它跑完才跑各流動下游）。
+            await _parent.RunFlowWorkflowAsync(this, runStartNode: true);
         }
 
         // §4 stop：停止整條正在跑的工作流鏈。
@@ -1352,6 +1391,9 @@ namespace test
             _isGenerating = true;
             topText ??= "";
             _lastRunPrompt = topText;
+            // #1 真實用量：頂層執行開始時清零一次；本次所有子步驟 / continuation 輪次都累加到同一個節點，
+            //  讓多代理編排也能算出「整個節點」的總 token，而非只剩最後一步。
+            ResetTokenUsage();
             bool isImageTask = IsImageTask(topText);
             UpdateEditButtons();
             ClearOutputFiles();
@@ -1662,6 +1704,11 @@ namespace test
 
         private TimeSpan ResolveExecutionTimeout(string? topText)
         {
+            // §15 個人化：使用者若手動設定逾時上限（>0 秒），一律以它為準，覆蓋以下自動判斷。
+            int manualSecs = _parent?.GetManualTimeoutSeconds() ?? 0;
+            if (manualSecs > 0)
+                return TimeSpan.FromSeconds(manualSecs);
+
             bool hasAttachments = _attachments.Count > 0;
             string text = topText ?? "";
             string lower = text.ToLowerInvariant();

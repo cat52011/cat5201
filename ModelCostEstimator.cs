@@ -13,11 +13,12 @@ namespace test
     {
         public readonly struct Estimate
         {
-            public Estimate(int inputTokens, int outputTokens, double usdCost)
+            public Estimate(int inputTokens, int outputTokens, double usdCost, bool isActual = false)
             {
                 InputTokens = inputTokens;
                 OutputTokens = outputTokens;
                 UsdCost = usdCost;
+                IsActual = isActual;
             }
 
             public int InputTokens { get; }
@@ -25,8 +26,14 @@ namespace test
             public int TotalTokens => InputTokens + OutputTokens;
             public double UsdCost { get; }
 
-            // 例：「估算 ≈ 2.4k tokens · 約 NT$0.6」
-            public string Display => $"估算 ≈ {FormatTokens(TotalTokens)} tokens · 約 {FormatTwd(UsdCost)}";
+            // 是否為 API 回傳的真實用量（true）或字元數推估（false）。
+            public bool IsActual { get; }
+
+            // 真實：「實際 2.4k tokens · 約 NT$0.6」；估算：「估算 ≈ 2.4k tokens · 約 NT$0.6」。
+            // token 數標「實際」，金額仍標「約」（價目表與匯率本身是近似值）。
+            public string Display => IsActual
+                ? $"實際 {FormatTokens(TotalTokens)} tokens · 約 {FormatTwd(UsdCost)}"
+                : $"估算 ≈ {FormatTokens(TotalTokens)} tokens · 約 {FormatTwd(UsdCost)}";
         }
 
         // 每百萬 token 美元單價（input / output）。皆為估算值，僅供成本量級參考。
@@ -63,13 +70,24 @@ namespace test
             int inputTokens = EstimateTokens(inputText);
             int outputTokens = EstimateTokens(outputText);
 
+            return BuildEstimate(modelId, inputTokens, outputTokens, isActual: false);
+        }
+
+        /// <summary>用 API 回傳的真實 token 數計算成本（標示為「實際」）。</summary>
+        public static Estimate FromUsage(string? modelId, int inputTokens, int outputTokens)
+        {
+            return BuildEstimate(modelId, Math.Max(0, inputTokens), Math.Max(0, outputTokens), isActual: true);
+        }
+
+        private static Estimate BuildEstimate(string? modelId, int inputTokens, int outputTokens, bool isActual)
+        {
             Price price = ResolvePrice(modelId);
 
             double usd =
                 inputTokens / 1_000_000.0 * price.InputPerMillion +
                 outputTokens / 1_000_000.0 * price.OutputPerMillion;
 
-            return new Estimate(inputTokens, outputTokens, usd);
+            return new Estimate(inputTokens, outputTokens, usd, isActual);
         }
 
         /// <summary>

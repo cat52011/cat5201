@@ -4,38 +4,33 @@ namespace test
 {
     public static class AiAutoCostPolicy
     {
-        public static string NormalizeForAuto(string? modelId)
+        // §15 個人化成本控制：使用者可關閉這兩個高成本模型。
+        // 與 Auto 的內建降級不同，這兩個開關「無論手動或自動」都會把對應模型降級，做為成本保險。
+        // 由 MainWindow 在載入 / 切換設定時設定；靜態狀態，單一視窗下安全。
+        public static bool BlockOpus { get; set; }
+        public static bool BlockDeepResearch { get; set; }
+
+        /// <summary>若使用者已關閉該高成本模型，回傳降級後模型並輸出 true；否則原樣回傳。</summary>
+        public static bool TryEnforceUserBlock(string? modelId, out string resolvedModel)
         {
-            string raw = (modelId ?? "").Trim();
-            if (string.Equals(raw, "sonar-deep-research", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(raw, AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase))
+            string normalized = AiModelHelper.NormalizeNodeModel(modelId);
+
+            if (BlockOpus &&
+                string.Equals(normalized, AiModels.Claude_Opus46, StringComparison.OrdinalIgnoreCase))
             {
-                return AiModels.Perplexity_Sonar;
+                resolvedModel = AiModels.Claude_Sonnet46;
+                return true;
             }
 
-            if (string.Equals(raw, AiModels.Claude_Opus46, StringComparison.OrdinalIgnoreCase))
-                return AiModels.Claude_Sonnet46;
-
-            string normalized = AiModelHelper.NormalizeNodeModel(modelId);
-            var def = AiModelRegistry.Find(normalized);
-
-            if (def == null)
-                return normalized;
-
-            return def.Provider switch
+            if (BlockDeepResearch &&
+                string.Equals(normalized, AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase))
             {
-                AiProviderType.Claude => AiModels.Claude_Sonnet46,
-                AiProviderType.Perplexity => AiModels.Perplexity_Sonar,
-                _ => normalized
-            };
-        }
+                resolvedModel = AiModels.Perplexity_Sonar;
+                return true;
+            }
 
-        public static bool IsExpensiveAutoModel(string? modelId)
-        {
-            string normalized = AiModelHelper.NormalizeNodeModel(modelId);
-
-            return string.Equals(normalized, AiModels.Claude_Opus46, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(normalized, AiModels.Perplexity_SonarDeepResearch, StringComparison.OrdinalIgnoreCase);
+            resolvedModel = normalized;
+            return false;
         }
     }
 }

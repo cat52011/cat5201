@@ -1149,6 +1149,101 @@ Margin="0,20,20,0">
                                    Margin="0,0,0,8"/>
 
                         <StackPanel x:Name="TaskRoutingList"/>
+
+                        <!-- §15 成本控制：關閉高成本模型 -->
+                        <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
+
+                        <TextBlock Text="成本控制"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,14,0,2"/>
+                        <TextBlock Text="僅影響自動選模型（Auto）模式：關閉後，Auto 不會選用這些高成本模型，會降級為同公司的標準模型。手動模式不受影響，你選什麼就用什麼。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+
+                        <Grid Margin="0,3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="關閉 Claude Opus（高成本）"
+                                           FontSize="12.5" Foreground="#333"/>
+                                <TextBlock Text="降級為 Claude Sonnet"
+                                           FontSize="11" Foreground="#A8A8AC"/>
+                            </StackPanel>
+                            <CheckBox x:Name="BlockOpusSwitch"
+                                      Grid.Column="1"
+                                      Style="{StaticResource AppleSwitchStyle}"
+                                      VerticalAlignment="Center"
+                                      Checked="BlockOpusSwitch_Changed"
+                                      Unchecked="BlockOpusSwitch_Changed"/>
+                        </Grid>
+
+                        <Grid Margin="0,3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="關閉 Perplexity Deep Research（高成本）"
+                                           FontSize="12.5" Foreground="#333"/>
+                                <TextBlock Text="降級為 Perplexity Sonar"
+                                           FontSize="11" Foreground="#A8A8AC"/>
+                            </StackPanel>
+                            <CheckBox x:Name="BlockDeepResearchSwitch"
+                                      Grid.Column="1"
+                                      Style="{StaticResource AppleSwitchStyle}"
+                                      VerticalAlignment="Center"
+                                      Checked="BlockDeepResearchSwitch_Changed"
+                                      Unchecked="BlockDeepResearchSwitch_Changed"/>
+                        </Grid>
+
+                        <!-- §15 逾時上限 -->
+                        <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
+
+                        <TextBlock Text="逾時上限"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,14,0,2"/>
+                        <TextBlock Text="每個節點等待 AI 回應的最長秒數。留空＝自動（依任務類型，3～10 分鐘）。設定範圍 30～1800 秒；圖片／報告等較慢的任務請勿設太短。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border Background="#F7F7F8"
+                                    BorderBrush="#E4E4E7"
+                                    BorderThickness="1"
+                                    CornerRadius="9"
+                                    Width="96"
+                                    Height="34">
+                                <TextBox x:Name="TimeoutInput"
+                                         BorderThickness="0"
+                                         Background="Transparent"
+                                         VerticalContentAlignment="Center"
+                                         Padding="12,0"
+                                         FontSize="12.5"
+                                         Foreground="#333"
+                                         MaxLength="4"
+                                         TextChanged="TimeoutInput_Changed"/>
+                            </Border>
+                            <TextBlock Text="秒"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,0,0"
+                                       FontSize="12.5"
+                                       Foreground="#666"/>
+                            <TextBlock Text="（留空＝自動）"
+                                       VerticalAlignment="Center"
+                                       Margin="10,0,0,0"
+                                       FontSize="11.5"
+                                       Foreground="#A8A8AC"/>
+                        </StackPanel>
                     </StackPanel>
                     </ScrollViewer>
 

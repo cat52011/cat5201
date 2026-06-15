@@ -9,12 +9,12 @@ namespace test
         public static IReadOnlyList<(string ModelId, string Reason)> BuildCandidates(
             string primaryModelId,
             NodeTaskMode taskMode)
-            => BuildCandidates(primaryModelId, taskMode, allowExpensiveAutoModels: false);
+            => BuildCandidates(primaryModelId, taskMode, applyUserCostBlock: false);
 
         public static IReadOnlyList<(string ModelId, string Reason)> BuildCandidates(
             string primaryModelId,
             NodeTaskMode taskMode,
-            bool allowExpensiveAutoModels)
+            bool applyUserCostBlock)
         {
             var result = new List<(string ModelId, string Reason)>();
 
@@ -25,7 +25,10 @@ namespace test
 
                 string normalized = AiModelHelper.NormalizeNodeModel(modelId);
 
-                if (!allowExpensiveAutoModels && AiAutoCostPolicy.IsExpensiveAutoModel(normalized))
+                // §15 個人化：fallback 候選的成本過濾，唯一依據是個人化開關。
+                // 只有被使用者「明確關閉」的高成本模型才從候選鏈剔除；未關閉者一律保留，
+                // 不再硬編碼把 Opus / Deep Research 當成永遠要避開的昂貴模型。
+                if (applyUserCostBlock && AiAutoCostPolicy.TryEnforceUserBlock(normalized, out _))
                     return;
 
                 if (result.Any(x => string.Equals(x.ModelId, normalized, StringComparison.OrdinalIgnoreCase)))

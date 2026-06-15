@@ -68,7 +68,8 @@ namespace test
             string instructions,
             IEnumerable<object> contentBlocks,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             var payload = new
             {
@@ -103,7 +104,32 @@ namespace test
             if (!resp.IsSuccessStatusCode)
                 throw new InvalidOperationException($"Claude API 失敗 ({(int)resp.StatusCode}): {body}");
 
+            TryExtractUsageFromClaudeJson(body, onUsage);
             return ExtractTextFromClaudeJson(body);
+        }
+
+        // 從非串流回應 JSON 的 usage 區塊取真實 token 數（input_tokens / output_tokens）。
+        private static void TryExtractUsageFromClaudeJson(string json, Action<int, int>? onUsage)
+        {
+            if (onUsage == null || string.IsNullOrWhiteSpace(json))
+                return;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("usage", out var usage) &&
+                    usage.ValueKind == JsonValueKind.Object)
+                {
+                    int input = usage.TryGetProperty("input_tokens", out var i) && i.TryGetInt32(out var iv) ? iv : 0;
+                    int output = usage.TryGetProperty("output_tokens", out var o) && o.TryGetInt32(out var ov) ? ov : 0;
+                    if (input > 0 || output > 0)
+                        onUsage(input, output);
+                }
+            }
+            catch
+            {
+                // usage 解析失敗就略過，呼叫端會退回估算。
+            }
         }
 
         public Task<string> GenerateStreamAsync(
@@ -129,7 +155,8 @@ namespace test
             IEnumerable<object> contentBlocks,
             Action<string>? onDelta,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             var payload = new
             {
@@ -173,6 +200,7 @@ namespace test
             string? currentEventName = null;
             var dataBuilder = new StringBuilder();
             var finalText = new StringBuilder();
+            var usage = new StreamUsage();
 
             while (!reader.EndOfStream)
             {
@@ -187,7 +215,7 @@ namespace test
                     if (dataBuilder.Length > 0)
                     {
                         var data = dataBuilder.ToString().Trim();
-                        ProcessSseEvent(currentEventName, data, onDelta, finalText);
+                        ProcessSseEvent(currentEventName, data, onDelta, finalText, usage);
                     }
 
                     currentEventName = null;
@@ -210,14 +238,26 @@ namespace test
                 }
             }
 
+            // 串流結束：把累積到的真實 token 用量回報給呼叫端（有抓到才回報）。
+            if (onUsage != null && (usage.Input > 0 || usage.Output > 0))
+                onUsage(usage.Input, usage.Output);
+
             return finalText.ToString();
+        }
+
+        // 串流期間累積的真實 token 用量：input 來自 message_start，output 取 message_delta 的最後一筆。
+        private sealed class StreamUsage
+        {
+            public int Input;
+            public int Output;
         }
 
         private static void ProcessSseEvent(
             string? eventName,
             string data,
             Action<string>? onDelta,
-            StringBuilder finalText)
+            StringBuilder finalText,
+            StreamUsage usage)
         {
             try
             {
@@ -227,6 +267,28 @@ namespace test
                 string type = "";
                 if (root.TryGetProperty("type", out var typeEl))
                     type = typeEl.GetString() ?? "";
+
+                // message_start：帶 input_tokens（真實輸入，含系統提示/上下文）+ 初始 output_tokens。
+                if (string.Equals(type, "message_start", StringComparison.OrdinalIgnoreCase) &&
+                    root.TryGetProperty("message", out var msgEl) &&
+                    msgEl.ValueKind == JsonValueKind.Object &&
+                    msgEl.TryGetProperty("usage", out var startUsage) &&
+                    startUsage.ValueKind == JsonValueKind.Object)
+                {
+                    if (startUsage.TryGetProperty("input_tokens", out var i) && i.TryGetInt32(out var iv))
+                        usage.Input = iv;
+                    if (startUsage.TryGetProperty("output_tokens", out var o) && o.TryGetInt32(out var ov))
+                        usage.Output = ov;
+                }
+
+                // message_delta：output_tokens 為到目前為止的累計，取最後一筆即為最終輸出量。
+                if (string.Equals(type, "message_delta", StringComparison.OrdinalIgnoreCase) &&
+                    root.TryGetProperty("usage", out var deltaUsage) &&
+                    deltaUsage.ValueKind == JsonValueKind.Object &&
+                    deltaUsage.TryGetProperty("output_tokens", out var od) && od.TryGetInt32(out var odv))
+                {
+                    usage.Output = odv;
+                }
 
                 bool isTextDelta =
                     string.Equals(type, "content_block_delta", StringComparison.OrdinalIgnoreCase) ||

@@ -13,6 +13,10 @@ namespace test
         public string FinishReason { get; init; } = "";
         public string ErrorMessage { get; init; } = "";
 
+        // API 回傳的真實 token 用量。null = 該 provider 尚未接上真實 usage（呼叫端會退回估算）。
+        public int? InputTokens { get; init; }
+        public int? OutputTokens { get; init; }
+
         public IReadOnlyDictionary<string, string> Metadata { get; init; }
             = new Dictionary<string, string>();
 
@@ -21,7 +25,9 @@ namespace test
             string modelUsed,
             AiProviderKind providerUsed,
             string finishReason = "completed",
-            IReadOnlyDictionary<string, string>? metadata = null)
+            IReadOnlyDictionary<string, string>? metadata = null,
+            int? inputTokens = null,
+            int? outputTokens = null)
         {
             return new AiResponse
             {
@@ -30,7 +36,9 @@ namespace test
                 ModelUsed = modelUsed ?? "",
                 ProviderUsed = providerUsed,
                 FinishReason = finishReason ?? "",
-                Metadata = metadata ?? new Dictionary<string, string>()
+                Metadata = metadata ?? new Dictionary<string, string>(),
+                InputTokens = inputTokens,
+                OutputTokens = outputTokens
             };
         }
 

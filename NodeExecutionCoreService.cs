@@ -60,6 +60,7 @@ namespace test
             });
 
             return await GenerateWithContinuationAsync(
+                currentNode,
                 model,
                 async followUp => await _buildRequestFactory(
                     model,
@@ -93,6 +94,7 @@ namespace test
             });
 
             return await GenerateWithContinuationStreamingAsync(
+                currentNode,
                 model,
                 async followUp => await _buildRequestFactory(
                     model,
@@ -106,6 +108,7 @@ namespace test
         }
 
         private async Task<string> GenerateWithContinuationAsync(
+    NodeControl currentNode,
     string model,
     Func<string, Task<AiRequest>> buildRequestFactory,
     CancellationToken ct)
@@ -130,6 +133,7 @@ namespace test
 
                 var request = await buildRequestFactory(followUp);
                 var response = await provider.GenerateAsync(request, ct);
+                currentNode.RecordTokenUsage(response.InputTokens, response.OutputTokens);
                 string reply = response.Text;
 
                 if (string.IsNullOrWhiteSpace(reply))
@@ -177,6 +181,7 @@ namespace test
         }
 
         private async Task<string> GenerateWithContinuationStreamingAsync(
+    NodeControl currentNode,
     string model,
     Func<string, Task<AiRequest>> buildRequestFactory,
     Action<string> onDelta,
@@ -206,11 +211,13 @@ namespace test
                 if (round == 0)
                 {
                     var streamed = await provider.GenerateStreamAsync(request, delta => onDelta?.Invoke(delta), ct);
+                    currentNode.RecordTokenUsage(streamed.InputTokens, streamed.OutputTokens);
                     reply = streamed.Text;
                 }
                 else
                 {
                     var normal = await provider.GenerateAsync(request, ct);
+                    currentNode.RecordTokenUsage(normal.InputTokens, normal.OutputTokens);
                     reply = normal.Text;
                 }
 

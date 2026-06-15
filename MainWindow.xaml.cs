@@ -56,6 +56,12 @@ namespace test
         private readonly NodeTaskRoutingOverrides _taskRoutingOverrides = new();
         public NodeTaskRoutingOverrides TaskRoutingOverrides => _taskRoutingOverrides;
 
+        // §15 個人化：手動逾時上限（秒）。0 = 自動（依任務類型）。
+        private int _manualTimeoutSeconds;
+        // 設定面板程式化勾選時暫時靜音事件，避免初始化就寫入。
+        private bool _syncingCostControls;
+        public int GetManualTimeoutSeconds() => _manualTimeoutSeconds;
+
         private readonly HashSet<string> _expandedDecisionStepKeys = new();
         private readonly Dictionary<Guid, NodeDecisionViewData> _liveDecisionViewsByNode = new();
 
@@ -98,6 +104,10 @@ namespace test
             public string StartThumb = "ThumbTL";
             public NodeControl EndNode = null!;
             public string EndThumb = "ThumbTR";
+
+            // #4 流動模式：此連接線是否屬於「執行路徑」。流動線會有上游→下游的動畫，
+            // 並決定一鍵執行時要沿哪些邊扇出。右鍵連接線可切換。
+            public bool FlowMode;
         }
 
         public sealed class ContextConnectionInfo
@@ -312,7 +322,7 @@ namespace test
     string? OutputImagePath = null
 );
 
-        private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb);
+        private record ConnState(string StartId, string EndId, string StartThumb, string EndThumb, bool FlowMode = false);
 
         private record AttachmentState(
     string NodeId,
@@ -365,7 +375,11 @@ namespace test
             bool Success,
             string ErrorMessage,
 
-            List<AiFallbackAttempt> FallbackAttempts
+            List<AiFallbackAttempt> FallbackAttempts,
+
+            int InputTokens = 0,
+            int OutputTokens = 0,
+            string CostDisplay = ""
         );
         private record AppState(
             DateTime CreatedAt,
@@ -379,8 +393,30 @@ namespace test
             bool AdvancedAutoResolverEnabled = false,
             string DownstreamAutoMode = "OneClick",
             string PresentationEngine = "Claude",
-            Dictionary<string, string>? TaskRoutingOverrides = null
+            Dictionary<string, string>? TaskRoutingOverrides = null,
+            bool BlockOpus = false,
+            bool BlockDeepResearch = false,
+            int ManualTimeoutSeconds = 0
         );
+
+        // 全域個人化偏好：與「專案檔」分離，存成單一檔案，跨專案、跨重啟一致。
+        // 開新專案或開啟舊專案都不會覆蓋這些設定——它們是「使用者的」，不是「某個檔案的」。
+        private record UserPreferencesState(
+            bool AutoModelSelectionEnabled = false,
+            bool AdvancedAutoResolverEnabled = false,
+            string DownstreamAutoMode = "OneClick",
+            string PresentationEngine = "Claude",
+            Dictionary<string, string>? TaskRoutingOverrides = null,
+            bool BlockOpus = false,
+            bool BlockDeepResearch = false,
+            int ManualTimeoutSeconds = 0
+        );
+
+        // 全域個人化偏好放在子資料夾，永遠不會被 SavesDir 的 *.json 專案掃描列舉到（非遞迴），
+        // 因此不可能出現在檔案清單、也不可能被當成專案誤開而崩潰。
+        private string PreferencesPath => System.IO.Path.Combine(SavesDir, "_config", "_preferences.json");
+        // 舊版把偏好直接放在 SavesDir 根目錄；保留路徑以便一次性搬移。
+        private string LegacyPreferencesPath => System.IO.Path.Combine(SavesDir, "_preferences.json");
 
         private static string DisplayNameFromPath(string path)
             => System.IO.Path.GetFileNameWithoutExtension(path);
@@ -520,7 +556,11 @@ namespace test
                 Success: entry.Success,
                 ErrorMessage: entry.ErrorMessage ?? "",
 
-                FallbackAttempts: entry.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
+                FallbackAttempts: entry.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>(),
+
+                InputTokens: entry.InputTokens,
+                OutputTokens: entry.OutputTokens,
+                CostDisplay: entry.CostDisplay ?? ""
             );
         }
         private static AiExecutionLogEntry ToExecutionLogEntry(ExecutionLogState state)
@@ -567,7 +607,11 @@ namespace test
                 Success = state.Success,
                 ErrorMessage = state.ErrorMessage ?? "",
 
-                FallbackAttempts = state.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>()
+                FallbackAttempts = state.FallbackAttempts?.ToList() ?? new List<AiFallbackAttempt>(),
+
+                InputTokens = state.InputTokens,
+                OutputTokens = state.OutputTokens,
+                CostDisplay = state.CostDisplay ?? ""
             };
         }
 
@@ -2655,6 +2699,11 @@ namespace test
             MainUI.Visibility = Visibility.Collapsed;
             _isSidebarCollapsed = false;
 
+            // 全域個人化偏好先載入（在同步開關之前），確保所有設定一律以個人化為準，跨專案、跨重啟一致。
+            LoadPreferences();
+            SyncDownstreamAutoModeRadios();
+            SyncPresentationEngineRadios();
+
             SetRandomStartMessage();
             RefreshFileList();
 
@@ -3055,7 +3104,9 @@ namespace test
 
         private void RefreshFileList()
         {
+            var prefName = System.IO.Path.GetFileName(PreferencesPath);
             var items = Directory.GetFiles(SavesDir, "*.json")
+                                 .Where(p => !string.Equals(System.IO.Path.GetFileName(p), prefName, StringComparison.OrdinalIgnoreCase))
                                  .OrderByDescending(File.GetCreationTime)
                                  .Select(p => new FileItem(p))
                                  .ToList();
@@ -3144,13 +3195,15 @@ namespace test
             SaveState();
         }
 
-        public void CreateCurve(NodeControl startNode, string startThumbName, NodeControl endNode, string endThumbName)
+        public void CreateCurve(NodeControl startNode, string startThumbName, NodeControl endNode, string endThumbName, bool flowMode = false)
         {
             var path = new PathShape
             {
                 Stroke = (SolidColorBrush)new BrushConverter().ConvertFromString("#ADADAD")!,
                 StrokeThickness = 18,
-                IsHitTestVisible = false
+                // #4：連接線需可被右鍵切換流動模式，故開啟命中測試。
+                IsHitTestVisible = true,
+                Cursor = System.Windows.Input.Cursors.Hand
             };
 
             var conn = new Connection
@@ -3159,18 +3212,84 @@ namespace test
                 StartNode = startNode,
                 StartThumb = startThumbName,
                 EndNode = endNode,
-                EndThumb = endThumbName
+                EndThumb = endThumbName,
+                FlowMode = flowMode
+            };
+
+            // 右鍵連接線：切換流動模式（含動畫）。Handled 避免冒泡到畫布平移。
+            path.MouseRightButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                _ = ToggleConnectionFlowModeAsync(conn);
             };
 
             UpdateConnectionGeometry(conn);
             Canvas.SetZIndex(path, GetNextZIndex());
             MainCanvas.Children.Add(path);
             _connections.Add(conn);
+            ApplyConnectionVisual(conn);
 
             HookNode(startNode);
             HookNode(endNode);
 
             SaveState();
+        }
+
+        // #4：依流動模式套用連接線外觀——流動時藍色虛線 + 上游→下游的行進動畫；否則回灰色實線。
+        private void ApplyConnectionVisual(Connection conn)
+        {
+            if (conn?.Path == null)
+                return;
+
+            if (conn.FlowMode)
+            {
+                conn.Path.Stroke = (SolidColorBrush)new BrushConverter().ConvertFromString("#2E6FE0")!;
+                conn.Path.StrokeDashArray = new DoubleCollection { 1.1, 1.1 };
+
+                var anim = new System.Windows.Media.Animation.DoubleAnimation
+                {
+                    From = 2.2,
+                    To = 0,
+                    Duration = new Duration(TimeSpan.FromSeconds(0.7)),
+                    RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever
+                };
+                conn.Path.BeginAnimation(PathShape.StrokeDashOffsetProperty, anim);
+            }
+            else
+            {
+                conn.Path.BeginAnimation(PathShape.StrokeDashOffsetProperty, null);
+                conn.Path.StrokeDashOffset = 0;
+                conn.Path.StrokeDashArray = null;
+                conn.Path.Stroke = (SolidColorBrush)new BrushConverter().ConvertFromString("#ADADAD")!;
+            }
+        }
+
+        // #4：右鍵切換某條連接線的流動模式。「何時開始跑」交由自動化設定（個人化）決定：
+        //  完全自動 → 切到流動就立刻跑這條分支（會先等母節點有輸出）；一鍵/關閉 → 只標記+動畫，由使用者從上游手動執行。
+        private async Task ToggleConnectionFlowModeAsync(Connection conn)
+        {
+            if (conn == null)
+                return;
+
+            conn.FlowMode = !conn.FlowMode;
+            ApplyConnectionVisual(conn);
+            SaveState();
+
+            if (conn.FlowMode &&
+                _downstreamAutoMode == DownstreamAutoMode.FullyAuto &&
+                !IsWorkflowChainRunning &&
+                conn.StartNode != null)
+            {
+                try
+                {
+                    bool parentHasOutput = !string.IsNullOrWhiteSpace(conn.StartNode.GetBottomText());
+                    await RunFlowWorkflowAsync(conn.StartNode, runStartNode: !parentHasOutput);
+                }
+                catch (OperationCanceledException)
+                {
+                    // 逾時 / 停止：安靜結束。
+                }
+            }
         }
 
         public IReadOnlyList<NodeControl> MaterializeDownstreamNodePlan(
@@ -3246,7 +3365,8 @@ namespace test
                 });
                 SyncAutoFlowTemplate(node, node.GetTopText());
 
-                CreateCurve(previousNode, "ThumbTR", node, "ThumbTL");
+                // #4：自動展開的子節點與上游的連接線預設為「流動模式」（動畫 + 屬於執行路徑）。
+                CreateCurve(previousNode, "ThumbTR", node, "ThumbTL", flowMode: true);
 
                 created.Add(node);
                 previousNode = node;
@@ -3321,8 +3441,8 @@ namespace test
 
             FocusDecisionNode(created[0]);
 
-            // 從第一個生成節點開始依序執行；上游輸出會經 {{input}} 模板自動注入下游。
-            await RunManualWorkflowChainAsync(created[0]);
+            // #4：來源節點已有輸出，從它沿流動邊扇出執行所有生成的下游（等父跑完才跑子）。
+            await RunFlowWorkflowAsync(sourceNode, runStartNode: false);
         }
 
         // Mode 2（完全自動）：使用者送出後呼叫。只在「根節點 + 策略為 FullyAuto + 確為多階段任務」時才自動展開並執行。
@@ -3600,8 +3720,8 @@ namespace test
             if (created.Count > 0)
             {
                 FocusDecisionNode(created[0]);
-                // Mode 1：展開後直接依序執行整條工作流（手動點此卡片即代表使用者同意花 token）。
-                await RunManualWorkflowChainAsync(created[0]);
+                // Mode 1：展開後沿流動邊扇出執行整條工作流（手動點此卡片即代表使用者同意花 token）。
+                await RunFlowWorkflowAsync(sourceNode, runStartNode: false);
             }
         }
 
@@ -4479,7 +4599,8 @@ namespace test
                     c.StartNode.Id.ToString(),
                     c.EndNode.Id.ToString(),
                     c.StartThumb,
-                    c.EndThumb
+                    c.EndThumb,
+                    c.FlowMode
                 ));
             }
 
@@ -4522,7 +4643,10 @@ namespace test
     AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled,
     DownstreamAutoMode: DownstreamAutoModeHelper.ToStorageValue(_downstreamAutoMode),
     PresentationEngine: PresentationEngineHelper.ToStorageValue(_presentationEngine),
-    TaskRoutingOverrides: _taskRoutingOverrides.ToStorage()
+    TaskRoutingOverrides: _taskRoutingOverrides.ToStorage(),
+    BlockOpus: AiAutoCostPolicy.BlockOpus,
+    BlockDeepResearch: AiAutoCostPolicy.BlockDeepResearch,
+    ManualTimeoutSeconds: _manualTimeoutSeconds
 );
 
             if (string.IsNullOrEmpty(_currentFilePath))
@@ -4531,7 +4655,133 @@ namespace test
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_currentFilePath!, json);
 
+            // 個人化偏好與專案檔分離，但任何一次存檔都順手把全域偏好也寫回，確保隨時最新。
+            SavePreferences();
+
             CurrentFileLabel.Text = $"目前檔案：{DisplayNameFromPath(_currentFilePath)}";
+        }
+
+        // 全域個人化偏好寫檔。不受 _hasStarted 限制——設定面板任何變更都會即時落地。
+        private void SavePreferences()
+        {
+            try
+            {
+                var prefs = new UserPreferencesState(
+                    AutoModelSelectionEnabled: _isAutoModelSelectionEnabled,
+                    AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled,
+                    DownstreamAutoMode: DownstreamAutoModeHelper.ToStorageValue(_downstreamAutoMode),
+                    PresentationEngine: PresentationEngineHelper.ToStorageValue(_presentationEngine),
+                    TaskRoutingOverrides: _taskRoutingOverrides.ToStorage(),
+                    BlockOpus: AiAutoCostPolicy.BlockOpus,
+                    BlockDeepResearch: AiAutoCostPolicy.BlockDeepResearch,
+                    ManualTimeoutSeconds: _manualTimeoutSeconds
+                );
+
+                var dir = System.IO.Path.GetDirectoryName(PreferencesPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                var json = JsonSerializer.Serialize(prefs, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(PreferencesPath, json);
+            }
+            catch
+            {
+                // 偏好寫檔失敗不應中斷主流程；下次變更會再試。
+            }
+        }
+
+        // 啟動時載入全域個人化偏好，套用到記憶體狀態（在顯示 UI / 同步開關之前呼叫）。
+        private void LoadPreferences()
+        {
+            try
+            {
+                // 一次性搬移：舊版偏好檔在 SavesDir 根目錄，移進 _config 子資料夾並刪掉舊檔，
+                // 避免它繼續出現在使用者的存檔資料夾裡。
+                if (!File.Exists(PreferencesPath) && File.Exists(LegacyPreferencesPath))
+                {
+                    try
+                    {
+                        var dir = System.IO.Path.GetDirectoryName(PreferencesPath);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        File.Move(LegacyPreferencesPath, PreferencesPath);
+                    }
+                    catch
+                    {
+                        // 搬移失敗就盡量刪掉舊檔，至少不要再被誤當專案。
+                        try { File.Delete(LegacyPreferencesPath); } catch { }
+                    }
+                }
+
+                if (!File.Exists(PreferencesPath))
+                {
+                    // 首次升級遷移：個人化設定以前存在各專案檔裡，現在改成全域。
+                    // 把「最近一次專案檔」的設定帶過來，使用者不必重設一次。
+                    TrySeedPreferencesFromLatestProject();
+                    return;
+                }
+
+                var prefs = JsonSerializer.Deserialize<UserPreferencesState>(File.ReadAllText(PreferencesPath));
+                if (prefs == null)
+                    return;
+
+                _isAutoModelSelectionEnabled = prefs.AutoModelSelectionEnabled;
+                _isAdvancedAutoResolverEnabled = _isAutoModelSelectionEnabled && prefs.AdvancedAutoResolverEnabled;
+                _downstreamAutoMode = DownstreamAutoModeHelper.Parse(prefs.DownstreamAutoMode);
+
+                _presentationEngine = PresentationEngineHelper.Parse(prefs.PresentationEngine);
+                if (_presentationEngine == PresentationEngine.Gamma)
+                    _presentationEngine = PresentationEngine.Claude; // Gamma 尚未開放，一律落回 Claude。
+
+                _taskRoutingOverrides.LoadFromStorage(prefs.TaskRoutingOverrides);
+                AiAutoCostPolicy.BlockOpus = prefs.BlockOpus;
+                AiAutoCostPolicy.BlockDeepResearch = prefs.BlockDeepResearch;
+                _manualTimeoutSeconds = prefs.ManualTimeoutSeconds;
+            }
+            catch
+            {
+                // 偏好檔毀損時忽略，沿用預設值。
+            }
+        }
+
+        // 一次性遷移：沒有全域偏好檔時，從最近一次專案檔讀回個人化設定並寫成全域偏好。
+        private void TrySeedPreferencesFromLatestProject()
+        {
+            try
+            {
+                var latest = Directory.GetFiles(SavesDir, "*.json")
+                    .Where(p => !string.Equals(
+                        System.IO.Path.GetFileName(p),
+                        System.IO.Path.GetFileName(PreferencesPath),
+                        StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(File.GetLastWriteTime)
+                    .FirstOrDefault();
+
+                if (latest == null)
+                    return;
+
+                var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(latest));
+                if (state == null)
+                    return;
+
+                _isAutoModelSelectionEnabled = state.AutoModelSelectionEnabled;
+                _isAdvancedAutoResolverEnabled = _isAutoModelSelectionEnabled && state.AdvancedAutoResolverEnabled;
+                _downstreamAutoMode = DownstreamAutoModeHelper.Parse(state.DownstreamAutoMode);
+
+                _presentationEngine = PresentationEngineHelper.Parse(state.PresentationEngine);
+                if (_presentationEngine == PresentationEngine.Gamma)
+                    _presentationEngine = PresentationEngine.Claude;
+
+                _taskRoutingOverrides.LoadFromStorage(state.TaskRoutingOverrides);
+                AiAutoCostPolicy.BlockOpus = state.BlockOpus;
+                AiAutoCostPolicy.BlockDeepResearch = state.BlockDeepResearch;
+                _manualTimeoutSeconds = state.ManualTimeoutSeconds;
+
+                SavePreferences(); // 立刻落地成全域偏好，下次起點即一致。
+            }
+            catch
+            {
+                // 遷移失敗就沿用預設，不影響啟動。
+            }
         }
 
         private void LoadState(string path)
@@ -4549,15 +4799,11 @@ namespace test
             CurrentFileLabel.Text = $"目前檔案：{DisplayNameFromPath(_currentFilePath)}";
 
             _fileNameLockedByUser = state.FileNameLocked;
-            _isAutoModelSelectionEnabled = state.AutoModelSelectionEnabled;
-            _isAdvancedAutoResolverEnabled = _isAutoModelSelectionEnabled && state.AdvancedAutoResolverEnabled;
-            _downstreamAutoMode = DownstreamAutoModeHelper.Parse(state.DownstreamAutoMode);
+
+            // 個人化設定（Auto/Manual、進階解析、下游展開、簡報引擎、任務指定模型、成本控制、逾時上限）
+            // 一律以全域偏好為準，開啟舊專案「不」用檔案裡的舊值覆蓋。只重新同步 UI 反映目前的全域設定。
             SyncDownstreamAutoModeRadios();
-            _presentationEngine = PresentationEngineHelper.Parse(state.PresentationEngine);
-            if (_presentationEngine == PresentationEngine.Gamma)
-                _presentationEngine = PresentationEngine.Claude; // Gamma 尚未開放，載入時一律落回 Claude。
             SyncPresentationEngineRadios();
-            _taskRoutingOverrides.LoadFromStorage(state.TaskRoutingOverrides);
             _lastAppliedAutoKeyword = "";
             _lastInitialTopSnapshot = "";
 
@@ -4624,7 +4870,7 @@ namespace test
 
                 var idMap = new Dictionary<string, NodeControl>();
 
-                foreach (var n in state.Nodes)
+                foreach (var n in state.Nodes ?? new List<NodeState>())
                 {
                     var node = new NodeControl(n.Id);
                     node.Width = SafePositiveFinite(n.Width, 300);
@@ -4675,21 +4921,21 @@ namespace test
                 }
                 else
                 {
-                    var incoming = new HashSet<string>(state.Connections.Select(c => c.EndId));
-                    var rootId = state.Nodes.Select(n => n.Id).FirstOrDefault(id => !incoming.Contains(id));
+                    var incoming = new HashSet<string>((state.Connections ?? new List<ConnState>()).Select(c => c.EndId));
+                    var rootId = (state.Nodes ?? new List<NodeState>()).Select(n => n.Id).FirstOrDefault(id => !incoming.Contains(id));
                     if (rootId != null && idMap.TryGetValue(rootId, out var byInference))
                         _initialNode = byInference;
-                    else if (state.Nodes.Count > 0 && idMap.TryGetValue(state.Nodes[0].Id, out var byFirst))
+                    else if ((state.Nodes?.Count ?? 0) > 0 && idMap.TryGetValue(state.Nodes![0].Id, out var byFirst))
                         _initialNode = byFirst;
                 }
 
                 Dispatcher.InvokeAsync(() =>
                 {
-                    foreach (var c in state.Connections)
+                    foreach (var c in state.Connections ?? new List<ConnState>())
                     {
                         if (!idMap.TryGetValue(c.StartId, out var sn)) continue;
                         if (!idMap.TryGetValue(c.EndId, out var en)) continue;
-                        CreateCurve(sn, c.StartThumb, en, c.EndThumb);
+                        CreateCurve(sn, c.StartThumb, en, c.EndThumb, c.FlowMode);
                     }
 
                     RefreshAllNodeAttachmentUIs();
@@ -6065,6 +6311,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             SyncDownstreamAutoModeRadios();
             SyncPresentationEngineRadios();
             BuildTaskRoutingPanel();
+            SyncCostControls();
             if (SettingsOverlay != null)
                 SettingsOverlay.Visibility = Visibility.Visible;
             MemoryInput?.Focus();
@@ -6185,6 +6432,69 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             {
                 _buildingTaskRouting = false;
             }
+        }
+
+        // ===== §15 個人化：高成本模型開關 + 手動逾時 =====
+
+        // 把目前狀態反映到設定面板的控制項（開啟設定時呼叫）。
+        private void SyncCostControls()
+        {
+            _syncingCostControls = true;
+            try
+            {
+                if (BlockOpusSwitch != null)
+                    BlockOpusSwitch.IsChecked = AiAutoCostPolicy.BlockOpus;
+                if (BlockDeepResearchSwitch != null)
+                    BlockDeepResearchSwitch.IsChecked = AiAutoCostPolicy.BlockDeepResearch;
+                if (TimeoutInput != null)
+                    TimeoutInput.Text = _manualTimeoutSeconds > 0
+                        ? _manualTimeoutSeconds.ToString()
+                        : "";
+            }
+            finally
+            {
+                _syncingCostControls = false;
+            }
+        }
+
+        private void BlockOpusSwitch_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_syncingCostControls)
+                return;
+            AiAutoCostPolicy.BlockOpus = BlockOpusSwitch?.IsChecked == true;
+            SaveState();
+        }
+
+        private void BlockDeepResearchSwitch_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_syncingCostControls)
+                return;
+            AiAutoCostPolicy.BlockDeepResearch = BlockDeepResearchSwitch?.IsChecked == true;
+            SaveState();
+        }
+
+        // 逾時輸入：空白 = 自動；否則限制在 30～1800 秒（30 分鐘）的合理範圍。
+        private void TimeoutInput_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_syncingCostControls || TimeoutInput == null)
+                return;
+
+            string raw = (TimeoutInput.Text ?? "").Trim();
+
+            if (string.IsNullOrEmpty(raw))
+            {
+                _manualTimeoutSeconds = 0;
+            }
+            else if (int.TryParse(raw, out int secs))
+            {
+                _manualTimeoutSeconds = Math.Clamp(secs, 30, 1800);
+            }
+            else
+            {
+                return; // 非數字：忽略，不覆寫既有值
+            }
+
+            SaveState();
         }
 
         private void TaskRoutingCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -6619,6 +6929,106 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                 .Where(n => n != null)
                 .Distinct()
                 .ToList();
+        }
+
+        // #4：此節點所有「流動模式」出邊的下游節點（執行路徑）。
+        public IReadOnlyList<NodeControl> GetFlowDownstreamNodes(NodeControl node)
+        {
+            if (node == null)
+                return Array.Empty<NodeControl>();
+
+            return _connections
+                .Where(c => ReferenceEquals(c.StartNode, node) && c.FlowMode && c.EndNode != null)
+                .Select(c => c.EndNode)
+                .Distinct()
+                .ToList();
+        }
+
+        // #4：此節點是否有流動模式出邊（給右鍵選單決定是否啟用「執行此節點與下游」）。
+        public bool NodeHasFlowDownstream(NodeControl node) => GetFlowDownstreamNodes(node).Count > 0;
+
+        // #4 流動工作流執行：從 startNode 沿「流動模式」邊扇出。
+        // 一律「等父節點完全跑完」才跑子節點；同層多個下游依序執行；扇出涵蓋所有流動邊（不再只跑第一個）。
+        public async Task RunFlowWorkflowAsync(NodeControl startNode, bool runStartNode)
+        {
+            if (startNode == null || !MainCanvas.Children.Contains(startNode))
+                return;
+
+            // 已有工作流在跑 → 不重入（避免兩條鏈搶同一批節點）。
+            if (IsWorkflowChainRunning)
+                return;
+
+            using var cts = new CancellationTokenSource();
+            _workflowChainCts = cts;
+            try
+            {
+                var visited = new HashSet<Guid>();
+                await RunFlowSubtreeAsync(startNode, runStartNode, visited, cts);
+            }
+            finally
+            {
+                _runningChainNode = null;
+                if (ReferenceEquals(_workflowChainCts, cts))
+                    _workflowChainCts = null;
+            }
+        }
+
+        private async Task RunFlowSubtreeAsync(
+            NodeControl node,
+            bool runThis,
+            HashSet<Guid> visited,
+            CancellationTokenSource cts)
+        {
+            if (node == null || !MainCanvas.Children.Contains(node))
+                return;
+
+            if (cts.IsCancellationRequested)
+                return;
+
+            // 防環：同一節點只跑一次。
+            if (!visited.Add(node.Id))
+                return;
+
+            if (runThis)
+            {
+                FocusDecisionNode(node);
+
+                if (ShouldStopBeforeUnsupportedDownstreamNode(node))
+                {
+                    node.SetBottomText(
+                        "（此下游節點需要尚未接上的專用代理，已停止以避免不必要的 token 消耗。）\n" +
+                        "目前可先使用前一個節點的結果；等 presentation/file/media/workflow agent 完成後再啟用此步。");
+                    return;
+                }
+
+                _runningChainNode = node;
+                bool success = await node.RunCurrentTopTextAsync(cts.Token);
+                _runningChainNode = null;
+
+                if (cts.IsCancellationRequested)
+                    return;
+
+                // 父失敗 → 不往下跑這條分支（避免把錯誤內容往下游灌）。
+                if (!success)
+                    return;
+            }
+
+            // 等父節點跑完 → 所有一級流動下游「同時並行」扇出（不再一個跑完才換下一個）。
+            // 每個子節點各自再遞迴往下，所以整棵子樹仍維持「父先跑完、子才開始」的層序。
+            var children = GetFlowDownstreamNodes(node);
+            if (children.Count == 0)
+                return;
+
+            var branchTasks = new List<Task>(children.Count);
+            foreach (var child in children)
+            {
+                if (cts.IsCancellationRequested)
+                    break;
+
+                branchTasks.Add(RunFlowSubtreeAsync(child, runThis: true, visited, cts));
+            }
+
+            await Task.WhenAll(branchTasks);
         }
         internal static class MenuConfirmDialog
         {
