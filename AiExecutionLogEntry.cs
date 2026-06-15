@@ -57,5 +57,10 @@ namespace test
 
         // Memory v1 視覺化：本次召回的偏好 / 記憶統計。
         public MemoryRecallStats MemoryRecall { get; init; } = MemoryRecallStats.Empty;
+
+        // Product UX：Token / 成本估算，供決策窗顯示（與節點底部的成本估算同一來源）。
+        public int InputTokens { get; init; }
+        public int OutputTokens { get; init; }
+        public string CostDisplay { get; init; } = "";
     }
 }

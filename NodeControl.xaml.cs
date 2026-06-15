@@ -866,7 +866,7 @@ namespace test
 
             if (sender is FrameworkElement fe && fe.Tag is OutputFileVm vm)
             {
-                _parent.OpenGeneratedFile(vm.FullPath);
+                _parent.OpenPreview(vm.FullPath);
                 e.Handled = true;
             }
         }
@@ -1025,7 +1025,7 @@ namespace test
         {
             if (_parent != null && !string.IsNullOrWhiteSpace(_outputImagePath))
             {
-                _parent.OpenGeneratedFile(_outputImagePath);
+                _parent.OpenPreview(_outputImagePath);
                 e.Handled = true;
             }
         }
@@ -1117,8 +1117,6 @@ namespace test
             bool canRunChain = !busy && !string.IsNullOrWhiteSpace(GetTopText());
             RunWorkflowMenuItem.IsEnabled = canRunChain;
             RunWorkflowMenuItem.Visibility = canRunChain ? Visibility.Visible : Visibility.Collapsed;
-            DryRunWorkflowMenuItem.IsEnabled = canRunChain;
-            DryRunWorkflowMenuItem.Visibility = canRunChain ? Visibility.Visible : Visibility.Collapsed;
 
             // §4：只有「可拆成多階段工作流」的節點才啟用一鍵展開（一般對話不顯示啟用）。
             bool canExpand = !busy &&
@@ -1177,14 +1175,6 @@ namespace test
             await _parent.RunManualWorkflowChainAsync(this);
         }
 
-        private void DryRunWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            if (_parent == null || _isGenerating)
-                return;
-
-            _parent.RunDryWorkflowChain(this);
-        }
-
         // §4 stop：停止整條正在跑的工作流鏈。
         private void StopWorkflowMenuItem_Click(object sender, RoutedEventArgs e)
         {
@@ -1214,10 +1204,8 @@ namespace test
                 StatusText.Text = "已略過此步（沿用上一步結果）";
                 StatusText.Foreground = amber;
             }
-            if (CostText != null) CostText.Text = "";
             if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
             if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
-            if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
             if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
         }
 
@@ -1419,7 +1407,6 @@ namespace test
                     if (_outputFiles.Count > 0)
                     {
                         ApplyRunStatus(NodeRunStatus.Success);
-                        ShowCostEstimate(topText, "", isImageTask);
                     }
                     else
                     {
@@ -1435,7 +1422,6 @@ namespace test
                     }
 
                     ApplyRunStatus(NodeRunStatus.Success);
-                    ShowCostEstimate(topText, finalReply, isImageTask);
                 }
 
                 UpdateAutoTaskPreview();
@@ -1500,17 +1486,14 @@ namespace test
                 case NodeRunStatus.Running:
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
                     if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
-                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
                     if (StatusText != null) StatusText.Text = "";
-                    if (CostText != null) CostText.Text = "";
                     if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
                     break;
 
                 case NodeRunStatus.Success:
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
-                    // §3：成功後提供「重新生成答案」(沿用 research) 與「重播整段」。
+                    // §3：成功後提供「重新生成答案」(沿用 research)。
                     if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Visible;
-                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Visible;
                     if (StatusText != null)
                     {
                         StatusText.Text = "";
@@ -1524,20 +1507,17 @@ namespace test
                 case NodeRunStatus.Failed:
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Visible;
                     if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
-                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
                     if (StatusText != null)
                     {
                         StatusText.Text = string.IsNullOrWhiteSpace(detail) ? "執行失敗" : detail;
                         StatusText.Foreground = new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B));
                     }
-                    if (CostText != null) CostText.Text = "";
                     if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
                     break;
 
                 default: // Idle
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
                     if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
-                    if (ReplayButton != null) ReplayButton.Visibility = Visibility.Collapsed;
                     if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
                     break;
             }
@@ -1567,32 +1547,6 @@ namespace test
             {
                 _statusRevertTimer.Stop();
                 _statusRevertTimer = null;
-            }
-        }
-
-        private void ShowCostEstimate(string inputText, string outputText, bool isImageTask)
-        {
-            if (CostText == null)
-                return;
-
-            // 圖片任務的輸出是檔案路徑，用文字長度估 token 會誤導，因此不顯示成本。
-            if (isImageTask)
-            {
-                CostText.Text = "";
-                return;
-            }
-
-            try
-            {
-                var est = ModelCostEstimator.Compute(GetCommittedModelId(), inputText, outputText);
-                CostText.Text = est.Display;
-                CostText.ToolTip =
-                    $"輸入 ≈ {est.InputTokens} tokens、輸出 ≈ {est.OutputTokens} tokens。" +
-                    "數值為依字數估算，非 API 實際計費。";
-            }
-            catch
-            {
-                CostText.Text = "";
             }
         }
 
@@ -1663,26 +1617,6 @@ namespace test
         }
 
         // §3：用相同輸入整段重播工作流。
-        private async void ReplayButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isGenerating)
-                return;
-
-            if (_parent?.NodeService == null)
-                return;
-
-            string prompt = string.IsNullOrWhiteSpace(_lastRunPrompt)
-                ? BuildPromptForCurrentRun(GetTopText())
-                : _lastRunPrompt;
-
-            if (string.IsNullOrWhiteSpace(prompt))
-                return;
-
-            await GenerateBottomReplyFromTopAsync(
-                prompt,
-                (delta, token) => _parent.NodeService.ReplayWorkflowStreamAsync(this, delta, token));
-        }
-
         public async Task<bool> RunCurrentTopTextAsync(CancellationToken externalToken = default)
         {
             if (_isGenerating)

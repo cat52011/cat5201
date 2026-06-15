@@ -91,7 +91,11 @@ namespace test
 
                     var actualAgent = AgentRegistry.Get(autoAgentSelection.AgentId);
 
-                    string resolvedModel = AiModelHelper.NormalizeNodeModel(apiResolution.RecommendedModel);
+                    // 使用者自訂路由優先：若該任務模式已釘選模型，覆蓋 API resolver 的建議。
+                    bool pinned = _modelSelection.TryGetOverride(resolvedMode, out var pinnedModel);
+                    string resolvedModel = pinned
+                        ? pinnedModel
+                        : AiModelHelper.NormalizeNodeModel(apiResolution.RecommendedModel);
 
                     var apiDecision = new NodeExecutionDecision
                     {
@@ -107,7 +111,9 @@ namespace test
                         Confidence = Math.Max(apiResolution.Confidence, autoAgentSelection.Confidence),
                         ResolverReason =
                             $"Agent: {autoAgentSelection.Reason} / " +
-                            $"Task/Model: 由 API resolver 根據輸入內容判定模型與任務模式",
+                            (pinned
+                                ? $"Task/Model: 任務模式 {resolvedMode} 由使用者自訂路由指定模型（覆蓋 API 建議）"
+                                : $"Task/Model: 由 API resolver 根據輸入內容判定模型與任務模式"),
                         ResolverKeywords = Array.Empty<string>(),
                         UsedApiResolver = true,
                         UsedFallbackToRules = false,

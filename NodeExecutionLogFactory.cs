@@ -16,9 +16,21 @@ namespace test
             var endedAtUtc = DateTime.UtcNow;
             long durationMs = Math.Max(0, (long)(endedAtUtc - startedAtUtc).TotalMilliseconds);
 
+            string actualModelId = AiModelHelper.NormalizeNodeModel(
+                string.IsNullOrWhiteSpace(decision.ActualModelId)
+                    ? decision.ModelId
+                    : decision.ActualModelId);
+
+            // Token / 成本估算：用節點的輸入（top）與輸出（bottom）文字推估，與底部成本列同一來源。
+            var costEst = ModelCostEstimator.Compute(actualModelId, node.GetTopText(), node.GetBottomText());
+
             return new AiExecutionLogEntry
             {
                 NodeId = node.Id.ToString(),
+
+                InputTokens = costEst.InputTokens,
+                OutputTokens = costEst.OutputTokens,
+                CostDisplay = costEst.Display,
 
                 StartedAtUtc = startedAtUtc,
                 EndedAtUtc = endedAtUtc,

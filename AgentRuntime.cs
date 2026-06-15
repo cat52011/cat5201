@@ -1450,6 +1450,45 @@ namespace test
         /// 並在答案尾端附上一句說明（圖片本體由輸出區直接顯示，檔案 chip 可開啟原圖）。
         /// 生成失敗不影響主答案，只把 generate_image 階段標記為 failed。
         /// </summary>
+        // 把（可能含上游搜尋結果的）原始輸入交給 Claude，萃取真正主體並寫成具體、可畫的圖片提示。
+        private async Task<string> BuildImageBriefAsync(NodeControl node, string rawRequest, CancellationToken ct)
+        {
+            string briefPrompt =
+                "你是圖片生成的提示詞工程師。下面是使用者的請求，可能夾帶上游節點的搜尋結果或一大段背景文字。\n" +
+                "請閱讀全部內容，找出『真正要畫的主體』（例如某家真實公司、某個產品、某個場景），" +
+                "再寫出一段【具體、精煉】的圖片生成提示，直接描述畫面：主體、場景、構圖、風格、色調。\n\n" +
+                "嚴格規則：\n" +
+                "1. 只輸出最終的圖片提示文字本身，不要任何解釋、前後綴、引號或 markdown。\n" +
+                "2. 讓人一眼認得出主體。若主體是知名、可公開查證的真實品牌（例如 Google、Apple、星巴克），" +
+                "請納入其真實、為人熟知的視覺特徵（招牌配色、總部 / 門市建築、識別意象），使畫面明確指向該品牌。\n" +
+                "3. 但不要捏造不存在的東西：若主體是不知名或私人公司、且背景資料沒有提供其真實的商標 / 視覺識別，" +
+                "就不要憑空發明 logo、品牌名、標語或數據，改以該產業的真實情境（廠房、產品、場域、員工工作畫面）呈現。\n" +
+                "4. 風格預設為乾淨、現代、專業的示意插圖或攝影，留白充足、無浮水印。\n\n" +
+                "=== 使用者請求與背景資料 ===\n" + rawRequest;
+
+            var briefDecision = new NodeExecutionDecision
+            {
+                RequestedAgentId = "general-agent",
+                ActualAgentId = "general-agent",
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ActualModelId = "",
+                TaskMode = NodeTaskMode.Chat,
+                ResolverLabel = "Image Brief (Claude)",
+                ResolverReason = "Claude 先把上游內容轉成具體的圖片提示，避免圖片模型亂編商標 / 文字。",
+                StatusLabel = "Auto",
+                ForceSingleModel = true
+            };
+
+            try
+            {
+                var r = await _executeWithFallbackAsync(node, briefPrompt, briefDecision, null, false, ct);
+                return r.IsSuccess ? (r.Text ?? "").Trim() : "";
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return ""; }
+        }
+
         private async Task<AiFallbackExecutionResult> GenerateImageFile(
             NodeControl node,
             AgentDefinition runtimeAgent,
@@ -1462,12 +1501,18 @@ namespace test
         {
             orchestration.MarkRunning("generate_image");
 
-            string prompt = (userInput ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(prompt))
+            string rawRequest = (userInput ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(rawRequest))
             {
                 orchestration.MarkFailed("generate_image", "圖片描述為空。");
                 return execution;
             }
+
+            // 直接把（可能夾帶上游搜尋結果的）整段文字丟給圖片模型，它「讀不懂」而會捏造假商標 / 假公司
+            // （例如憑空生出一個品牌形象牆）。先用 Claude 把內容萃取成具體、可畫的圖片提示，並禁止虛構文字 / logo。
+            string prompt = await BuildImageBriefAsync(node, rawRequest, ct);
+            if (string.IsNullOrWhiteSpace(prompt))
+                prompt = rawRequest; // 退回原始輸入，至少還能出圖
 
             OpenAIImageService.ImageResult image;
             try

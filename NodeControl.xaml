@@ -126,6 +126,39 @@
             </Setter>
         </Style>
 
+        <!-- 狀態列膠囊按鈕：圓角、無方角預設 chrome，hover/按下淡化（顏色由各按鈕自帶）-->
+        <Style x:Key="StatusPillButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="13,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="pb"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="999"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="pb" Property="Opacity" Value="0.86"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="pb" Property="Opacity" Value="0.72"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="AttachmentMiniButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Width" Value="18"/>
             <Setter Property="Height" Value="18"/>
@@ -309,10 +342,6 @@
                       Header="執行此節點與下游"
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="RunWorkflowMenuItem_Click"/>
-            <MenuItem x:Name="DryRunWorkflowMenuItem"
-                      Header="Dry run 此節點與下游"
-                      Style="{StaticResource NodeMenuItemStyle}"
-                      Click="DryRunWorkflowMenuItem_Click"/>
             <MenuItem x:Name="SkipStepMenuItem"
                       Header="⏭ 略過此步、從下一步續跑"
                       Style="{StaticResource NodeMenuItemStyle}"
@@ -658,7 +687,7 @@
                             Cursor="Hand"
                             ClipToBounds="True"
                             Background="#F2F2F2"
-                            ToolTip="點擊開啟原圖"
+                            ToolTip="點擊預覽"
                             Visibility="Collapsed"
                             MouseLeftButtonDown="OutputImage_MouseLeftButtonDown">
                         <Image x:Name="OutputImage"
@@ -686,7 +715,7 @@
                                             Cursor="Hand"
                                             Padding="0,3,0,3"
                                             Background="Transparent"
-                                            ToolTip="點擊開啟檔案"
+                                            ToolTip="點擊預覽"
                                             MouseLeftButtonDown="OutputFileItem_MouseLeftButtonDown">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="檔案："
@@ -732,46 +761,23 @@
                             <Button x:Name="RerunButton"
                                     Content="↻ 重新執行"
                                     Visibility="Collapsed"
-                                    FontSize="13"
+                                    Style="{StaticResource StatusPillButtonStyle}"
                                     Foreground="#C0392B"
                                     Background="#FBEAE8"
-                                    BorderBrush="#E8C5C0"
-                                    BorderThickness="1"
-                                    Padding="10,3,10,3"
-                                    Cursor="Hand"
-                                    VerticalAlignment="Center"
                                     Click="RerunButton_Click"/>
 
-                            <!-- 成功時：只重新生成答案（沿用既有 research / capability 成果） -->
+                            <!-- 成功時：只重新生成答案（沿用既有 research / capability 成果）。純圖示，無底框 -->
                             <Button x:Name="RegenerateButton"
-                                    Content="↻ 重新生成答案"
+                                    Content="&#xE72C;"
+                                    FontFamily="Segoe MDL2 Assets"
                                     Visibility="Collapsed"
-                                    FontSize="13"
+                                    Style="{StaticResource StatusPillButtonStyle}"
+                                    FontSize="14"
+                                    Padding="8,0"
                                     Foreground="#2E6FE0"
-                                    Background="#EAF1FD"
-                                    BorderBrush="#C3D6F7"
-                                    BorderThickness="1"
-                                    Padding="10,3,10,3"
-                                    Margin="0,0,6,0"
-                                    Cursor="Hand"
-                                    VerticalAlignment="Center"
-                                    ToolTip="沿用這次的搜尋與分析成果，只重新生成最終答案（較快、不重跑 research）"
+                                    Background="Transparent"
+                                    ToolTip="重新生成答案：沿用這次的搜尋與分析成果，只重新生成最終答案（較快、不重跑 research）"
                                     Click="RegenerateButton_Click"/>
-
-                            <!-- 成功時：整段重播（重新跑完整工作流） -->
-                            <Button x:Name="ReplayButton"
-                                    Content="⟳ 重播整段"
-                                    Visibility="Collapsed"
-                                    FontSize="13"
-                                    Foreground="#5A6675"
-                                    Background="#EFF1F4"
-                                    BorderBrush="#D5DAE1"
-                                    BorderThickness="1"
-                                    Padding="10,3,10,3"
-                                    Cursor="Hand"
-                                    VerticalAlignment="Center"
-                                    ToolTip="用相同輸入，從頭重新執行整個工作流"
-                                    Click="ReplayButton_Click"/>
                         </StackPanel>
 
                         <TextBlock x:Name="StatusText"
@@ -780,13 +786,6 @@
                                    FontSize="12.5"
                                    TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center"
-                                   Foreground="#9E9E9E"/>
-
-                        <TextBlock x:Name="CostText"
-                                   Grid.Column="2"
-                                   FontSize="12.5"
-                                   VerticalAlignment="Center"
-                                   HorizontalAlignment="Right"
                                    Foreground="#9E9E9E"/>
                     </Grid>
 

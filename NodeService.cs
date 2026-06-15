@@ -72,6 +72,8 @@ namespace test
             _autoResolver = new AiAutoModelResolverService(router);
 
             _modelSelection = new NodeModelSelectionService();
+            // 個人化自訂路由：與 MainWindow 共用同一個 overrides 物件，讓執行路徑與 UI 預覽一致。
+            _modelSelection.UseOverrides(main.TaskRoutingOverrides);
             _contextStrategyResolver = new NodeContextStrategyResolver(router);
             _contextService = new NodeContextService(main);
             _memoryStore = new MemoryStore(@"D:\desk\college\final\file");

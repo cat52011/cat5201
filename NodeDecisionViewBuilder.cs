@@ -696,6 +696,9 @@ namespace test
                 ? $"成功 / {log.DurationMs}ms"
                 : $"失敗 / {Safe(log.ErrorMessage)}";
 
+            if (!string.IsNullOrWhiteSpace(log.CostDisplay))
+                executionDetail += $" · {log.CostDisplay}";
+
             var lines = new List<string>
             {
                 $"StartedAtUtc: {log.StartedAtUtc:yyyy-MM-dd HH:mm:ss}",
@@ -703,6 +706,9 @@ namespace test
                 $"Duration: {log.DurationMs} ms",
                 $"Success: {log.Success}"
             };
+
+            if (!string.IsNullOrWhiteSpace(log.CostDisplay))
+                lines.Add($"成本估算：{log.CostDisplay}（輸入 ≈ {log.InputTokens} / 輸出 ≈ {log.OutputTokens} tokens）");
 
             if (!string.IsNullOrWhiteSpace(log.ErrorMessage))
                 lines.Add($"Error: {log.ErrorMessage}");

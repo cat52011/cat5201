@@ -13,6 +13,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using PathShape = System.Windows.Shapes.Path;
 
@@ -50,6 +51,11 @@ namespace test
         private bool _isDecisionPanelExpanded = false;
 
         private readonly NodeModelSelectionService _nodeModelSelection = new();
+
+        // 個人化「任務 → AI 模型」自訂路由表（單一真相，注入給 UI 預覽與實際執行兩條路徑）。
+        private readonly NodeTaskRoutingOverrides _taskRoutingOverrides = new();
+        public NodeTaskRoutingOverrides TaskRoutingOverrides => _taskRoutingOverrides;
+
         private readonly HashSet<string> _expandedDecisionStepKeys = new();
         private readonly Dictionary<Guid, NodeDecisionViewData> _liveDecisionViewsByNode = new();
 
@@ -372,7 +378,8 @@ namespace test
             bool AutoModelSelectionEnabled = false,
             bool AdvancedAutoResolverEnabled = false,
             string DownstreamAutoMode = "OneClick",
-            string PresentationEngine = "Claude"
+            string PresentationEngine = "Claude",
+            Dictionary<string, string>? TaskRoutingOverrides = null
         );
 
         private static string DisplayNameFromPath(string path)
@@ -2652,6 +2659,8 @@ namespace test
             RefreshFileList();
 
             _aiRouter.WarmupSafely();
+            // UI 預覽路徑（GetEffectiveNodeModel）也套用同一份自訂路由表。
+            _nodeModelSelection.UseOverrides(_taskRoutingOverrides);
             _nodeService = new NodeService(_aiRouter, this);
             RefreshMemoryPanel();
 
@@ -3397,6 +3406,47 @@ namespace test
                 SaveState();
         }
 
+        // ===== 個人化「任務 → AI 模型」自訂路由 =====
+
+        /// <summary>
+        /// 設定某任務模式固定使用的模型；modelId 為 null / 空 → 清除該模式的 override。
+        /// 模型未知或未啟用回 false（不變更）。成功會刷新各節點顯示並存檔。
+        /// </summary>
+        public bool SetTaskRoutingOverride(NodeTaskMode mode, string? modelId, bool save = true)
+        {
+            bool ok = _taskRoutingOverrides.Set(mode, modelId);
+            if (!ok)
+                return false;
+
+            // 自動模式下，路由結果改變 → 刷新各節點選單顯示的模型。
+            if (_isAutoModelSelectionEnabled)
+                RefreshAllNodeModelSelectionUIs();
+
+            if (save)
+                SaveState();
+
+            return true;
+        }
+
+        public void ClearTaskRoutingOverride(NodeTaskMode mode, bool save = true)
+        {
+            _taskRoutingOverrides.Clear(mode);
+
+            if (_isAutoModelSelectionEnabled)
+                RefreshAllNodeModelSelectionUIs();
+
+            if (save)
+                SaveState();
+        }
+
+        /// <summary>取得某任務模式目前的 override 模型 id；沒有設定（或已不可用）回 null。</summary>
+        public string? GetTaskRoutingOverride(NodeTaskMode mode)
+            => _taskRoutingOverrides.TryGet(mode, out var modelId) ? modelId : null;
+
+        /// <summary>目前所有自訂路由的快照（給個人化面板顯示用）。</summary>
+        public IReadOnlyDictionary<NodeTaskMode, string> GetTaskRoutingOverrides()
+            => _taskRoutingOverrides.Snapshot();
+
         private bool _suppressPresentationEngineRadioEvents = false;
 
         private void SyncPresentationEngineRadios()
@@ -4066,6 +4116,247 @@ namespace test
             }
         }
 
+        // ===== Artifact 即時預覽（大型 overlay；點檔案 chip / 圖片開啟）=====
+
+        private string? _previewPath;
+        private bool _previewMediaPlaying;
+
+        /// <summary>在 app 內預覽生成的檔案；無法內嵌渲染的格式給 fallback + 用系統程式開啟。</summary>
+        public async void OpenPreview(string? fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+            {
+                MessageBox.Show("找不到生成的檔案（可能已被移動或刪除）。", "預覽失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // 安全檢查：只允許預覽 _generated 資料夾內的檔案（與 OpenGeneratedFile 一致）。
+            string rootFull = System.IO.Path.GetFullPath(GeneratedFilesDir);
+            string targetFull = System.IO.Path.GetFullPath(fullPath);
+            if (!targetFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("檔案不在允許預覽的範圍內。", "預覽失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _previewPath = targetFull;
+            PreviewFileName.Text = System.IO.Path.GetFileName(targetFull);
+
+            HideAllPreviewRenderers();
+            PreviewOverlay.Visibility = Visibility.Visible;
+
+            string ext = System.IO.Path.GetExtension(targetFull).TrimStart('.').ToLowerInvariant();
+
+            try
+            {
+                switch (ext)
+                {
+                    case "png": case "jpg": case "jpeg": case "gif": case "bmp": case "webp":
+                        ShowImagePreview(targetFull);
+                        break;
+
+                    case "mp4": case "mov": case "webm": case "m4v":
+                        ShowMediaPreview(targetFull);
+                        break;
+
+                    case "html": case "htm": case "pdf":
+                        await ShowWebPreviewAsync(targetFull);
+                        break;
+
+                    case "docx":
+                        await ShowHtmlContentAsync(
+                            ArtifactHtmlRenderer.BuildDocxHtml(ArtifactTextExtractor.ExtractDocx(targetFull)),
+                            targetFull);
+                        break;
+
+                    case "pptx":
+                        await ShowHtmlContentAsync(
+                            ArtifactHtmlRenderer.BuildSlidesHtml(ArtifactTextExtractor.ExtractPptxSlides(targetFull)),
+                            targetFull);
+                        break;
+
+                    case "txt": case "md": case "csv": case "json":
+                        ShowTextPreview(File.ReadAllText(targetFull));
+                        break;
+
+                    default:
+                        ShowFallback($"「.{ext}」格式無法在這裡預覽，可用系統程式開啟。");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowFallback($"預覽失敗：{ex.Message}");
+            }
+        }
+
+        private void ShowImagePreview(string path)
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                bmp.UriSource = new Uri(path);
+                bmp.EndInit();
+                bmp.Freeze();
+
+                PreviewImage.Source = bmp;
+                PreviewImageScroll.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                ShowFallback($"圖片載入失敗：{ex.Message}");
+            }
+        }
+
+        private void ShowMediaPreview(string path)
+        {
+            PreviewMedia.Visibility = Visibility.Visible;
+            PreviewMedia.Source = new Uri(path);
+            PreviewMedia.Play();
+            _previewMediaPlaying = true;
+        }
+
+        private async Task ShowWebPreviewAsync(string path)
+        {
+            PreviewLoading.Visibility = Visibility.Visible;
+            PreviewWeb.Visibility = Visibility.Visible;
+
+            try
+            {
+                await PreviewWeb.EnsureCoreWebView2Async();
+
+                // 等待初始化期間若已關閉或切換到別的檔案，放棄這次導覽。
+                if (PreviewOverlay.Visibility != Visibility.Visible ||
+                    !string.Equals(_previewPath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                PreviewWeb.CoreWebView2.Navigate(new Uri(path).AbsoluteUri);
+            }
+            catch (Exception ex)
+            {
+                PreviewWeb.Visibility = Visibility.Collapsed;
+                ShowFallback($"無法載入預覽器（WebView2）：{ex.Message}");
+            }
+            finally
+            {
+                PreviewLoading.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        // 把渲染好的 HTML 字串丟進 WebView2 顯示（DOCX → markdown 排版、PPTX → 投影片卡片）。
+        private async Task ShowHtmlContentAsync(string html, string sourcePath)
+        {
+            PreviewLoading.Visibility = Visibility.Visible;
+            PreviewWeb.Visibility = Visibility.Visible;
+
+            try
+            {
+                await PreviewWeb.EnsureCoreWebView2Async();
+
+                if (PreviewOverlay.Visibility != Visibility.Visible ||
+                    !string.Equals(_previewPath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                PreviewWeb.CoreWebView2.NavigateToString(html);
+            }
+            catch (Exception ex)
+            {
+                PreviewWeb.Visibility = Visibility.Collapsed;
+                ShowFallback($"無法載入預覽器（WebView2）：{ex.Message}");
+            }
+            finally
+            {
+                PreviewLoading.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void ShowTextPreview(string? text)
+        {
+            PreviewText.Text = string.IsNullOrWhiteSpace(text) ? "（沒有可顯示的文字內容）" : text;
+            PreviewTextScroll.Visibility = Visibility.Visible;
+        }
+
+        private void ShowFallback(string message)
+        {
+            PreviewFallbackText.Text = message;
+            PreviewFallback.Visibility = Visibility.Visible;
+        }
+
+        private void HideAllPreviewRenderers()
+        {
+            PreviewImageScroll.Visibility = Visibility.Collapsed;
+            PreviewImage.Source = null;
+
+            PreviewTextScroll.Visibility = Visibility.Collapsed;
+            PreviewFallback.Visibility = Visibility.Collapsed;
+            PreviewLoading.Visibility = Visibility.Collapsed;
+
+            PreviewMedia.Visibility = Visibility.Collapsed;
+            try { PreviewMedia.Stop(); PreviewMedia.Close(); } catch { }
+            PreviewMedia.Source = null;
+            _previewMediaPlaying = false;
+
+            PreviewWeb.Visibility = Visibility.Collapsed;
+            try { PreviewWeb.CoreWebView2?.Navigate("about:blank"); } catch { }
+        }
+
+        private void ClosePreview()
+        {
+            HideAllPreviewRenderers();
+            PreviewOverlay.Visibility = Visibility.Collapsed;
+            _previewPath = null;
+        }
+
+        private void ClosePreview_Click(object sender, RoutedEventArgs e) => ClosePreview();
+
+        private void PreviewOverlay_BackgroundClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+            => ClosePreview();
+
+        // 點卡片本身不關閉（阻止冒泡到背景）。
+        private void PreviewCard_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+            => e.Handled = true;
+
+        private void PreviewOpenExternal_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrWhiteSpace(_previewPath))
+                OpenGeneratedFile(_previewPath);
+        }
+
+        private void PreviewMedia_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_previewMediaPlaying)
+                PreviewMedia.Pause();
+            else
+                PreviewMedia.Play();
+            _previewMediaPlaying = !_previewMediaPlaying;
+        }
+
+        // 唯讀 TextBox 會吃掉滾輪事件，這裡在 tunnel 階段先攔下來捲外層 ScrollViewer。
+        private void PreviewTextScroll_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (sender is ScrollViewer sv)
+            {
+                sv.ScrollToVerticalOffset(sv.VerticalOffset - e.Delta);
+                e.Handled = true;
+            }
+        }
+
+        private void PreviewMedia_MediaOpened(object sender, RoutedEventArgs e) { }
+
+        private void PreviewMedia_MediaEnded(object sender, RoutedEventArgs e)
+        {
+            PreviewMedia.Position = TimeSpan.Zero;
+            PreviewMedia.Pause();
+            _previewMediaPlaying = false;
+        }
+
         public void RemoveAttachment(NodeControl node, string relativePath)
         {
             if (!_attachmentsByNode.TryGetValue(node.Id, out var list))
@@ -4230,7 +4521,8 @@ namespace test
     AutoModelSelectionEnabled: _isAutoModelSelectionEnabled,
     AdvancedAutoResolverEnabled: _isAdvancedAutoResolverEnabled,
     DownstreamAutoMode: DownstreamAutoModeHelper.ToStorageValue(_downstreamAutoMode),
-    PresentationEngine: PresentationEngineHelper.ToStorageValue(_presentationEngine)
+    PresentationEngine: PresentationEngineHelper.ToStorageValue(_presentationEngine),
+    TaskRoutingOverrides: _taskRoutingOverrides.ToStorage()
 );
 
             if (string.IsNullOrEmpty(_currentFilePath))
@@ -4265,6 +4557,7 @@ namespace test
             if (_presentationEngine == PresentationEngine.Gamma)
                 _presentationEngine = PresentationEngine.Claude; // Gamma 尚未開放，載入時一律落回 Claude。
             SyncPresentationEngineRadios();
+            _taskRoutingOverrides.LoadFromStorage(state.TaskRoutingOverrides);
             _lastAppliedAutoKeyword = "";
             _lastInitialTopSnapshot = "";
 
@@ -5771,6 +6064,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             RefreshMemoryPanel();
             SyncDownstreamAutoModeRadios();
             SyncPresentationEngineRadios();
+            BuildTaskRoutingPanel();
             if (SettingsOverlay != null)
                 SettingsOverlay.Visibility = Visibility.Visible;
             MemoryInput?.Focus();
@@ -5793,6 +6087,119 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         private void SettingsCard_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             e.Handled = true;
+        }
+
+        // ===== 任務 → AI 自訂路由（個人化設定中的下拉清單）=====
+
+        // 只列出真正會被路由特化的任務模式（Chat 為自由對話、沿用當前選定模型，不在此處覆蓋）。
+        private static readonly (NodeTaskMode Mode, string Label)[] _routingModes = new[]
+        {
+            (NodeTaskMode.Research, "研究 / 查資料"),
+            (NodeTaskMode.Code, "程式碼"),
+            (NodeTaskMode.Translate, "翻譯"),
+            (NodeTaskMode.Summarize, "摘要"),
+            (NodeTaskMode.Rewrite, "改寫 / 潤稿"),
+            (NodeTaskMode.Extract, "資訊擷取"),
+        };
+
+        // 每種任務真正需要的能力；只有具備該能力的已啟用模型才會出現在該任務的下拉中。
+        // null = 純文字任務（翻譯 / 摘要 / 改寫 / 擷取），不特別限制，列出全部已啟用模型。
+        private static AiModelCapability? RequiredCapabilityFor(NodeTaskMode mode) => mode switch
+        {
+            NodeTaskMode.Research => AiModelCapability.Search, // 需即時搜尋（目前只有 Perplexity 具備）
+            NodeTaskMode.Code => AiModelCapability.Code,       // 需寫程式能力（排除無 Code 的 Perplexity）
+            _ => null
+        };
+
+        // 程式化建立每列時暫時靜音 SelectionChanged，避免初始化就寫入 override。
+        private bool _buildingTaskRouting;
+
+        private void BuildTaskRoutingPanel()
+        {
+            if (TaskRoutingList == null)
+                return;
+
+            _buildingTaskRouting = true;
+            try
+            {
+                TaskRoutingList.Children.Clear();
+                var labelBrush = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x33));
+                var comboStyle = TryFindResource("RoutingComboBoxStyle") as Style;
+
+                foreach (var (mode, label) in _routingModes)
+                {
+                    // 依任務能力過濾：不適用該任務的模型不列入（例：Perplexity 不會出現在「程式碼」）。
+                    // 用 Available 保留 registry 的公司分組順序（GPT → Claude → Perplexity → Gemini），
+                    // 不用 WithCapability（那會按價格排序，把同公司的拆散）。
+                    var cap = RequiredCapabilityFor(mode);
+                    var models = AiModelRegistry.Available
+                        .Where(m => !cap.HasValue || (m.Capabilities & cap.Value) == cap.Value)
+                        .ToList();
+
+                    var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                    var caption = new TextBlock
+                    {
+                        Text = label,
+                        FontSize = 12.5,
+                        Foreground = labelBrush,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    Grid.SetColumn(caption, 0);
+                    row.Children.Add(caption);
+
+                    var combo = new ComboBox { Tag = mode };
+                    if (comboStyle != null)
+                        combo.Style = comboStyle;
+
+                    // 第一項固定為「自動」（= 清除 override，回退內建建議）。
+                    var autoItem = new ComboBoxItem { Content = "自動（建議）", Tag = null };
+                    combo.Items.Add(autoItem);
+
+                    string? current = GetTaskRoutingOverride(mode);
+                    ComboBoxItem selected = autoItem;
+
+                    foreach (var m in models)
+                    {
+                        var item = new ComboBoxItem { Content = m.DisplayName, Tag = m.Id };
+                        combo.Items.Add(item);
+                        if (!string.IsNullOrEmpty(current) &&
+                            string.Equals(current, m.Id, StringComparison.OrdinalIgnoreCase))
+                        {
+                            selected = item;
+                        }
+                    }
+
+                    combo.SelectedItem = selected;
+                    combo.SelectionChanged += TaskRoutingCombo_SelectionChanged;
+
+                    Grid.SetColumn(combo, 1);
+                    row.Children.Add(combo);
+
+                    TaskRoutingList.Children.Add(row);
+                }
+            }
+            finally
+            {
+                _buildingTaskRouting = false;
+            }
+        }
+
+        private void TaskRoutingCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_buildingTaskRouting)
+                return;
+            if (sender is not ComboBox combo || combo.Tag is not NodeTaskMode mode)
+                return;
+
+            string? modelId = (combo.SelectedItem as ComboBoxItem)?.Tag as string;
+
+            if (string.IsNullOrEmpty(modelId))
+                ClearTaskRoutingOverride(mode);
+            else
+                SetTaskRoutingOverride(mode, modelId);
         }
 
         private void RememberPreference_Click(object sender, RoutedEventArgs e)
