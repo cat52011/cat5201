@@ -5,9 +5,9 @@ namespace test
 {
     public static class AiModels
     {
-        public const string OpenAi_Gpt54 = "gpt-5.4";
+        public const string OpenAi_Gpt54 = "gpt-5.5";
         public const string Claude_Sonnet46 = "claude-sonnet-4-6";
-        public const string Claude_Opus46 = "claude-opus-4-6";
+        public const string Claude_Opus46 = "claude-opus-4-8";
         public const string Perplexity_Sonar = "pplx-sonar";
         public const string Perplexity_SonarDeepResearch = "pplx-sonar-deep-research";
 

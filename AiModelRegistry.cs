@@ -10,15 +10,15 @@ namespace test
         {
             new AiModelDefinition
             {
-                Id = "gpt-5.4",
-                DisplayName = "GPT-5.4",
+                Id = "gpt-5.5",
+                DisplayName = "GPT-5.5",
                 IconPath = "pack://application:,,,/Assets/OpenAI_logo.png",
                 Provider = AiProviderType.OpenAI,
                 Capabilities = AiModelCapability.Streaming | AiModelCapability.Images | AiModelCapability.Files
                     | AiModelCapability.LongContext | AiModelCapability.ImageGeneration | AiModelCapability.Code,
                 CostTier = AiCostTier.Standard,
                 IsDefaultNodeModel = true,
-                ServiceModel = "gpt-5.4",
+                ServiceModel = "gpt-5.5",
                 IsDeepResearch = false
             },
             new AiModelDefinition
@@ -36,15 +36,15 @@ namespace test
             },
             new AiModelDefinition
             {
-                Id = "claude-opus-4-6",
-                DisplayName = "Claude Opus 4.6",
+                Id = "claude-opus-4-8",
+                DisplayName = "Claude Opus 4.8",
                 IconPath = "pack://application:,,,/Assets/Claude_logo.png",
                 Provider = AiProviderType.Claude,
                 Capabilities = AiModelCapability.Streaming | AiModelCapability.Images | AiModelCapability.Files
                     | AiModelCapability.LongContext | AiModelCapability.Code,
                 CostTier = AiCostTier.Premium,
                 IsDefaultNodeModel = false,
-                ServiceModel = "claude-opus-4-6",
+                ServiceModel = "claude-opus-4-8",
                 IsDeepResearch = false
             },
             new AiModelDefinition
@@ -76,28 +76,30 @@ namespace test
             // v1 能力宣告為文字 / 長文 / 程式碼（未宣告 Images/Search，避免把圖片/搜尋任務導到尚未實作的路徑）。
             new AiModelDefinition
             {
-                Id = "gemini-2.5-flash",
-                DisplayName = "Gemini 2.5 Flash",
+                Id = "gemini-3.5-flash",
+                DisplayName = "Gemini 3.5 Flash",
                 IconPath = "pack://application:,,,/Assets/Gemini_logo.png",
                 Provider = AiProviderType.Gemini,
                 Capabilities = AiModelCapability.Streaming | AiModelCapability.LongContext | AiModelCapability.Code,
                 CostTier = AiCostTier.Economy,
                 IsAvailable = true,
                 IsDefaultNodeModel = false,
-                ServiceModel = "gemini-2.5-flash",
+                ServiceModel = "gemini-3.5-flash",
                 IsDeepResearch = false
             },
+            // Gemini 3.5 Pro 尚未公開——Google I/O 2026 只發 3.5 Flash；Pro 層目前最新為 gemini-3.1-pro。
+            // 注意：API model ID 帶 -preview 後綴（v1beta 端點要求），節點 Id 維持乾淨顯示。
             new AiModelDefinition
             {
-                Id = "gemini-2.5-pro",
-                DisplayName = "Gemini 2.5 Pro",
+                Id = "gemini-3.1-pro",
+                DisplayName = "Gemini 3.1 Pro",
                 IconPath = "pack://application:,,,/Assets/Gemini_logo.png",
                 Provider = AiProviderType.Gemini,
                 Capabilities = AiModelCapability.Streaming | AiModelCapability.LongContext | AiModelCapability.Code,
                 CostTier = AiCostTier.Standard,
                 IsAvailable = true,
                 IsDefaultNodeModel = false,
-                ServiceModel = "gemini-2.5-pro",
+                ServiceModel = "gemini-3.1-pro-preview",
                 IsDeepResearch = false
             }
         };

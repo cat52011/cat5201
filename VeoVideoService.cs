@@ -41,8 +41,8 @@ namespace test
                       ?? "";
 
             string modelEnv = Environment.GetEnvironmentVariable("CAT5201_VEO_MODEL") ?? "";
-            // Veo 3 GA model id（其他可用：veo-3.1-generate-preview / veo-3.0-fast-generate-001）。
-            _model = string.IsNullOrWhiteSpace(modelEnv) ? "veo-3.0-generate-001" : modelEnv;
+            // Veo 3.1 preview（其他可用：veo-3.0-generate-001 / veo-3.0-fast-generate-001）。
+            _model = string.IsNullOrWhiteSpace(modelEnv) ? "veo-3.1-generate-preview" : modelEnv;
         }
 
         // 安全閘門已移除：只要有 GEMINI_API_KEY / GOOGLE_API_KEY 就會實際呼叫 Veo（會計費）。

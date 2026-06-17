@@ -53,13 +53,13 @@ namespace test
 
         private static readonly Dictionary<string, Price> PriceTable = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["gpt-5.4"] = new Price(2.50, 10.00),
+            ["gpt-5.5"] = new Price(2.50, 10.00),
             ["claude-sonnet-4-6"] = new Price(3.00, 15.00),
-            ["claude-opus-4-6"] = new Price(15.00, 75.00),
+            ["claude-opus-4-8"] = new Price(15.00, 75.00),
             ["pplx-sonar"] = new Price(1.00, 1.00),
             ["pplx-sonar-deep-research"] = new Price(2.00, 8.00),
-            ["gemini-2.5-pro"] = new Price(1.25, 10.00),
-            ["gemini-2.5-flash"] = new Price(0.30, 2.50),
+            ["gemini-3.1-pro"] = new Price(1.25, 10.00),
+            ["gemini-3.5-flash"] = new Price(1.50, 9.00),
         };
 
         // 約略匯率，僅用於估算顯示。

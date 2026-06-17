@@ -28,7 +28,7 @@ namespace test
         private readonly string _apiKey;
         private readonly string _agentModel;
 
-        public PerplexityService(string agentModel = "openai/gpt-5.4")
+        public PerplexityService(string agentModel = "openai/gpt-5.5")
         {
             _agentModel = agentModel;
             _apiKey = Environment.GetEnvironmentVariable("PERPLEXITY_API_KEY") ?? "";

@@ -42,7 +42,7 @@ namespace test
             try
             {
                 raw = await _router
-                    .GetOpenAiService("gpt-5.4")
+                    .GetOpenAiService("gpt-5.5")
                     .GenerateAsync(systemPrompt, userPrompt, 300, ct);
             }
             catch
@@ -80,7 +80,7 @@ namespace test
 
 {
   ""task_mode"": ""Chat | Research | Translate | Summarize | Rewrite | Extract | Code"",
-  ""recommended_model"": ""gpt-5.4 | claude-sonnet-4-6 | claude-opus-4-6 | pplx-sonar | pplx-sonar-deep-research"",
+  ""recommended_model"": ""gpt-5.5 | claude-sonnet-4-6 | claude-opus-4-8 | pplx-sonar | pplx-sonar-deep-research"",
   ""confidence"": 0.0
 }
 
@@ -96,11 +96,11 @@ namespace test
 
 【Translate】
 - 翻譯 / 菜單 / PDF / 文件
-→ gpt-5.4
+→ gpt-5.5
 
 【Code】
 - 程式 / 架構 / debug
-→ claude-opus-4-6
+→ claude-opus-4-8
 
 【Rewrite / Summarize】
 - 改寫 / 潤稿 / 精簡
@@ -108,7 +108,7 @@ namespace test
 
 【Chat】
 - 一般對話
-→ gpt-5.4
+→ gpt-5.5
 
 重要規則：
 - 只輸出 JSON

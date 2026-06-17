@@ -20,7 +20,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Chat 不強制指定固定首選模型，優先保留目前節點手動模型；若沒有可用模型則回退到 gpt-5.4。"
+                Notes = "Chat 不強制指定固定首選模型，優先保留目前節點手動模型；若沒有可用模型則回退到 gpt-5.5。"
             },
 
             new NodeTaskRoutingProfile
@@ -63,7 +63,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Translate 首選 gpt-5.4，次選 claude-sonnet-4-6。"
+                Notes = "Translate 首選 gpt-5.5，次選 claude-sonnet-4-6。"
             },
 
             new NodeTaskRoutingProfile
@@ -83,7 +83,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Summarize 首選 gpt-5.4，次選 claude-sonnet-4-6。"
+                Notes = "Summarize 首選 gpt-5.5，次選 claude-sonnet-4-6。"
             },
 
             new NodeTaskRoutingProfile
@@ -103,7 +103,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Rewrite 首選 claude-sonnet-4-6，次選 gpt-5.4。"
+                Notes = "Rewrite 首選 claude-sonnet-4-6，次選 gpt-5.5。"
             },
 
             new NodeTaskRoutingProfile
@@ -125,7 +125,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Extract 首選 gpt-5.4，次選 claude-sonnet-4-6。"
+                Notes = "Extract 首選 gpt-5.5，次選 claude-sonnet-4-6。"
             },
 
             new NodeTaskRoutingProfile
@@ -146,7 +146,7 @@ namespace test
                 PrefersSearch = false,
                 PrefersLongContext = true,
                 PrefersDeepResearch = false,
-                Notes = "Code 首選 claude-opus-4-6，次選 gpt-5.4。"
+                Notes = "Code 首選 claude-opus-4-8，次選 gpt-5.5。"
             }
         };
 
@@ -239,7 +239,7 @@ namespace test
 
             string models = profile.PreferredModelIds != null && profile.PreferredModelIds.Count > 0
                 ? string.Join(", ", profile.PreferredModelIds)
-                : "(use current manual model or fallback gpt-5.4)";
+                : "(use current manual model or fallback gpt-5.5)";
 
             return
                 $"TaskMode = {profile.DisplayName}\n" +

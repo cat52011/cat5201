@@ -28,7 +28,7 @@ namespace test
             try
             {
                 raw = await _router
-                    .GetOpenAiService("gpt-5.4")
+                    .GetOpenAiService("gpt-5.5")
                     .GenerateAsync(BuildSystemPrompt(), BuildUserPrompt(topText), 200, ct);
             }
             catch

@@ -15,7 +15,7 @@ namespace test
         private PerplexitySonarProvider? _perplexitySonarProvider;
         private GeminiProvider? _geminiProvider;
 
-        private const string DefaultGeminiModel = "gemini-2.5-pro";
+        private const string DefaultGeminiModel = "gemini-3.1-pro-preview";
 
         private string _openAiModel = AiModels.DefaultOpenAiModel;
         private string _claudeModel = AiModels.DefaultClaudeModel;

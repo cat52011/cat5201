@@ -27,7 +27,7 @@ namespace test
         private readonly string _apiKey;
         private readonly string _model;
 
-        public OpenAIChatService(string model = "gpt-5.4")
+        public OpenAIChatService(string model = "gpt-5.5")
         {
             _model = model;
             _apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "";
@@ -67,6 +67,14 @@ namespace test
             return GenerateAsync(instructions, input, maxOutputTokens, ct, onUsage);
         }
 
+        // GPT-5.x 是 reasoning model，Responses API 內部會夾 temperature，gpt-5.x 拒絕。
+        // 加 reasoning_effort 可讓 API 切換到 reasoning 路徑並略過 temperature 注入。
+        private bool IsReasoningModel =>
+            _model.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase) ||
+            _model.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
+            _model.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
+            _model.StartsWith("o4", StringComparison.OrdinalIgnoreCase);
+
         /// <summary>
         /// 多模態：input 直接給 Responses API 支援的結構（含 input_text / input_image / input_file）
         /// 一次性完整回傳
@@ -78,14 +86,22 @@ namespace test
             CancellationToken ct = default,
             Action<int, int>? onUsage = null)
         {
-            var payload = new
-            {
-                model = _model,
-                instructions = instructions,
-                input = input,
-                max_output_tokens = maxOutputTokens,
-                temperature = 0.2
-            };
+            object payload = IsReasoningModel
+                ? (object)new
+                {
+                    model = _model,
+                    instructions = instructions,
+                    input = input,
+                    max_output_tokens = maxOutputTokens,
+                    reasoning = new { effort = "medium" }
+                }
+                : new
+                {
+                    model = _model,
+                    instructions = instructions,
+                    input = input,
+                    max_output_tokens = maxOutputTokens
+                };
 
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
@@ -152,15 +168,24 @@ namespace test
             CancellationToken ct = default,
             Action<int, int>? onUsage = null)
         {
-            var payload = new
-            {
-                model = _model,
-                instructions = instructions,
-                input = input,
-                max_output_tokens = maxOutputTokens,
-                temperature = 0.2,
-                stream = true
-            };
+            object payload = IsReasoningModel
+                ? (object)new
+                {
+                    model = _model,
+                    instructions = instructions,
+                    input = input,
+                    max_output_tokens = maxOutputTokens,
+                    reasoning = new { effort = "medium" },
+                    stream = true
+                }
+                : new
+                {
+                    model = _model,
+                    instructions = instructions,
+                    input = input,
+                    max_output_tokens = maxOutputTokens,
+                    stream = true
+                };
 
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
