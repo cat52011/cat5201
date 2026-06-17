@@ -25,7 +25,7 @@ namespace test
         // 工具分工表（劇本/關鍵畫面/影片/旁白/配樂 → 由誰負責、狀態）。
         public List<VideoProviderRole> ProviderRoles { get; set; } = new();
 
-        // Claude 為影片模型（Veo 3 / Sora）合成的最終 prompt（整合風格 + 各鏡頭）。
+        // Claude 為 Veo 3 合成的最終 prompt（整合風格 + 各鏡頭）。
         public string VideoPromptForGenerator { get; set; } = "";
 
         public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
@@ -44,7 +44,7 @@ namespace test
     public sealed class VideoProviderRole
     {
         public string Role { get; set; } = "";       // 劇本/分鏡/旁白/鏡頭、關鍵畫面/風格、影片、旁白配音、配樂
-        public string Provider { get; set; } = "";   // Claude / Flux / Midjourney / Veo 3 / Sora / ElevenLabs / Suno
+        public string Provider { get; set; } = "";   // Claude / Flux / Midjourney / Veo 3 / ElevenLabs / Suno
         public string Status { get; set; } = "";     // completed / skipped_no_api / failed / planned
         public string Detail { get; set; } = "";
 

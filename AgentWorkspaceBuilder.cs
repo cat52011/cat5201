@@ -10,7 +10,8 @@ namespace test
             string agentId,
             string key,
             object value,
-            bool? isUserVisibleOverride = null)
+            bool? isUserVisibleOverride = null,
+            string? modelId = null)
         {
             key ??= "";
 
@@ -19,6 +20,7 @@ namespace test
                 RunId = workspace?.RunId ?? "",
                 NodeId = node?.Id.ToString() ?? "",
                 SourceAgentId = agentId ?? "",
+                ModelId = modelId ?? "",
                 ItemType = key,
                 ArtifactKind = ResolveArtifactKind(key, value),
                 ContentFormat = ResolveContentFormat(key, value),

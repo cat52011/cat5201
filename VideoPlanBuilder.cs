@@ -40,7 +40,7 @@ $@"你是專業的影片導演與分鏡師。請依使用者需求，產出一�
       ""duration_seconds"": 4
     }}
   ],
-  ""video_prompt"": ""整合風格與所有鏡頭、給影片模型（Veo 3 / Sora）的一段英文 prompt""
+  ""video_prompt"": ""整合風格與所有鏡頭、給 Veo 3 的一段英文 prompt""
 }}
 
 要求：

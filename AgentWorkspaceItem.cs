@@ -29,7 +29,7 @@ namespace test
         // Workspace v2：source metadata + status + dependencies。
         // 空字串時由 AgentWorkspace.BuildArtifactRecords 依 payload 型別集中推導，
         // 因此各 capability 不必每處都填，schema 仍維持一致。
-        public string ModelId { get; init; } = "";
+        public string ModelId { get; set; } = "";
 
         public string CapabilityId { get; init; } = "";
 

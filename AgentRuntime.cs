@@ -1697,8 +1697,8 @@ namespace test
         /// Video Gen v1（多工具導演流程）：
         ///   1) Claude 當導演產出結構化影片計畫（劇本/分鏡/旁白/鏡頭/風格）——核心，永遠執行。
         ///   2) 配角工具（Flux/Midjourney 關鍵畫面、ElevenLabs 旁白、Suno 配樂）—— 缺 API 就記為略過。
-        ///   3) 影片產生器：Veo 3 優先，否則 Sora，皆休眠則只交付 Claude 計畫。
-        /// 支援取消（OperationCanceledException 往上拋）。即使所有影片 API 休眠，使用者仍拿到完整 Claude 影片計畫。
+        ///   3) 影片產生器：Veo 3（唯一 provider；無金鑰則只交付 Claude 計畫）。
+        /// 支援取消（OperationCanceledException 往上拋）。即使 Veo API 未配置，使用者仍拿到完整 Claude 影片計畫。
         /// </summary>
         private async Task<AiFallbackExecutionResult> GenerateVideoFile(
             NodeControl node,
@@ -1749,14 +1749,18 @@ namespace test
                 music.IsConfigured ? "已偵測到金鑰（配樂接線為後續工作）" : music.NotConfiguredReason));
 
             var planItem = AgentWorkspaceBuilder.FromCapabilityData(
-                workspace, node, "video-director(claude)", "video_plan", plan, isUserVisibleOverride: true);
+                workspace, node, "video-director(claude)", "video_plan", plan,
+                isUserVisibleOverride: true, modelId: AiModels.Claude_Sonnet46);
             workspace.Add(planItem);
 
             string videoPrompt = string.IsNullOrWhiteSpace(plan.VideoPromptForGenerator)
                 ? prompt
                 : plan.VideoPromptForGenerator;
 
-            int seconds = plan.TotalDurationSeconds > 0 ? plan.TotalDurationSeconds : 4;
+            // Veo 3 只接受 4–8 秒；超過就 clamp（不報錯，影片說明會寫實際秒數）。
+            int seconds = Math.Clamp(
+                plan.TotalDurationSeconds > 0 ? plan.TotalDurationSeconds : 4,
+                4, 8);
 
             // 「prompt → 影片請求」artifact，全程追蹤狀態 / 進度。
             var request = new VideoRequestPayload
@@ -1770,9 +1774,8 @@ namespace test
                 workspace, node, agentId, "video_request", request, isUserVisibleOverride: true);
             workspace.Add(requestItem);
 
-            // 3) 影片產生器：Veo 3 優先 → Sora → 皆休眠則只交付 Claude 計畫。
+            // 3) 影片產生器：Veo 3（唯一 provider）。
             var veo = new VeoVideoService();
-            var sora = new OpenAIVideoService();
 
             void OnProgress(int percent, VideoGenerationStatus status)
             {
@@ -1801,17 +1804,6 @@ namespace test
                     if (r.Success) { mp4 = r.Mp4Bytes; jobRef = r.OperationName; }
                     else videoError = r.ErrorMessage;
                 }
-                else if (sora.IsConfigured)
-                {
-                    attempted = true;
-                    providerLabel = "Sora";
-                    request.Model = sora.Model;
-                    request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Generating);
-
-                    var r = await sora.GenerateAsync(videoPrompt, request.DurationSeconds, request.Size, OnProgress, ct);
-                    if (r.Success) { mp4 = r.Mp4Bytes; jobRef = r.JobId; }
-                    else videoError = r.ErrorMessage;
-                }
                 else
                 {
                     providerLabel = "Veo 3";
@@ -1832,6 +1824,10 @@ namespace test
 
             request.JobId = jobRef;
 
+            // 把 Veo 3 model id 補回 requestItem，讓決策窗模型欄看得到。
+            if (!string.IsNullOrWhiteSpace(request.Model))
+                requestItem.ModelId = request.Model;
+
             // 3a) 影片模型皆休眠：只交付 Claude 計畫（仍算成功，因為導演計畫已產出）。
             if (!attempted)
             {
@@ -1842,7 +1838,7 @@ namespace test
                 planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
                 requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
                 orchestration.MarkSuccess("generate_video", "已產出 Claude 影片計畫（影片模型休眠）");
-                return AppendExecutionNote(execution,
+                return ReplaceExecutionText(execution,
                     BuildVideoPlanNote(plan) +
                     $"\n\nℹ 影片模型休眠：{veo.NotConfiguredReason} 啟用 Veo 3 後即可依此計畫生成影片。");
             }
@@ -1857,7 +1853,7 @@ namespace test
                 planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
                 requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
                 orchestration.MarkFailed("generate_video", videoError);
-                return AppendExecutionNote(execution,
+                return ReplaceExecutionText(execution,
                     BuildVideoPlanNote(plan) + $"\n\n⚠ 影片生成失敗（{providerLabel}）：{videoError}");
             }
 
@@ -1882,7 +1878,7 @@ namespace test
                 planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
                 requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
                 orchestration.MarkSuccess("generate_video", generated.FileName);
-                return AppendExecutionNote(execution, BuildVideoPlanNote(plan) + "\n\n已生成影片。");
+                return ReplaceExecutionText(execution, BuildVideoPlanNote(plan) + "\n\n✅ 影片已生成：" + generated.FileName);
             }
 
             plan.ProviderRoles.Add(VideoProviderRole.Of(
@@ -1892,7 +1888,7 @@ namespace test
             planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
             requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
             orchestration.MarkFailed("generate_video", generated.ErrorMessage);
-            return AppendExecutionNote(execution,
+            return ReplaceExecutionText(execution,
                 BuildVideoPlanNote(plan) + $"\n\n⚠ 影片寫檔失敗：{generated.ErrorMessage}");
         }
 
@@ -2113,6 +2109,22 @@ namespace test
                 sb.Append($"\n· {role.Role}：{role.Provider}（{VideoProviderRoleStatus.ToLabel(role.Status)}）");
 
             return sb.ToString();
+        }
+
+        // 影片 / 報告 / 表格等產出型任務：主模型的回答直接取代（不要夾在「我不能生成影片」後面）。
+        private static AiFallbackExecutionResult ReplaceExecutionText(
+            AiFallbackExecutionResult execution, string text)
+        {
+            return new AiFallbackExecutionResult
+            {
+                IsSuccess = execution.IsSuccess,
+                Text = text,
+                ActualModelId = execution.ActualModelId ?? "",
+                UsedFallback = execution.UsedFallback,
+                Summary = execution.Summary,
+                ErrorMessage = execution.ErrorMessage,
+                Attempts = execution.Attempts
+            };
         }
 
         private static AiFallbackExecutionResult AppendExecutionNote(
