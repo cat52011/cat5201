@@ -30,16 +30,20 @@ namespace test
             var svc = _router.GetOpenAiService(route.ServiceModel);
 
             object input = await BuildInputAsync(request, ct).ConfigureAwait(false);
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateAsync(
                 request.SystemPrompt,
                 input,
                 request.MaxOutputTokens,
-                ct).ConfigureAwait(false);
+                ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
             return AiResponse.Success(
                 text: text,
                 modelUsed: route.NodeModel,
-                providerUsed: Kind);
+                providerUsed: Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
 
         public async Task<AiResponse> GenerateStreamAsync(
@@ -51,17 +55,21 @@ namespace test
             var svc = _router.GetOpenAiService(route.ServiceModel);
 
             object input = await BuildInputAsync(request, ct).ConfigureAwait(false);
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateStreamAsync(
                 request.SystemPrompt,
                 input,
                 onDelta,
                 request.MaxOutputTokens,
-                ct).ConfigureAwait(false);
+                ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
             return AiResponse.Success(
                 text: text,
                 modelUsed: route.NodeModel,
-                providerUsed: Kind);
+                providerUsed: Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
 
         private static async Task<object> BuildInputAsync(AiRequest request, CancellationToken ct)

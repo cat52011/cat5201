@@ -79,6 +79,7 @@ namespace test
                 ActualAgentId = decision.ActualAgentId ?? "",
 
                 MemoryRecall = decision.MemoryRecall ?? MemoryRecallStats.Empty,
+                OutputIntentSummary = decision.OutputIntentSummary ?? "",
             };
         }
 

@@ -923,18 +923,6 @@ Margin="0,20,20,0">
                                    Foreground="#303030"
                                    VerticalAlignment="Center"/>
 
-                        <Border Grid.Column="1"
-                                CornerRadius="999"
-                                Background="#F1F1F3"
-                                Padding="10,4"
-                                VerticalAlignment="Center"
-                                Margin="0,0,8,0">
-                            <TextBlock x:Name="MemoryStatsLabel"
-                                       Text="偏好 0 條・歷史 0 筆"
-                                       FontSize="11.5"
-                                       Foreground="#666"/>
-                        </Border>
-
                         <Button Grid.Column="2"
                                 Width="28" Height="28"
                                 Background="Transparent"

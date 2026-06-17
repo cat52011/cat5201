@@ -38,6 +38,16 @@ namespace test
                     ? displayToLabel
                     : $"{displayToLabel} ← {displayFromLabel}";
 
+            // 實際參與的代理 / 模型常不只一個（研究 + 報告 + 表格 + 簡報…）。
+            // 多於一個就在頂部「Agent / 模型」欄顯示「A + B」。Agent 一律用英文 id，與執行中即時視圖一致。
+            var participantAgents = CollectParticipantAgents(log, agent);
+            if (participantAgents.Count > 0)
+                agent = string.Join(" + ", participantAgents);
+
+            var participantModels = CollectParticipantModels(log, displayToLabel);
+            if (participantModels.Count > 1)
+                modelLabel = string.Join(" + ", participantModels);
+
             string status = log.SelectionMode switch
             {
                 "API Auto" => "API Auto",
@@ -146,6 +156,9 @@ namespace test
         {
             var steps = new List<NodeDecisionStepViewData>();
 
+            // §13 可讀執行日誌：最上方放一張「白話總結」卡，一眼看懂這次做了什麼（其餘卡是技術細節）。
+            steps.Add(BuildReadableSummaryStep(log));
+
             steps.Add(BuildTaskModeStep(log));
             steps.Add(BuildModelSelectionStep(log, requestedLabel, plannedLabel, actualLabel));
             steps.Add(BuildAiTeamStep(log));
@@ -157,6 +170,131 @@ namespace test
             steps.Add(BuildExecutionStep(log));
 
             return steps;
+        }
+
+        // §13：把整次執行濃縮成幾行白話 —— 模式（手動/自動）、任務、記憶、產出、結果。
+        private static NodeDecisionStepViewData BuildReadableSummaryStep(AiExecutionLogEntry log)
+        {
+            string actual = GetModelLabel(log.ActualModelId);
+
+            // 第一行就是清楚的 Manual/Auto 提示。
+            string modeLine = log.SelectionMode switch
+            {
+                "Manual" => $"🛠 手動指定模型：{actual}",
+                "API Auto" => $"🤖 自動選模型：{actual}（AI 先判斷任務再挑）",
+                _ => $"🤖 自動選模型：{actual}（依關鍵字規則挑）"
+            };
+
+            var lines = new List<string> { modeLine };
+
+            if (!string.IsNullOrWhiteSpace(log.TaskMode))
+                lines.Add($"📌 判斷任務：{Safe(log.TaskMode)}（信心 {log.Confidence:P0}）");
+
+            // §6 第一層輸出判斷：這次想要的輸出（報告 / 表格 / 簡報）。
+            if (!string.IsNullOrWhiteSpace(log.OutputIntentSummary))
+                lines.Add($"🎯 想要的輸出：{Safe(log.OutputIntentSummary)}");
+
+            var recall = log.MemoryRecall ?? MemoryRecallStats.Empty;
+            if (recall.Suppressed)
+                lines.Add("🧠 記憶：本次略過");
+            else if (recall.HasAny)
+                lines.Add($"🧠 記憶：用了偏好 {recall.PreferenceCount} 條、相關歷史 {recall.EpisodicCount} 筆");
+
+            var files = CollectOutputFileNames(log);
+            if (files.Count > 0)
+                lines.Add("📄 產出：" + string.Join("、", files));
+
+            string durationText = log.DurationMs >= 1000
+                ? $"{log.DurationMs / 1000.0:0.0} 秒"
+                : $"{log.DurationMs} 毫秒";
+
+            string resultLine = log.Success
+                ? $"✅ 結果：成功 · {durationText}"
+                : $"❌ 結果：失敗 · {Safe(log.ErrorMessage)}";
+
+            if (log.Success && !string.IsNullOrWhiteSpace(log.CostDisplay))
+                resultLine += $" · {log.CostDisplay}";
+
+            lines.Add(resultLine);
+
+            string detail = (string.Equals(log.SelectionMode, "Manual", StringComparison.Ordinal) ? "手動" : "自動")
+                            + $" · {actual} · " + (log.Success ? "成功" : "失敗");
+
+            return new NodeDecisionStepViewData
+            {
+                Title = "執行摘要",
+                Detail = detail,
+                State = log.Success ? NodeDecisionStepState.Success : NodeDecisionStepState.Error,
+                Highlight = true,
+                DetailLines = lines
+            };
+        }
+
+        // 頂部「Agent」欄用：實際參與的代理（含主代理 + 各產出物來源代理），去重後回英文 id 清單。
+        private static List<string> CollectParticipantAgents(AiExecutionLogEntry log, string primaryAgentId)
+        {
+            var ids = new List<string>();
+
+            void Add(string? id)
+            {
+                if (string.IsNullOrWhiteSpace(id) || id.Trim() == "-")
+                    return;
+                string clean = id.Trim();
+                if (!ids.Contains(clean, StringComparer.OrdinalIgnoreCase))
+                    ids.Add(clean);
+            }
+
+            Add(primaryAgentId);
+            foreach (var a in log.WorkspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>())
+                Add(a?.SourceAgentId);
+
+            return ids;
+        }
+
+        // 頂部「模型」欄用：實際參與的模型（主模型 + 各產出物的模型），去重後回顯示標籤清單。
+        private static List<string> CollectParticipantModels(AiExecutionLogEntry log, string primaryModelLabel)
+        {
+            var labels = new List<string>();
+
+            void Add(string? label)
+            {
+                if (string.IsNullOrWhiteSpace(label) || label.Trim() == "-")
+                    return;
+                if (!labels.Contains(label))
+                    labels.Add(label);
+            }
+
+            Add(primaryModelLabel);
+            foreach (var a in log.WorkspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>())
+            {
+                if (!string.IsNullOrWhiteSpace(a?.ModelId))
+                    Add(GetModelLabel(a!.ModelId));
+            }
+
+            return labels;
+        }
+
+        private static List<string> CollectOutputFileNames(AiExecutionLogEntry log)
+        {
+            var names = new List<string>();
+
+            foreach (var a in log.WorkspaceArtifacts ?? Array.Empty<AgentWorkspaceArtifactRecord>())
+            {
+                if (a == null)
+                    continue;
+
+                string kind = (a.ArtifactKind ?? "").Trim().ToLowerInvariant();
+                string itemType = (a.ItemType ?? "").Trim().ToLowerInvariant();
+                bool isFile = kind is "file" or "generated_file" || itemType is "file" or "generated_file";
+                if (!isFile)
+                    continue;
+
+                string name = StripGeneratedFilePrefix(a.Title);
+                if (!string.IsNullOrWhiteSpace(name) && name != "產生檔案失敗" && !names.Contains(name))
+                    names.Add(name);
+            }
+
+            return names;
         }
 
         private static NodeDecisionStepViewData BuildTaskModeStep(AiExecutionLogEntry log)

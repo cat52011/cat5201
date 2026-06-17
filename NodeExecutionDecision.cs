@@ -56,5 +56,8 @@ namespace test
 
         // Memory v1 視覺化：本次召回的偏好 / 記憶統計。
         public MemoryRecallStats MemoryRecall { get; set; } = MemoryRecallStats.Empty;
+
+        // §6 第一層輸出判斷的白話摘要（報告 / 表格 / 簡報 / 純文字），給決策窗顯示。
+        public string OutputIntentSummary { get; set; } = "";
     }
 }

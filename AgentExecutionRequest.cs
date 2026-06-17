@@ -18,5 +18,9 @@
 
         // 使用者偏好區塊（最高優先），會注入 final synthesis / 最終執行的輸入。
         public string PreferenceBlock { get; init; } = "";
+
+        // §6 第一層輸出判斷的結果（先跑一次 API 決定要簡報/報告/表格之中哪幾個）；
+        // null 代表此次未判斷（例如子代理委派），AgentRuntime 會退回關鍵字 + TaskType 行為。
+        public OutputIntent? OutputIntent { get; init; }
     }
 }

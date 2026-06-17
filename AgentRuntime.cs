@@ -1020,26 +1020,43 @@ namespace test
             else
                 orchestration.MarkFailed("final_synthesis", execution.ErrorMessage);
 
-            // File Generation v1：GenerateFile 任務在最終答案後輸出 Markdown 報告檔。
-            // 只在頂層執行（非子代理委派）且有實際內容時才寫檔。
+            // §6 第一層輸出判斷：優先用 NodeService 先跑 API 得到的 OutputIntent（要簡報/報告/表格哪幾個）；
+            // 沒有時（例如子代理委派）退回關鍵字 + TaskType。報告→docx、表格→xlsx、簡報→pptx，且一律再配一份 pdf。
+            OutputIntent intent = request.OutputIntent ?? new OutputIntent
+            {
+                WantsReport = orchestrationPlan.TaskType == OrchestrationTaskType.GenerateFile
+                              || OutputFormatDetector.WantsWrittenReport(capabilityAugmentedText),
+                WantsTable = OutputFormatDetector.WantsSpreadsheet(capabilityAugmentedText),
+                WantsPresentation = orchestrationPlan.TaskType == OrchestrationTaskType.Presentation
+                                    || OutputFormatDetector.WantsPresentation(capabilityAugmentedText)
+            };
+
+            bool doReport = intent.WantsReport;
+            bool doTable = intent.WantsTable;
+            bool doDeck = intent.WantsPresentation;
+
+            // 報告 / 表格：GenerateReportFile 內部依 intent 決定 .docx（報告）/ .xlsx（表格），且一律配一份 .pdf。
             if (execution.IsSuccess &&
-                orchestrationPlan.TaskType == OrchestrationTaskType.GenerateFile &&
+                (doReport || doTable) &&
                 request.DelegationDepth == 0 &&
                 !string.IsNullOrWhiteSpace(execution.Text))
             {
-                execution = GenerateReportFile(
+                execution = await GenerateReportFile(
                     node,
                     runtimeAgent,
                     capabilityAugmentedText,
                     workspace,
                     orchestrationPlan,
                     execution,
-                    orchestration);
+                    orchestration,
+                    intent,
+                    request.CancellationToken);
             }
 
-            // Presentation Agent v1：Presentation 任務在最終答案後輸出投影片大綱 + Marp Markdown deck。
+            // 簡報：輸出投影片大綱 + .pptx。若同一請求也產了報告/表格（已配 pdf）就用 append 模式接文字、不再配 pdf；
+            // 若這次只有簡報，alsoPdf=true 由簡報這邊補一份 deck 的 .pdf（不管輸出什麼都要配一個 pdf）。
             if (execution.IsSuccess &&
-                orchestrationPlan.TaskType == OrchestrationTaskType.Presentation &&
+                doDeck &&
                 request.DelegationDepth == 0 &&
                 !string.IsNullOrWhiteSpace(execution.Text))
             {
@@ -1051,7 +1068,8 @@ namespace test
                     orchestrationPlan,
                     execution,
                     orchestration,
-                    request.CancellationToken);
+                    request.CancellationToken,
+                    appendToText: doReport || doTable);
             }
 
             // Image Gen v1：ImageGeneration 任務在最終答案後呼叫 DALL-E 3 生成圖片，
@@ -1116,14 +1134,16 @@ namespace test
         /// 並在答案尾端附上檔案位置說明。回傳（可能被附註過的）execution。
         /// 寫檔失敗不影響主答案，只把 generate_file 階段標記為 failed。
         /// </summary>
-        private AiFallbackExecutionResult GenerateReportFile(
+        private async Task<AiFallbackExecutionResult> GenerateReportFile(
             NodeControl node,
             AgentDefinition runtimeAgent,
             string userInput,
             AgentWorkspace workspace,
             OrchestrationPlanPayload orchestrationPlan,
             AiFallbackExecutionResult execution,
-            OrchestrationStateMachine orchestration)
+            OrchestrationStateMachine orchestration,
+            OutputIntent intent,
+            CancellationToken ct)
         {
             orchestration.MarkRunning("generate_file");
 
@@ -1136,10 +1156,47 @@ namespace test
                 ? $"{orchestrationPlan.PipelineId} / {factCount} 筆 verified_facts"
                 : orchestrationPlan.PipelineId;
 
-            string markdown = MarkdownReportBuilder.Build(new MarkdownReportBuilder.Request
+            // ── 內容作者：報告代理 + 表格代理「同時」整理乾淨內容（多個 agent 並行工作）。──
+            // 不再直接把主答案（可能是 ASCII 簡報草稿）塞進檔案，避免「亂做」。
+            // 主答案已是乾淨散文 / 已含表格時就直接用，不額外呼叫模型（省成本、不改壞）。
+            string sourceMaterial = execution.Text ?? "";
+            bool dirty = DocumentAuthor.LooksDirty(sourceMaterial);
+            string? existingTable = DocumentAuthor.ExtractMarkdownTable(sourceMaterial);
+
+            bool authorReport = intent.WantsReport && dirty;
+            bool authorTable = intent.WantsTable && existingTable == null;
+
+            if (authorReport || authorTable)
+                node.SetLoadingHint(authorReport && authorTable
+                    ? "報告與表格代理同時整理內容中"
+                    : authorTable ? "表格代理整理內容中" : "報告代理整理內容中");
+
+            Task<string?> reportTask = authorReport
+                ? AuthorCleanAsync(node, DocumentAuthor.BuildReportPrompt(userInput, sourceMaterial), "Report Author", ct)
+                : Task.FromResult<string?>(null);
+
+            Task<string?> tableTask = authorTable
+                ? AuthorCleanAsync(node, DocumentAuthor.BuildTablePrompt(userInput, sourceMaterial), "Table Author", ct)
+                : Task.FromResult<string?>(null);
+
+            await Task.WhenAll(reportTask, tableTask).ConfigureAwait(false);
+            node.SetLoadingHint(null);
+
+            // 報告正文：作者成功用作者內容；否則退回「清理過」的主答案（去 ASCII 線框）。
+            string reportBody = !string.IsNullOrWhiteSpace(reportTask.Result)
+                ? reportTask.Result!
+                : DocumentAuthor.Sanitize(sourceMaterial);
+
+            // 表格 Markdown：作者成功用作者表格；否則用主答案裡既有的表格；再退回清理。
+            string tableMarkdown = !string.IsNullOrWhiteSpace(tableTask.Result)
+                ? tableTask.Result!
+                : (existingTable ?? DocumentAuthor.Sanitize(sourceMaterial));
+
+            // 報告 Markdown（含中繼資料 + 來源）：docx 與 report.pdf 都用同一份 → 內容完全一致。
+            string reportMarkdown = MarkdownReportBuilder.Build(new MarkdownReportBuilder.Request
             {
                 UserInput = userInput,
-                FinalAnswer = execution.Text ?? "",
+                FinalAnswer = reportBody,
                 Workspace = workspace,
                 TaskType = orchestrationPlan.TaskType,
                 PipelineId = orchestrationPlan.PipelineId,
@@ -1147,34 +1204,61 @@ namespace test
                 AgentId = runtimeAgent?.Id ?? ""
             });
 
-            // 只產 .docx（.md 多餘、.pdf 已移除）；失敗不影響主答案，僅標記 stage failed。
-            GeneratedFilePayload? docxGenerated = null;
-            try
-            {
-                byte[] docxBytes = DocxReportBuilder.Build(markdown);
-                docxGenerated = GeneratedFileWriter.WriteDocx(
-                    _main.GetGeneratedFilesDir(),
-                    title: ExtractReportTitle(userInput),
-                    content: docxBytes,
-                    sourceSummary: sourceSummary);
+            string title = ExtractReportTitle(userInput);
+            string genDir = _main.GetGeneratedFilesDir();
+            var producedFiles = new List<string>();
+            string lastError = "";
 
-                if (docxGenerated.Success)
-                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
-                        workspace, node, runtimeAgent?.Id ?? "file-agent",
-                        "generated_file", docxGenerated));
-            }
-            catch { }
-
-            if (docxGenerated?.Success == true)
+            // 各檔以各自的「代理身分」入庫，工作區才看得到報告代理 / 表格代理分工。
+            void TryEmit(Func<GeneratedFilePayload> writer, string agentId)
             {
-                orchestration.MarkSuccess("generate_file", docxGenerated.FileName);
+                try
+                {
+                    var result = writer();
+                    if (result != null && result.Success)
+                    {
+                        workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                            workspace, node, agentId, "generated_file", result));
+                        producedFiles.Add(result.FileName);
+                    }
+                    else if (result != null && !string.IsNullOrWhiteSpace(result.ErrorMessage))
+                    {
+                        lastError = result.ErrorMessage;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                }
             }
+
+            // 報告：.docx + 內容一致的 report.pdf（兩者都吃 reportMarkdown）。
+            if (intent.WantsReport)
+            {
+                TryEmit(() => GeneratedFileWriter.WriteDocx(
+                    genDir, title, DocxReportBuilder.Build(reportMarkdown), sourceSummary), "report-agent");
+                TryEmit(() => GeneratedFileWriter.WritePdf(
+                    genDir, title, PdfReportBuilder.Build(reportMarkdown), sourceSummary), "report-agent");
+            }
+
+            // 表格：.xlsx + 內容一致的 table.pdf（兩者都吃 tableMarkdown）。
+            if (intent.WantsTable)
+            {
+                string tablePdfMarkdown = $"# {title}\n\n{tableMarkdown}\n";
+                TryEmit(() => GeneratedFileWriter.WriteXlsx(
+                    genDir, title, XlsxReportBuilder.Build(tableMarkdown, title), sourceSummary), "table-agent");
+                // 報告也在時，表格 pdf 用不同檔名避免和報告 pdf 撞名。
+                string tablePdfTitle = intent.WantsReport ? title + "（表格）" : title;
+                TryEmit(() => GeneratedFileWriter.WritePdf(
+                    genDir, tablePdfTitle, PdfReportBuilder.Build(tablePdfMarkdown), sourceSummary), "table-agent");
+            }
+
+            if (producedFiles.Count > 0)
+                orchestration.MarkSuccess("generate_file", string.Join(" / ", producedFiles));
             else
-            {
-                orchestration.MarkFailed("generate_file", docxGenerated?.ErrorMessage ?? "docx 寫檔失敗");
-            }
+                orchestration.MarkFailed("generate_file", string.IsNullOrWhiteSpace(lastError) ? "報告寫檔失敗" : lastError);
 
-            // 報告文字顯示在對話框，docx chip 提供下載，兩者並存。
+            // 報告文字顯示在對話框，各檔 chip 提供下載，兩者並存。
             return execution;
         }
 
@@ -1200,7 +1284,8 @@ namespace test
             OrchestrationPlanPayload orchestrationPlan,
             AiFallbackExecutionResult execution,
             OrchestrationStateMachine orchestration,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool appendToText = false)
         {
             orchestration.MarkRunning("presentation_outline");
 
@@ -1228,6 +1313,11 @@ namespace test
                               AgentId = runtimeAgent?.Id ?? ""
                           });
 
+            // §7.1 投影片張數精準控制：使用者指定張數時，把內容投影片數修正到剛好那麼多
+            //（作者模型沒照辦、或確定性切段忽略張數時的安全網）。
+            if (requestedSlides > 0)
+                outline = PresentationOutlineBuilder.EnforceSlideCount(outline, requestedSlides);
+
             node.SetLoadingHint(null);
 
             // 結構化大綱 artifact（slide plan）。
@@ -1239,12 +1329,11 @@ namespace test
                     "presentation_outline",
                     outline));
 
-            // Image Gen → Presentation：使用者明確要求配圖時，生成一張封面圖嵌入 deck / pptx。
+            // Image Gen → Presentation：使用者明確要求配圖時，生成一張封面圖嵌入 deck / pptx（不另外輸出 png chip）。
             byte[]? coverImageBytes = null;
-            string? coverImageFileName = null;
             if (PresentationWantsCoverImage(userInput))
             {
-                (coverImageBytes, coverImageFileName) = await TryGenerateCoverImageAsync(
+                (coverImageBytes, _) = await TryGenerateCoverImageAsync(
                     node, runtimeAgent, outline, workspace, orchestrationPlan, ct);
             }
 
@@ -1276,6 +1365,22 @@ namespace test
                 catch { }
             }
 
+            // 簡報一律配一份「分頁 / 版面 / 封面圖都與 pptx 一致」的 deck.pdf（一張投影片一頁，同一份 outline + 同一張封面圖）。
+            try
+            {
+                var pdfResult = GeneratedFileWriter.WritePdf(
+                    _main.GetGeneratedFilesDir(),
+                    title: outline.Title,
+                    content: DeckPdfBuilder.Build(outline, coverImageBytes),
+                    sourceSummary: sourceSummary);
+
+                if (pdfResult.Success)
+                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                        workspace, node, runtimeAgent?.Id ?? "presentation-agent",
+                        "generated_file", pdfResult));
+            }
+            catch { }
+
             if (pptxResult?.Success == true || gammaUrl != null)
             {
                 string fileName = pptxResult?.FileName ?? "Gamma 線上版";
@@ -1285,10 +1390,15 @@ namespace test
                 if (!string.IsNullOrWhiteSpace(gammaUrl))
                     note += $"\n線上版（Gamma）：{gammaUrl}";
 
+                // 同一請求也產了書面報告時，把簡報說明接在報告文字之後，不覆蓋報告內容。
+                string combinedText = appendToText && !string.IsNullOrWhiteSpace(execution.Text)
+                    ? execution.Text.TrimEnd() + "\n\n" + note
+                    : note;
+
                 return new AiFallbackExecutionResult
                 {
                     IsSuccess = execution.IsSuccess,
-                    Text = note,
+                    Text = combinedText,
                     ActualModelId = execution.ActualModelId ?? "",
                     UsedFallback = execution.UsedFallback,
                     Summary = execution.Summary ?? "",
@@ -1419,21 +1529,8 @@ namespace test
                 if (!image.Success || image.PngBytes == null || image.PngBytes.Length == 0)
                     return (null, null);
 
-                var generated = GeneratedFileWriter.WriteImage(
-                    _main.GetGeneratedFilesDir(),
-                    title: $"{outline.Title}_封面",
-                    content: image.PngBytes,
-                    sourceSummary: $"{orchestrationPlan.PipelineId} / 簡報封面圖 / gpt-image-2");
-
-                if (generated.Success)
-                {
-                    workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
-                        workspace, node, runtimeAgent?.Id ?? "image-agent",
-                        "generated_file", generated));
-
-                    return (image.PngBytes, generated.FileName);
-                }
-
+                // 封面圖只嵌進 .pptx 封面頁，不另外寫成 .png 檔、也不加進 workspace 產出物，
+                // 避免在輸出區多出一個獨立的封面 png chip（使用者只要簡報，不要散落的封面圖）。
                 return (image.PngBytes, null);
             }
             catch (OperationCanceledException)
@@ -1828,7 +1925,7 @@ namespace test
                 string authorPrompt = PresentationAuthor.BuildAuthorPrompt(
                     userInput, research, execution.Text, requestedSlides);
 
-                var authored = await RunPresentationAuthorStepAsync(
+                var authored = await RunAuthorStepAsync(
                     node, authorPrompt, authorModelId, $"Presentation Author ({engineName})", ct);
                 if (!authored.IsSuccess || string.IsNullOrWhiteSpace(authored.Text))
                     return null;
@@ -1851,8 +1948,54 @@ namespace test
             }
         }
 
-        // 簡報多階段作者用的共用 executor：以選定的作者模型跑一步（規劃骨架 / 逐頁內容），必要時 fallback。
-        private async Task<AiFallbackExecutionResult> RunPresentationAuthorStepAsync(
+        // §7.2 單張投影片重生：用作者模型只重寫指定那一張，回傳替換後的新大綱（失敗回 null，呼叫端保留原樣）。
+        public async Task<PresentationOutlinePayload?> RegeneratePresentationSlideAsync(
+            NodeControl node,
+            PresentationOutlinePayload outline,
+            int slideOrder,
+            string userInput,
+            CancellationToken ct)
+        {
+            if (outline == null)
+                return null;
+
+            try
+            {
+                var engine = _main.GetPresentationEngine();
+                string authorModelId = PresentationEngineHelper.ToAuthorModelId(engine);
+                string engineName = PresentationEngineHelper.ToDisplayName(engine);
+
+                node.SetLoadingHint($"{engineName} 正在重生第 {slideOrder} 張投影片");
+                string prompt = PresentationAuthor.BuildSingleSlidePrompt(outline, slideOrder, userInput);
+
+                var authored = await RunAuthorStepAsync(
+                    node, prompt, authorModelId, $"Slide Regen ({engineName})", ct);
+
+                node.SetLoadingHint(null);
+
+                if (!authored.IsSuccess || string.IsNullOrWhiteSpace(authored.Text))
+                    return null;
+
+                var parsed = PresentationAuthor.ParseSingleSlide(authored.Text);
+                if (parsed == null)
+                    return null;
+
+                return PresentationAuthor.ReplaceSlide(
+                    outline, slideOrder, parsed.Value.Heading, parsed.Value.Bullets);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                node.SetLoadingHint(null);
+                return null;
+            }
+        }
+
+        // 內容作者共用 executor：以選定的作者模型跑一步（簡報骨架 / 逐頁內容 / 報告 / 表格），必要時 fallback。
+        private async Task<AiFallbackExecutionResult> RunAuthorStepAsync(
             NodeControl node, string prompt, string authorModelId, string label, CancellationToken ct)
         {
             var decision = new NodeExecutionDecision
@@ -1870,6 +2013,22 @@ namespace test
             };
 
             return await _executeWithFallbackAsync(node, prompt, decision, null, false, ct);
+        }
+
+        // §6 報告 / 表格內容作者：用作者模型把主答案整理成乾淨內容，回傳去圍欄後的文字（失敗回 null）。
+        private async Task<string?> AuthorCleanAsync(
+            NodeControl node, string prompt, string label, CancellationToken ct)
+        {
+            try
+            {
+                string modelId = PresentationEngineHelper.ToAuthorModelId(_main.GetPresentationEngine());
+                var r = await RunAuthorStepAsync(node, prompt, modelId, label, ct).ConfigureAwait(false);
+                if (!r.IsSuccess || string.IsNullOrWhiteSpace(r.Text))
+                    return null;
+                return DocumentAuthor.StripCodeFence(r.Text);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return null; }
         }
 
         // 用 Perplexity 蒐集簡報素材；無金鑰 / 失敗時回空字串（不中斷，作者改用自身知識）。

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 
 namespace test
@@ -185,6 +186,117 @@ $@"你是資深簡報顧問與內容設計師。請依【需求】與【研究�
             {
                 return null;
             }
+        }
+
+        // ---- §7.2 單張投影片重生 ----
+
+        /// <summary>請作者模型「只重寫第 targetOrder 張」，並把整份 deck 結構當脈絡，避免和其它張重複 / 脫節。</summary>
+        public static string BuildSingleSlidePrompt(
+            PresentationOutlinePayload outline, int targetOrder, string userInput)
+        {
+            var target = outline?.Slides?.FirstOrDefault(s => s.Order == targetOrder);
+            string topic = (userInput ?? "").Trim();
+
+            var context = new StringBuilder();
+            foreach (var s in outline?.Slides ?? Array.Empty<PresentationSlidePayload>())
+            {
+                string marker = s.Order == targetOrder ? "  ←（要重生的這張）" : "";
+                context.AppendLine($"- 第{s.Order}張[{s.Kind}]：{s.Heading}{marker}");
+            }
+
+            string currentHeading = target?.Heading ?? "";
+            string currentBullets = target?.Bullets != null && target.Bullets.Count > 0
+                ? string.Join("\n", target.Bullets.Select(b => "  · " + b))
+                : "（目前無重點）";
+
+            return
+$@"你正在優化一份簡報中的「單一張投影片」。請只重寫第 {targetOrder} 張，讓它更精煉、具體、可上台講，並與整份簡報連貫、不與其它張重複。
+
+【簡報主題】
+{topic}
+
+【整份簡報結構（脈絡，僅供參考，不要改其它張）】
+{context}
+【目前第 {targetOrder} 張的內容】
+標題：{currentHeading}
+重點：
+{currentBullets}
+
+只輸出一個 JSON 物件（不要 markdown 圍欄、不要多餘文字）：
+{{
+  ""heading"": ""這張投影片的新標題（短、具體）"",
+  ""bullets"": [""重點一（具體、含數據或洞見）"", ""重點二"", ""重點三""]
+}}
+
+要求：
+- 3～5 個重點，每點一句精煉、具體、可上台講的話，不要整段文章、不要空泛口號。
+- 用與【簡報主題】相同的語言。
+- 只給這一張的內容，不要輸出其它張。";
+        }
+
+        /// <summary>解析單張投影片重生的 JSON 回覆；失敗回 null 讓呼叫端保留原內容。</summary>
+        public static (string Heading, List<string> Bullets)? ParseSingleSlide(string? modelText)
+        {
+            string json = ExtractJsonObject(modelText);
+            if (string.IsNullOrWhiteSpace(json))
+                return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                string heading = GetString(root, "heading");
+                var bullets = GetStringArray(root, "bullets");
+
+                if (string.IsNullOrWhiteSpace(heading) && bullets.Count == 0)
+                    return null;
+
+                return (heading, bullets);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>把大綱中第 targetOrder 張換成新的標題 / 重點，其它張不動，回傳新的大綱。</summary>
+        public static PresentationOutlinePayload ReplaceSlide(
+            PresentationOutlinePayload outline, int targetOrder, string heading, IReadOnlyList<string> bullets)
+        {
+            var newSlides = new List<PresentationSlidePayload>();
+
+            foreach (var s in outline?.Slides ?? Array.Empty<PresentationSlidePayload>())
+            {
+                if (s.Order == targetOrder)
+                {
+                    newSlides.Add(new PresentationSlidePayload
+                    {
+                        Order = s.Order,
+                        Kind = s.Kind,
+                        Heading = string.IsNullOrWhiteSpace(heading) ? s.Heading : heading,
+                        Bullets = (bullets != null && bullets.Count > 0) ? bullets.ToList() : s.Bullets
+                    });
+                }
+                else
+                {
+                    newSlides.Add(s);
+                }
+            }
+
+            return new PresentationOutlinePayload
+            {
+                Title = outline?.Title ?? "",
+                Topic = outline?.Topic ?? "",
+                Slides = newSlides,
+                SlideCount = newSlides.Count,
+                RequestedSlideCount = outline?.RequestedSlideCount ?? 0,
+                PipelineId = outline?.PipelineId ?? "",
+                ModelId = outline?.ModelId ?? "",
+                AgentId = outline?.AgentId ?? "",
+                SourceSummary = outline?.SourceSummary ?? "",
+                CreatedAtUtc = outline?.CreatedAtUtc ?? DateTime.UtcNow
+            };
         }
 
         // ---- 解析輔助 ----

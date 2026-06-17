@@ -35,6 +35,7 @@ namespace test
         private readonly NodeExecutionFinalizer _executionFinalizer;
         private const int AutoFlowMaxSteps = 12;
         private readonly AgentRuntimeFactory _agentRuntimeFactory;
+        private readonly OutputIntentResolver _outputIntentResolver;
 
         // 只有當圖片本身就是這次的主要產出（純圖片生成）時，才在輸出區直接顯示大圖。
         // 若同一次還產出了簡報 / 報告（pptx / md / docx），那張圖只是封面配圖，
@@ -70,6 +71,7 @@ namespace test
             _router = router;
             _main = main;
             _autoResolver = new AiAutoModelResolverService(router);
+            _outputIntentResolver = new OutputIntentResolver(router);
 
             _modelSelection = new NodeModelSelectionService();
             // 個人化自訂路由：與 MainWindow 共用同一個 overrides 物件，讓執行路徑與 UI 預覽一致。
@@ -222,6 +224,66 @@ namespace test
             return !IsFinanceLikeTask(topText);
         }
 
+        // §7.2：把本次簡報的大綱 + .pptx 路徑交給節點，讓輸出區能逐張顯示「重生」鈕。
+        private static void SurfacePresentationDeck(NodeControl node, AgentWorkspace workspace, string userInput)
+        {
+            var outline = workspace.GetByType("presentation_outline")
+                .Select(x => x.Payload)
+                .OfType<PresentationOutlinePayload>()
+                .FirstOrDefault();
+
+            if (outline == null)
+            {
+                node.ClearPresentationDeck();
+                return;
+            }
+
+            var pptx = workspace.GetByType("generated_file")
+                .Select(x => x.Payload)
+                .OfType<GeneratedFilePayload>()
+                .FirstOrDefault(f => f != null && f.Success &&
+                    string.Equals(f.Format, "pptx", StringComparison.OrdinalIgnoreCase));
+
+            node.SetPresentationDeck(outline, pptx?.FilePath ?? "", userInput, outline.SourceSummary ?? "");
+        }
+
+        // §7.2：重生簡報中的單一張投影片，回傳替換後的新大綱（失敗回 null）。
+        public async Task<PresentationOutlinePayload?> RegeneratePresentationSlideAsync(
+            NodeControl node, PresentationOutlinePayload outline, int slideOrder, string userInput, CancellationToken ct)
+        {
+            var runtime = _agentRuntimeFactory.Create();
+            return await runtime.RegeneratePresentationSlideAsync(node, outline, slideOrder, userInput, ct);
+        }
+
+        // §6 第一層輸出判斷：先跑一次（便宜的）API 決定要簡報/報告/表格之中哪幾個。
+        // 只有「看起來要產出檔案」時才呼叫，純聊天不浪費一次 API。
+        private async Task<OutputIntent?> ResolveOutputIntentAsync(string topText, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(topText))
+                return OutputIntent.None;
+
+            var taskType = OrchestrationPlanner.ResolveTaskType(topText, NodeTaskMode.Chat);
+
+            bool looksLikeOutput =
+                taskType == OrchestrationTaskType.Presentation ||
+                taskType == OrchestrationTaskType.GenerateFile ||
+                OutputFormatDetector.WantsPresentation(topText) ||
+                OutputFormatDetector.WantsWrittenReport(topText) ||
+                OutputFormatDetector.WantsSpreadsheet(topText);
+
+            if (!looksLikeOutput)
+                return OutputIntent.None;
+
+            try
+            {
+                return await _outputIntentResolver.ResolveAsync(topText, ct);
+            }
+            catch
+            {
+                return OutputIntent.FromKeywords(topText);
+            }
+        }
+
         public async Task<string> GenerateAsync(NodeControl node, string topText, CancellationToken ct)
         {
             if (_main.TryBuildInputFromFirstUpstream(node, out var injectedTopText))
@@ -237,6 +299,7 @@ namespace test
             try
             {
                 var workspace = new AgentWorkspace();
+                var outputIntent = await ResolveOutputIntentAsync(topText, ct);
 
                 var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
                 {
@@ -248,7 +311,8 @@ namespace test
                     CancellationToken = ct,
                     SkipCapabilities = ShouldSkipCapabilities(topText),
                     Workspace = workspace,
-                    PreferenceBlock = _memoryService.GetPreferenceBlock()
+                    PreferenceBlock = _memoryService.GetPreferenceBlock(),
+                    OutputIntent = outputIntent
                 });
 
                 var decision = agentResult.Decision;
@@ -260,6 +324,10 @@ namespace test
                     string.IsNullOrWhiteSpace(decision.ActualAgentId) ? agent.Id : decision.ActualAgentId,
                     topText,
                     decision.TaskMode);
+
+                // §6 第一層輸出判斷視覺化：想要檔案時記下「報告 / 表格 / 簡報」摘要，供決策窗顯示。
+                if (outputIntent != null && outputIntent.WantsAny)
+                    decision.OutputIntentSummary = outputIntent.ToSummary();
 
                 if (!execution.IsSuccess)
                 {
@@ -282,6 +350,7 @@ namespace test
                     .Where(f => f != null && f.Success)
                     .ToList());
 
+                SurfacePresentationDeck(node, workspace, topText);
                 node.SetOutputImage(ResolveInlineOutputImage(workspace));
 
                 await _memoryService.RememberExecutionResultAsync(
@@ -464,6 +533,8 @@ namespace test
 
             try
             {
+                var outputIntent = await ResolveOutputIntentAsync(topText, ct);
+
                 var agentResult = await runtime.ExecuteAsync(new AgentExecutionRequest
                 {
                     Node = node,
@@ -474,7 +545,8 @@ namespace test
                     CancellationToken = ct,
                     SkipCapabilities = skipCapabilities,
                     Workspace = workspace,
-                    PreferenceBlock = _memoryService.GetPreferenceBlock()
+                    PreferenceBlock = _memoryService.GetPreferenceBlock(),
+                    OutputIntent = outputIntent
                 });
 
                 var decision = agentResult.Decision;
@@ -486,6 +558,10 @@ namespace test
                     string.IsNullOrWhiteSpace(decision.ActualAgentId) ? agent.Id : decision.ActualAgentId,
                     topText,
                     decision.TaskMode);
+
+                // §6 第一層輸出判斷視覺化：想要檔案時記下「報告 / 表格 / 簡報」摘要，供決策窗顯示。
+                if (outputIntent != null && outputIntent.WantsAny)
+                    decision.OutputIntentSummary = outputIntent.ToSummary();
 
                 if (!execution.IsSuccess)
                 {
@@ -508,6 +584,7 @@ namespace test
                     .Where(f => f != null && f.Success)
                     .ToList());
 
+                SurfacePresentationDeck(node, workspace, topText);
                 node.SetOutputImage(ResolveInlineOutputImage(workspace));
 
                 await _memoryService.RememberExecutionResultAsync(

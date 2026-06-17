@@ -39,7 +39,8 @@ namespace test
             string instructions,
             string userText,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             if (string.IsNullOrWhiteSpace(userText))
                 return "";
@@ -74,7 +75,32 @@ namespace test
             if (!resp.IsSuccessStatusCode)
                 throw new InvalidOperationException($"Gemini API {(int)resp.StatusCode}：{Truncate(body, 400)}");
 
+            TryExtractUsage(body, onUsage);
             return ExtractText(body);
+        }
+
+        // usageMetadata.{promptTokenCount, candidatesTokenCount}
+        private static void TryExtractUsage(string json, Action<int, int>? onUsage)
+        {
+            if (onUsage == null)
+                return;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("usageMetadata", out var usageEl))
+                    return;
+
+                int input = usageEl.TryGetProperty("promptTokenCount", out var pEl) && pEl.TryGetInt32(out var pv) ? pv : 0;
+                int output = usageEl.TryGetProperty("candidatesTokenCount", out var cEl) && cEl.TryGetInt32(out var cv) ? cv : 0;
+
+                if (input > 0 || output > 0)
+                    onUsage(input, output);
+            }
+            catch
+            {
+                // usage 解析失敗不影響主回應。
+            }
         }
 
         private static string ExtractText(string body)

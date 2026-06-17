@@ -3385,6 +3385,143 @@ namespace test
         // 簡報生成器：AgentRuntime 撰寫簡報時讀這個決定交給哪個 AI。
         public PresentationEngine GetPresentationEngine() => _presentationEngine;
 
+        // §7.2：重生簡報中的單一張投影片 → 重建 .pptx、換掉舊檔與 chip、更新節點的投影片清單。
+        // §7.2：簡報預覽視窗（WebView2）按「重生這張」時，前端 postMessage 進來這裡。
+        private async void OnPreviewWebMessage(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            string msg;
+            try { msg = e.TryGetWebMessageAsString() ?? ""; }
+            catch { return; }
+
+            if (string.IsNullOrWhiteSpace(msg))
+                return;
+
+            int order;
+            try
+            {
+                using var doc = JsonDocument.Parse(msg);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("action", out var a) ||
+                    !string.Equals(a.GetString(), "regen", StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (!root.TryGetProperty("order", out var o) || !o.TryGetInt32(out order))
+                    return;
+            }
+            catch { return; }
+
+            await RegenerateSlideFromPreviewAsync(order);
+        }
+
+        // 在預覽視窗就地重生第 order 張：重建大綱 → 重生那張 → 覆蓋同一個 .pptx → 重新渲染預覽。
+        private async Task RegenerateSlideFromPreviewAsync(int order)
+        {
+            string path = _previewPath ?? "";
+            var node = _previewOwnerNode;
+
+            if (_previewSlideRegenBusy || node == null || _nodeService == null ||
+                string.IsNullOrWhiteSpace(path) || !File.Exists(path) ||
+                !path.EndsWith(".pptx", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _previewSlideRegenBusy = true;
+            try
+            {
+                // 優先用節點保存的大綱（同 session，含真實使用者請求）；否則從現有 .pptx 重建。
+                var outline = string.Equals(node.GetPresentationPptxPath(), path, StringComparison.OrdinalIgnoreCase)
+                    ? node.GetPresentationOutline()
+                    : null;
+                outline ??= ReconstructOutlineFromPptx(path);
+                if (outline == null)
+                    return;
+
+                string userInput = !string.IsNullOrWhiteSpace(node.GetPresentationUserInput())
+                    ? node.GetPresentationUserInput()
+                    : outline.Title;
+
+                using var cts = new CancellationTokenSource();
+                var updated = await _nodeService.RegeneratePresentationSlideAsync(node, outline, order, userInput, cts.Token);
+
+                if (updated == null)
+                {
+                    // 重生失敗：重新渲染原檔（恢復按鈕可用狀態）。
+                    if (string.Equals(_previewPath, path, StringComparison.OrdinalIgnoreCase))
+                        await ShowHtmlContentAsync(
+                            ArtifactHtmlRenderer.BuildSlidesHtml(
+                                ArtifactTextExtractor.ExtractPptxSlides(path), allowRegen: true,
+                                coverImagePng: ArtifactTextExtractor.ExtractPptxFirstImage(path)), path);
+                    return;
+                }
+
+                // 重建前先保留既有封面圖，避免重生一張內容頁後封面圖被洗掉。
+                byte[]? coverPng = ArtifactTextExtractor.ExtractPptxFirstImage(path);
+
+                // 重建 pptx，覆蓋「同一個」檔（路徑不變 → chip / 預覽都還指向同一份）。
+                byte[] bytes = PptxBuilder.Build(updated, coverPng);
+                File.WriteAllBytes(path, bytes);
+
+                node.UpdatePresentationOutline(updated);
+                SaveState();
+
+                // 重新渲染預覽（若使用者還停在這份）。
+                if (string.Equals(_previewPath, path, StringComparison.OrdinalIgnoreCase))
+                    await ShowHtmlContentAsync(
+                        ArtifactHtmlRenderer.BuildSlidesHtml(
+                            ArtifactTextExtractor.ExtractPptxSlides(path), allowRegen: true,
+                            coverImagePng: coverPng), path);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                MessageBox.Show("重生投影片失敗：" + ex.Message, "重生投影片", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                _previewSlideRegenBusy = false;
+            }
+        }
+
+        // 從現有 .pptx 文字重建簡報大綱：第一張＝封面、標題為「資料來源」的＝來源頁、其餘＝內容。
+        private static PresentationOutlinePayload? ReconstructOutlineFromPptx(string path)
+        {
+            var slidesLines = ArtifactTextExtractor.ExtractPptxSlides(path);
+            if (slidesLines == null || slidesLines.Count == 0)
+                return null;
+
+            var slides = new List<PresentationSlidePayload>();
+            int order = 1;
+
+            for (int i = 0; i < slidesLines.Count; i++)
+            {
+                var lines = slidesLines[i] ?? new List<string>();
+                string heading = lines.Count > 0 ? lines[0] : "";
+                var bullets = lines.Skip(1).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+
+                string kind = i == 0
+                    ? "cover"
+                    : (heading.Trim() == "資料來源" ? "sources" : "content");
+
+                slides.Add(new PresentationSlidePayload
+                {
+                    Order = order++,
+                    Kind = kind,
+                    Heading = heading,
+                    Bullets = bullets
+                });
+            }
+
+            string title = slidesLines[0].Count > 0 ? slidesLines[0][0] : "簡報";
+
+            return new PresentationOutlinePayload
+            {
+                Title = title,
+                Topic = "",
+                Slides = slides,
+                SlideCount = slides.Count
+            };
+        }
+
         // 由節點目前的 prompt + task mode 重推導任務型別，建出「可實際執行」的下游工作流計畫。
         // 回 null 代表此任務不是多階段任務（例如一般對話），不需展開。
         public DownstreamNodePlanPayload? BuildDownstreamPlanForNode(NodeControl node)
@@ -4239,16 +4376,23 @@ namespace test
         // ===== Artifact 即時預覽（大型 overlay；點檔案 chip / 圖片開啟）=====
 
         private string? _previewPath;
+        private NodeControl? _previewOwnerNode;
+        private bool _previewWebMsgHooked;
+        private bool _previewSlideRegenBusy;
         private bool _previewMediaPlaying;
 
         /// <summary>在 app 內預覽生成的檔案；無法內嵌渲染的格式給 fallback + 用系統程式開啟。</summary>
-        public async void OpenPreview(string? fullPath)
+        public void OpenPreview(string? fullPath) => OpenPreview(fullPath, null);
+
+        public async void OpenPreview(string? fullPath, NodeControl? owner)
         {
             if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
             {
                 MessageBox.Show("找不到生成的檔案（可能已被移動或刪除）。", "預覽失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+
+            _previewOwnerNode = owner;
 
             // 安全檢查：只允許預覽 _generated 資料夾內的檔案（與 OpenGeneratedFile 一致）。
             string rootFull = System.IO.Path.GetFullPath(GeneratedFilesDir);
@@ -4291,7 +4435,16 @@ namespace test
 
                     case "pptx":
                         await ShowHtmlContentAsync(
-                            ArtifactHtmlRenderer.BuildSlidesHtml(ArtifactTextExtractor.ExtractPptxSlides(targetFull)),
+                            ArtifactHtmlRenderer.BuildSlidesHtml(
+                                ArtifactTextExtractor.ExtractPptxSlides(targetFull),
+                                allowRegen: _previewOwnerNode != null,
+                                coverImagePng: ArtifactTextExtractor.ExtractPptxFirstImage(targetFull)),
+                            targetFull);
+                        break;
+
+                    case "xlsx":
+                        await ShowHtmlContentAsync(
+                            ArtifactHtmlRenderer.BuildXlsxHtml(ArtifactTextExtractor.ExtractXlsxRows(targetFull)),
                             targetFull);
                         break;
 
@@ -4378,13 +4531,24 @@ namespace test
             {
                 await PreviewWeb.EnsureCoreWebView2Async();
 
+                if (!_previewWebMsgHooked)
+                {
+                    PreviewWeb.CoreWebView2.WebMessageReceived += OnPreviewWebMessage;
+                    _previewWebMsgHooked = true;
+                }
+
                 if (PreviewOverlay.Visibility != Visibility.Visible ||
                     !string.Equals(_previewPath, sourcePath, StringComparison.OrdinalIgnoreCase))
                 {
                     return;
                 }
 
-                PreviewWeb.CoreWebView2.NavigateToString(html);
+                // NavigateToString 有約 2MB 字串上限：含封面圖（base64）的簡報會超過，導致
+                // 「Value does not fall within the expected range」。改寫成暫存 HTML 檔再用 file:// 導覽，無大小限制。
+                string tempHtml = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cat5201_preview.html");
+                File.WriteAllText(tempHtml, html, new System.Text.UTF8Encoding(false));
+                string uri = new Uri(tempHtml).AbsoluteUri + "?t=" + DateTime.Now.Ticks;
+                PreviewWeb.CoreWebView2.Navigate(uri);
             }
             catch (Exception ex)
             {
@@ -4432,6 +4596,7 @@ namespace test
             HideAllPreviewRenderers();
             PreviewOverlay.Visibility = Visibility.Collapsed;
             _previewPath = null;
+            _previewOwnerNode = null;
         }
 
         private void ClosePreview_Click(object sender, RoutedEventArgs e) => ClosePreview();
@@ -6565,11 +6730,6 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
             try
             {
-                var (prefs, _) = _nodeService.GetMemoryStats();
-
-                if (MemoryStatsLabel != null)
-                    MemoryStatsLabel.Text = $"偏好 {prefs} 條";
-
                 if (PreferenceList != null)
                     PreferenceList.ItemsSource = _nodeService.GetPreferenceItems();
             }

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -55,8 +57,10 @@ namespace test
         {
             bool inFence = false;
 
-            foreach (var rawLine in lines)
+            for (int i = 0; i < lines.Length; i++)
             {
+                var rawLine = lines[i];
+
                 if (rawLine.TrimStart().StartsWith("```"))
                 {
                     inFence = !inFence;
@@ -67,6 +71,21 @@ namespace test
                 {
                     col.Item().PaddingLeft(12).Text(rawLine)
                         .FontFamily("Consolas").FontSize(10).FontColor(Colors.Grey.Darken3);
+                    continue;
+                }
+
+                // Markdown 表格 → QuestPDF 表格。
+                if (IsTableRow(rawLine) && i + 1 < lines.Length && IsTableSeparator(lines[i + 1]))
+                {
+                    var rows = new List<List<string>> { SplitRowCells(rawLine) };
+                    int j = i + 2;
+                    while (j < lines.Length && IsTableRow(lines[j]))
+                    {
+                        rows.Add(SplitRowCells(lines[j]));
+                        j++;
+                    }
+                    RenderTable(col, rows);
+                    i = j - 1;
                     continue;
                 }
 
@@ -113,6 +132,80 @@ namespace test
                     col.Item().Text(text => RenderInline(text, rawLine));
                 }
             }
+        }
+
+        private static void RenderTable(ColumnDescriptor col, List<List<string>> rows)
+        {
+            if (rows.Count == 0)
+                return;
+
+            int columnCount = rows.Max(r => r.Count);
+            if (columnCount == 0)
+                return;
+
+            col.Item().PaddingVertical(4).Table(table =>
+            {
+                table.ColumnsDefinition(def =>
+                {
+                    for (int c = 0; c < columnCount; c++)
+                        def.RelativeColumn();
+                });
+
+                for (int r = 0; r < rows.Count; r++)
+                {
+                    bool isHeader = r == 0;
+                    var cells = rows[r];
+
+                    for (int c = 0; c < columnCount; c++)
+                    {
+                        string cellText = c < cells.Count ? cells[c] : "";
+                        table.Cell()
+                            .Border(0.5f).BorderColor("#BFBFBF")
+                            .Background(isHeader ? "#F2F2F2" : "#FFFFFF")
+                            .Padding(4)
+                            .Text(text =>
+                            {
+                                if (isHeader)
+                                    text.Span(cellText).FontSize(10).Bold();
+                                else
+                                    RenderInline(text, cellText);
+                            });
+                    }
+                }
+            });
+        }
+
+        private static bool IsTableRow(string line)
+        {
+            string t = (line ?? "").Trim();
+            return t.Length >= 3 && t.StartsWith("|", StringComparison.Ordinal) && t.IndexOf('|', 1) >= 1;
+        }
+
+        private static bool IsTableSeparator(string line)
+        {
+            string t = (line ?? "").Trim();
+            if (!t.StartsWith("|", StringComparison.Ordinal))
+                return false;
+
+            bool sawDash = false;
+            foreach (char c in t)
+            {
+                if (c == '-') sawDash = true;
+                else if (c != '|' && c != ':' && c != ' ' && c != '\t')
+                    return false;
+            }
+            return sawDash;
+        }
+
+        private static List<string> SplitRowCells(string line)
+        {
+            string t = (line ?? "").Trim();
+            if (t.StartsWith("|", StringComparison.Ordinal))
+                t = t.Substring(1);
+            if (t.EndsWith("|", StringComparison.Ordinal))
+                t = t.Substring(0, t.Length - 1);
+
+            return t.Split('|').Select(c => c.Trim()).ToList();
         }
 
         // 把一行裡的 **粗體** 拆成 spans。

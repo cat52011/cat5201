@@ -734,6 +734,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
+
                         </StackPanel>
                     </ScrollViewer>
 
@@ -748,38 +749,6 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel Grid.Column="0"
-                                    Orientation="Horizontal"
-                                    VerticalAlignment="Center">
-                            <StackPanel.Resources>
-                                <Style TargetType="Border">
-                                    <Setter Property="CornerRadius" Value="6"/>
-                                </Style>
-                            </StackPanel.Resources>
-
-                            <!-- 失敗時：從失敗續跑（整段重新執行） -->
-                            <Button x:Name="RerunButton"
-                                    Content="↻ 重新執行"
-                                    Visibility="Collapsed"
-                                    Style="{StaticResource StatusPillButtonStyle}"
-                                    Foreground="#C0392B"
-                                    Background="#FBEAE8"
-                                    Click="RerunButton_Click"/>
-
-                            <!-- 成功時：只重新生成答案（沿用既有 research / capability 成果）。純圖示，無底框 -->
-                            <Button x:Name="RegenerateButton"
-                                    Content="&#xE72C;"
-                                    FontFamily="Segoe MDL2 Assets"
-                                    Visibility="Collapsed"
-                                    Style="{StaticResource StatusPillButtonStyle}"
-                                    FontSize="14"
-                                    Padding="8,0"
-                                    Foreground="#2E6FE0"
-                                    Background="Transparent"
-                                    ToolTip="重新生成答案：沿用這次的搜尋與分析成果，只重新生成最終答案（較快、不重跑 research）"
-                                    Click="RegenerateButton_Click"/>
-                        </StackPanel>
-
                         <TextBlock x:Name="StatusText"
                                    Grid.Column="1"
                                    Margin="10,0,10,0"
@@ -787,6 +756,36 @@
                                    TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center"
                                    Foreground="#9E9E9E"/>
+
+                        <!-- 失敗時：從失敗續跑（整段重新執行）。固定在右下角、黑底白字 -->
+                        <Button x:Name="RerunButton"
+                                Grid.Column="2"
+                                Content="↻ 重新執行"
+                                Visibility="Collapsed"
+                                Style="{StaticResource StatusPillButtonStyle}"
+                                Foreground="White"
+                                Background="#222222"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Bottom"
+                                Margin="0,6,0,0"
+                                Click="RerunButton_Click"/>
+
+                        <!-- 成功時：只重新生成答案（沿用既有 research / capability 成果）。固定右下角、無底黑字 -->
+                        <Button x:Name="RegenerateButton"
+                                Grid.Column="2"
+                                Content="&#xE72C;"
+                                FontFamily="Segoe MDL2 Assets"
+                                Visibility="Collapsed"
+                                Style="{StaticResource StatusPillButtonStyle}"
+                                FontSize="14"
+                                Padding="8,0"
+                                Foreground="#222222"
+                                Background="Transparent"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Bottom"
+                                Margin="0,6,0,0"
+                                ToolTip="重新生成答案：沿用這次的搜尋與分析成果，只重新生成最終答案（較快、不重跑 research）"
+                                Click="RegenerateButton_Click"/>
                     </Grid>
 
                 </Grid>

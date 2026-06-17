@@ -149,6 +149,17 @@ namespace test
             public string FullPath { get; set; } = "";
         }
 
+        // §7.2 簡報單張重生：保存本次簡報的大綱 + .pptx 路徑 + 原始請求，供預覽視窗單張重生時用。
+        private PresentationDeckContext? _presentationDeck;
+
+        private sealed class PresentationDeckContext
+        {
+            public PresentationOutlinePayload Outline { get; set; } = new();
+            public string PptxPath { get; set; } = "";
+            public string UserInput { get; set; } = "";
+            public string SourceSummary { get; set; } = "";
+        }
+
         public NodeControl() : this(Guid.NewGuid().ToString()) { }
 
         private void InitializeHoverVisualObjects()
@@ -615,6 +626,11 @@ namespace test
                     _parent.CanUserManuallySelectModel();
 
                 ModelSelector.IsEnabled = editable && !_isGenerating && canManualSelect;
+
+                // §13 Manual/Auto 提示：清楚說明此節點的模型是「自己選的」還是「系統自動挑的」。
+                ModelSelector.ToolTip = canManualSelect
+                    ? "🛠 手動模式：可自行選擇此區塊使用的模型"
+                    : "🤖 自動模式：系統依內容自動挑模型（要手動選請到個人化關閉自動）";
             }
 
             RefreshAttachmentsUI();
@@ -904,7 +920,7 @@ namespace test
 
             if (sender is FrameworkElement fe && fe.Tag is OutputFileVm vm)
             {
-                _parent.OpenPreview(vm.FullPath);
+                _parent.OpenPreview(vm.FullPath, this);
                 e.Handled = true;
             }
         }
@@ -973,6 +989,56 @@ namespace test
 
             if (OutputFileHost != null)
                 OutputFileHost.Visibility = _outputFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ===== §7.2 簡報單張重生（重生 UI 在預覽視窗，這裡只保存重生需要的脈絡） =====
+
+        /// <summary>本次簡報產生後，把大綱 + .pptx 路徑 + 原始請求存起來，供預覽視窗單張重生時用。可從背景執行緒呼叫。</summary>
+        public void SetPresentationDeck(
+            PresentationOutlinePayload outline, string pptxPath, string userInput, string sourceSummary)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetPresentationDeck(outline, pptxPath, userInput, sourceSummary));
+                return;
+            }
+
+            if (outline?.Slides == null || outline.Slides.Count == 0)
+            {
+                ClearPresentationDeck();
+                return;
+            }
+
+            _presentationDeck = new PresentationDeckContext
+            {
+                Outline = outline,
+                PptxPath = pptxPath ?? "",
+                UserInput = userInput ?? "",
+                SourceSummary = sourceSummary ?? ""
+            };
+        }
+
+        public void ClearPresentationDeck()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ClearPresentationDeck);
+                return;
+            }
+
+            _presentationDeck = null;
+        }
+
+        public PresentationOutlinePayload? GetPresentationOutline() => _presentationDeck?.Outline;
+        public string GetPresentationUserInput() => _presentationDeck?.UserInput ?? "";
+        public string GetPresentationPptxPath() => _presentationDeck?.PptxPath ?? "";
+        public string GetPresentationSourceSummary() => _presentationDeck?.SourceSummary ?? "";
+
+        /// <summary>預覽視窗單張重生成功、覆蓋了同一個 .pptx 後，更新節點保存的大綱（路徑不變）。</summary>
+        public void UpdatePresentationOutline(PresentationOutlinePayload updatedOutline)
+        {
+            if (_presentationDeck != null && updatedOutline != null)
+                _presentationDeck.Outline = updatedOutline;
         }
 
         /// <summary>取得目前輸出區的可開啟檔案完整路徑，用於存檔持久化。</summary>

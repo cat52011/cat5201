@@ -27,16 +27,20 @@ namespace test
             var route = _router.GetRouteInfo(request.ModelId);
             var svc = _router.GetPerplexitySonarService(route.ServiceModel);
 
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateAsync(
                 request.SystemPrompt,
                 request.UserPrompt,
                 request.MaxOutputTokens,
-                ct).ConfigureAwait(false);
+                ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
             return AiResponse.Success(
                 text: text,
                 modelUsed: route.NodeModel,
-                providerUsed: Kind);
+                providerUsed: Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
 
         public async Task<AiResponse> GenerateStreamAsync(
@@ -47,17 +51,21 @@ namespace test
             var route = _router.GetRouteInfo(request.ModelId);
             var svc = _router.GetPerplexitySonarService(route.ServiceModel);
 
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateStreamAsync(
                 request.SystemPrompt,
                 request.UserPrompt,
                 onDelta,
                 request.MaxOutputTokens,
-                ct).ConfigureAwait(false);
+                ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
             return AiResponse.Success(
                 text: text,
                 modelUsed: route.NodeModel,
-                providerUsed: Kind);
+                providerUsed: Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
     }
 }

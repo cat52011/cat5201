@@ -398,5 +398,145 @@ namespace test
         {
             return (text ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
         }
+
+        // ---- §7.1 投影片張數精準控制 ----
+
+        /// <summary>
+        /// 把大綱的「內容投影片」數量修正到剛好 <paramref name="requestedContentSlides"/> 張
+        /// （封面、資料來源頁不計，原樣保留）。太多→把多餘投影片併進最後一張；太少→拆分重點最多的投影片。
+        /// 內容不會遺失，只是重新分配。requested ≤ 0 時原樣返回。
+        /// </summary>
+        public static PresentationOutlinePayload EnforceSlideCount(
+            PresentationOutlinePayload outline, int requestedContentSlides)
+        {
+            if (outline?.Slides == null || requestedContentSlides <= 0)
+                return outline ?? new PresentationOutlinePayload();
+
+            var cover = outline.Slides.FirstOrDefault(s => IsKind(s, "cover"));
+            var contentDrafts = outline.Slides.Where(s => IsKind(s, "content"))
+                .Select(s => new SlideDraft(s.Heading, s.Bullets))
+                .ToList();
+            var tail = outline.Slides
+                .Where(s => !IsKind(s, "cover") && !IsKind(s, "content"))
+                .ToList();
+
+            if (contentDrafts.Count == 0)
+                return outline; // 沒有可調整的內容投影片，原樣返回。
+
+            if (contentDrafts.Count > requestedContentSlides)
+                contentDrafts = MergeDown(contentDrafts, requestedContentSlides);
+            else if (contentDrafts.Count < requestedContentSlides)
+                contentDrafts = SplitUp(contentDrafts, requestedContentSlides);
+
+            var finalSlides = new List<PresentationSlidePayload>();
+            int order = 1;
+
+            if (cover != null)
+                finalSlides.Add(Reorder(cover, order++));
+
+            foreach (var d in contentDrafts)
+            {
+                finalSlides.Add(new PresentationSlidePayload
+                {
+                    Order = order++,
+                    Kind = "content",
+                    Heading = string.IsNullOrWhiteSpace(d.Heading) ? "重點" : d.Heading,
+                    Bullets = d.Bullets
+                });
+            }
+
+            foreach (var s in tail)
+                finalSlides.Add(Reorder(s, order++));
+
+            return new PresentationOutlinePayload
+            {
+                Title = outline.Title,
+                Topic = outline.Topic,
+                Slides = finalSlides,
+                SlideCount = finalSlides.Count,
+                RequestedSlideCount = requestedContentSlides,
+                PipelineId = outline.PipelineId,
+                ModelId = outline.ModelId,
+                AgentId = outline.AgentId,
+                SourceSummary = outline.SourceSummary,
+                CreatedAtUtc = outline.CreatedAtUtc
+            };
+        }
+
+        private sealed class SlideDraft
+        {
+            public string Heading;
+            public List<string> Bullets;
+
+            public SlideDraft(string heading, IReadOnlyList<string>? bullets)
+            {
+                Heading = heading ?? "";
+                Bullets = new List<string>(bullets ?? Array.Empty<string>());
+            }
+        }
+
+        // 太多：保留前 target 張，把多餘投影片的標題 + 重點併進最後一張。
+        private static List<SlideDraft> MergeDown(List<SlideDraft> drafts, int target)
+        {
+            var kept = drafts.Take(target).ToList();
+            var last = kept[kept.Count - 1];
+
+            foreach (var s in drafts.Skip(target))
+            {
+                if (!string.IsNullOrWhiteSpace(s.Heading))
+                    last.Bullets.Add(s.Heading);
+                last.Bullets.AddRange(s.Bullets);
+            }
+
+            return kept;
+        }
+
+        // 太少：反覆把「重點最多」的投影片對半拆，直到達到 target；真的拆不動才補空白「補充」頁。
+        private static List<SlideDraft> SplitUp(List<SlideDraft> drafts, int target)
+        {
+            int guard = 0;
+            while (drafts.Count < target && guard++ < 500)
+            {
+                int idx = -1, max = 1;
+                for (int i = 0; i < drafts.Count; i++)
+                {
+                    if (drafts[i].Bullets.Count > max)
+                    {
+                        max = drafts[i].Bullets.Count;
+                        idx = i;
+                    }
+                }
+
+                if (idx < 0)
+                    break; // 全是 ≤1 重點，無法再拆。
+
+                var src = drafts[idx];
+                int half = src.Bullets.Count / 2;
+
+                var second = new SlideDraft(
+                    src.Heading.EndsWith("（續）", StringComparison.Ordinal) ? src.Heading : src.Heading + "（續）",
+                    src.Bullets.Skip(half).ToList());
+                src.Bullets = src.Bullets.Take(half).ToList();
+
+                drafts.Insert(idx + 1, second);
+            }
+
+            while (drafts.Count < target)
+                drafts.Add(new SlideDraft("補充", Array.Empty<string>()));
+
+            return drafts;
+        }
+
+        private static bool IsKind(PresentationSlidePayload s, string kind)
+            => string.Equals(s?.Kind, kind, StringComparison.OrdinalIgnoreCase);
+
+        private static PresentationSlidePayload Reorder(PresentationSlidePayload s, int order)
+            => new PresentationSlidePayload
+            {
+                Order = order,
+                Kind = s.Kind,
+                Heading = s.Heading,
+                Bullets = s.Bullets
+            };
     }
 }

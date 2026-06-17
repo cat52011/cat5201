@@ -199,6 +199,84 @@ PreferredCapabilityIds = new[]
 {
     "image-capability"
 },
+            },
+
+            // ── §6/§7 產出專責代理：報告 / 表格 / 簡報。可與其他代理「同時」工作（報告 + 表格並行撰寫），
+            //    各自把產出檔案以自己的身分入 workspace，使用者就看得到分工。為內部專責代理（IsSystemAgent）。──
+            new AgentDefinition
+            {
+                Id = "report-agent",
+                Name = "Report Agent",
+                Role = AgentRole.Writer,
+                DefaultModelId = AiModels.Claude_Sonnet46,
+                DefaultTaskMode = NodeTaskMode.Chat,
+                SystemPrompt = "你是書面報告撰寫代理，負責把研究與分析整理成結構清楚的正式報告（標題 / 段落 / 標準表格），輸出 .docx 與一致的 .pdf。",
+                AllowedModelIds = new[]
+                {
+                    AiModels.Claude_Sonnet46,
+                    AiModels.OpenAi_Gpt54,
+                    AiModels.Claude_Opus46
+                },
+                Capabilities =
+                    AgentCapability.Rewrite |
+                    AgentCapability.Summarize |
+                    AgentCapability.Files |
+                    AgentCapability.LongContext |
+                    AgentCapability.FileTool,
+                IsSystemAgent = true,
+                AllowedCapabilityIds = new[] { "file-capability", "reasoning-capability" },
+                PreferredCapabilityIds = new[] { "file-capability" },
+            },
+
+            new AgentDefinition
+            {
+                Id = "table-agent",
+                Name = "Table Agent",
+                Role = AgentRole.Writer,
+                DefaultModelId = AiModels.Claude_Sonnet46,
+                DefaultTaskMode = NodeTaskMode.Chat,
+                SystemPrompt = "你是表格整理代理，負責把資料整理成乾淨的表格（標準 Markdown 表格），輸出 .xlsx 與一致的 .pdf。",
+                AllowedModelIds = new[]
+                {
+                    AiModels.Claude_Sonnet46,
+                    AiModels.OpenAi_Gpt54
+                },
+                Capabilities =
+                    AgentCapability.Extract |
+                    AgentCapability.Summarize |
+                    AgentCapability.Files |
+                    AgentCapability.LongContext |
+                    AgentCapability.FileTool,
+                IsSystemAgent = true,
+                AllowedCapabilityIds = new[] { "file-capability", "reasoning-capability" },
+                PreferredCapabilityIds = new[] { "file-capability" },
+            },
+
+            new AgentDefinition
+            {
+                Id = "presentation-agent",
+                Name = "Presentation Agent",
+                Role = AgentRole.Writer,
+                DefaultModelId = AiModels.Claude_Sonnet46,
+                DefaultTaskMode = NodeTaskMode.Chat,
+                SystemPrompt = "你是簡報設計代理，負責把主題拆成投影片大綱並設計每張內容（封面 / 內容 / 來源），輸出 .pptx 與一致的 .pdf，必要時生成封面圖。",
+                AllowedModelIds = new[]
+                {
+                    AiModels.Claude_Sonnet46,
+                    AiModels.OpenAi_Gpt54,
+                    AiModels.Claude_Opus46
+                },
+                Capabilities =
+                    AgentCapability.Rewrite |
+                    AgentCapability.Summarize |
+                    AgentCapability.Images |
+                    AgentCapability.Files |
+                    AgentCapability.LongContext |
+                    AgentCapability.FileTool |
+                    AgentCapability.ImageTool,
+                IsSystemAgent = true,
+                AllowedCapabilityIds = new[] { "file-capability", "image-capability", "reasoning-capability" },
+                PreferredCapabilityIds = new[] { "file-capability" },
             }
         };
 

@@ -35,12 +35,19 @@ namespace test
             AddStage(stages, "write_workspace", "Write workspace", "workspace");
             AddStage(stages, "final_synthesis", "Final synthesis", runtimeAgent?.Id ?? "");
 
-            // File Generation v1：GenerateFile 任務在最終答案之後，多一個寫檔階段。
-            if (taskType == OrchestrationTaskType.GenerateFile)
+            // §6 多輸出：除了主任務型別，也看使用者是否「同時」要書面報告與簡報。
+            // 例：「給我一個報告介紹這個 包括簡報跟書面報告」→ 兩個 stage 都加，兩種檔都產。
+            bool wantsReport = OutputFormatDetector.WantsWrittenReport(userInput);
+            bool wantsDeck = OutputFormatDetector.WantsPresentation(userInput);
+
+            // File Generation v1：GenerateFile 任務（或簡報任務又要求書面報告）在最終答案之後，多一個寫檔階段。
+            if (taskType == OrchestrationTaskType.GenerateFile ||
+                (taskType == OrchestrationTaskType.Presentation && wantsReport))
                 AddStage(stages, "generate_file", "Generate file", "file-writer");
 
-            // Presentation Agent v1：Presentation 任務在最終答案之後，多一個產生投影片大綱 / deck 階段。
-            if (taskType == OrchestrationTaskType.Presentation)
+            // Presentation Agent v1：Presentation 任務（或寫檔任務又要求簡報）在最終答案之後，多一個產生 deck 階段。
+            if (taskType == OrchestrationTaskType.Presentation ||
+                (taskType == OrchestrationTaskType.GenerateFile && wantsDeck))
                 AddStage(stages, "presentation_outline", "Build presentation outline", "presentation-agent");
 
             // Image Gen v1：ImageGeneration 任務在最終答案之後，多一個產生圖片階段。
@@ -87,7 +94,8 @@ namespace test
             if (ContainsAny(
                     normalized,
                     "pdf", "文件", "文檔", "報告", "匯出", "輸出成", "生成檔案",
-                    "export", "docx", "word", "file output", "generate file"))
+                    "export", "docx", "word", "file output", "generate file",
+                    "excel", "xlsx", "試算表", "spreadsheet"))
             {
                 return OrchestrationTaskType.GenerateFile;
             }

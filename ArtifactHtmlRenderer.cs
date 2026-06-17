@@ -79,7 +79,7 @@ namespace test
                 background: #fff;
                 border: 1px solid #e6e6ea;
                 border-radius: 14px;
-                padding: 30px 36px 32px;
+                padding: 30px 36px 48px;
                 margin: 0 0 22px;
                 box-shadow: 0 2px 10px rgba(0,0,0,.05);
                 aspect-ratio: 16 / 9;
@@ -100,7 +100,19 @@ namespace test
                 content: ''; position: absolute; left: 2px; top: 11px;
                 width: 5px; height: 5px; border-radius: 50%; background: #9aa0ab;
             }
-            .empty { color: #aeb2ba; font-size: 14px; }";
+            .empty { color: #aeb2ba; font-size: 14px; }
+            .cover-img {
+                display: block; max-width: 100%; max-height: 52%;
+                margin: 6px auto 0; border-radius: 8px; object-fit: contain;
+            }
+            .regen-btn {
+                position: absolute; bottom: 14px; right: 14px;
+                font-size: 12px; font-family: inherit; color: #1565c0;
+                background: #fff; border: 1px solid #1565c0; border-radius: 6px;
+                padding: 3px 10px; cursor: pointer;
+            }
+            .regen-btn:hover { background: #e8f1fd; }
+            .regen-btn:disabled { color: #9aa0ab; border-color: #cfd3da; cursor: default; background: #f3f3f5; }";
 
         /// <summary>報告（markdown 原文）→ 完整 HTML 頁面。</summary>
         public static string BuildDocxHtml(string markdown)
@@ -119,7 +131,22 @@ namespace test
 
         /// <summary>簡報（逐張文字行）→ 投影片卡片 HTML。每張 slide 第一行當標題，其餘為內容。</summary>
         public static string BuildSlidesHtml(IReadOnlyList<IReadOnlyList<string>> slides)
+            => BuildSlidesHtml(slides, allowRegen: false);
+
+        public static string BuildSlidesHtml(IReadOnlyList<IReadOnlyList<string>> slides, bool allowRegen)
+            => BuildSlidesHtml(slides, allowRegen, null);
+
+        /// <summary>
+        /// allowRegen=true 時每張投影片右下角加「重生這張」鈕，點擊 postMessage 回宿主重生並覆蓋 .pptx。
+        /// coverImagePng 非 null 時，封面（第一張）渲染嵌入的封面圖，讓預覽也看得到簡報裡的封面圖。
+        /// </summary>
+        public static string BuildSlidesHtml(
+            IReadOnlyList<IReadOnlyList<string>> slides, bool allowRegen, byte[]? coverImagePng)
         {
+            string? coverDataUri = coverImagePng != null && coverImagePng.Length > 0
+                ? "data:image/png;base64," + Convert.ToBase64String(coverImagePng)
+                : null;
+
             var sb = new StringBuilder();
             sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
             sb.Append("<style>").Append(SlidesCss).Append("</style></head><body>");
@@ -138,10 +165,21 @@ namespace test
                     sb.Append("<div class='slide'>");
                     sb.Append("<div class='slide-no'>").Append(n).Append("</div>");
 
+                    // 封面（第一張）不提供重生鈕，內容頁才有。
+                    if (allowRegen && n > 1)
+                    {
+                        sb.Append("<button class='regen-btn' data-order='").Append(n)
+                          .Append("' onclick='regen(").Append(n).Append(")'>重生這張</button>");
+                    }
+
                     string title = slide != null && slide.Count > 0 ? slide[0] : "";
                     sb.Append("<div class='slide-title'>")
                       .Append(WebUtility.HtmlEncode(title))
                       .Append("</div>");
+
+                    // 封面圖：只在第一張、且有嵌入圖時顯示。
+                    if (n == 1 && coverDataUri != null)
+                        sb.Append("<img class='cover-img' src='").Append(coverDataUri).Append("' alt='封面圖' />");
 
                     sb.Append("<div class='slide-body'>");
                     if (slide != null)
@@ -157,6 +195,49 @@ namespace test
                     }
                     sb.Append("</div></div>");
                 }
+            }
+
+            sb.Append("</div>");
+
+            if (allowRegen)
+            {
+                sb.Append("<script>function regen(o){")
+                  .Append("try{window.chrome.webview.postMessage(JSON.stringify({action:'regen',order:o}));}catch(e){}")
+                  .Append("document.querySelectorAll('.regen-btn').forEach(function(b){b.disabled=true;});")
+                  .Append("var t=document.querySelector('[data-order=\"'+o+'\"]');if(t){t.textContent='重生中…';}")
+                  .Append("}</script>");
+            }
+
+            sb.Append("</body></html>");
+            return sb.ToString();
+        }
+
+        /// <summary>試算表（逐列儲存格）→ HTML 表格頁（首列當表頭）。</summary>
+        public static string BuildXlsxHtml(IReadOnlyList<IReadOnlyList<string>> rows)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
+            sb.Append("<style>").Append(BaseCss).Append("</style></head><body>");
+            sb.Append("<div class='sheet'>");
+
+            if (rows == null || rows.Count == 0)
+            {
+                sb.Append("<p class='empty'>（空白試算表）</p>");
+            }
+            else
+            {
+                sb.Append("<table>");
+                for (int r = 0; r < rows.Count; r++)
+                {
+                    string tag = r == 0 ? "th" : "td";
+                    sb.Append("<tr>");
+                    foreach (var cell in rows[r])
+                        sb.Append('<').Append(tag).Append('>')
+                          .Append(WebUtility.HtmlEncode(cell ?? ""))
+                          .Append("</").Append(tag).Append('>');
+                    sb.Append("</tr>");
+                }
+                sb.Append("</table>");
             }
 
             sb.Append("</div></body></html>");

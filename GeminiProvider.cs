@@ -33,10 +33,15 @@ namespace test
             var svc = _router.GetGeminiService(route.ServiceModel);
 
             string userText = ComposePrompt(request);
+            int capturedIn = 0, capturedOut = 0;
             string text = await svc.GenerateAsync(
-                request.SystemPrompt, userText, request.MaxOutputTokens, ct).ConfigureAwait(false);
+                request.SystemPrompt, userText, request.MaxOutputTokens, ct,
+                onUsage: (i, o) => { capturedIn = i; capturedOut = o; }).ConfigureAwait(false);
 
-            return AiResponse.Success(text, route.NodeModel, Kind);
+            return AiResponse.Success(
+                text, route.NodeModel, Kind,
+                inputTokens: capturedIn > 0 ? capturedIn : (int?)null,
+                outputTokens: capturedOut > 0 ? capturedOut : (int?)null);
         }
 
         public async Task<AiResponse> GenerateStreamAsync(

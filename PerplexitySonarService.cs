@@ -60,7 +60,8 @@ namespace test
             string instructions,
             string userText,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             if (string.IsNullOrWhiteSpace(userText))
                 return Task.FromResult("");
@@ -71,7 +72,8 @@ namespace test
                 stream: false,
                 onDelta: null,
                 maxOutputTokens: maxOutputTokens,
-                ct: ct);
+                ct: ct,
+                onUsage: onUsage);
         }
 
         public Task<string> GenerateStreamAsync(
@@ -79,7 +81,8 @@ namespace test
             string userText,
             Action<string>? onDelta,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             if (string.IsNullOrWhiteSpace(userText))
                 return Task.FromResult("");
@@ -90,7 +93,8 @@ namespace test
                 stream: true,
                 onDelta: onDelta,
                 maxOutputTokens: maxOutputTokens,
-                ct: ct);
+                ct: ct,
+                onUsage: onUsage);
         }
 
         private async Task<string> GenerateInternalAsync(
@@ -99,7 +103,8 @@ namespace test
             bool stream,
             Action<string>? onDelta,
             int maxOutputTokens,
-            CancellationToken ct)
+            CancellationToken ct,
+            Action<int, int>? onUsage = null)
         {
             var payload = new
             {
@@ -148,6 +153,7 @@ namespace test
             if (!stream)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                TryExtractUsage(body, onUsage);
                 return ExtractTextFromJson(body);
             }
 
@@ -157,6 +163,7 @@ namespace test
             string? currentEventName = null;
             var dataBuilder = new StringBuilder();
             var finalText = new StringBuilder();
+            var usage = new Usage();
 
             while (!reader.EndOfStream)
             {
@@ -175,7 +182,7 @@ namespace test
                         if (string.Equals(data, "[DONE]", StringComparison.Ordinal))
                             break;
 
-                        ProcessSseEvent(currentEventName, data, onDelta, finalText);
+                        ProcessSseEvent(currentEventName, data, onDelta, finalText, usage);
                     }
 
                     currentEventName = null;
@@ -198,19 +205,38 @@ namespace test
                 }
             }
 
+            if (onUsage != null && (usage.Input > 0 || usage.Output > 0))
+                onUsage(usage.Input, usage.Output);
+
             return finalText.ToString().Trim();
+        }
+
+        private sealed class Usage
+        {
+            public int Input;
+            public int Output;
         }
 
         private static void ProcessSseEvent(
             string? eventName,
             string data,
             Action<string>? onDelta,
-            StringBuilder finalText)
+            StringBuilder finalText,
+            Usage usage)
         {
             try
             {
                 using var doc = JsonDocument.Parse(data);
                 var root = doc.RootElement;
+
+                // Perplexity 在串流的最後一個 chunk 帶 usage（OpenAI 相容格式）。
+                if (root.TryGetProperty("usage", out var usageEl) && usageEl.ValueKind == JsonValueKind.Object)
+                {
+                    if (usageEl.TryGetProperty("prompt_tokens", out var pEl) && pEl.TryGetInt32(out var pv))
+                        usage.Input = pv;
+                    if (usageEl.TryGetProperty("completion_tokens", out var cEl) && cEl.TryGetInt32(out var cv))
+                        usage.Output = cv;
+                }
 
                 if (root.TryGetProperty("choices", out var choicesEl) &&
                     choicesEl.ValueKind == JsonValueKind.Array &&
@@ -235,6 +261,29 @@ namespace test
             catch
             {
                 // 不因單一事件解析失敗而中止整條串流
+            }
+        }
+
+        private static void TryExtractUsage(string json, Action<int, int>? onUsage)
+        {
+            if (onUsage == null)
+                return;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("usage", out var usageEl))
+                    return;
+
+                int input = usageEl.TryGetProperty("prompt_tokens", out var pEl) && pEl.TryGetInt32(out var pv) ? pv : 0;
+                int output = usageEl.TryGetProperty("completion_tokens", out var cEl) && cEl.TryGetInt32(out var cv) ? cv : 0;
+
+                if (input > 0 || output > 0)
+                    onUsage(input, output);
+            }
+            catch
+            {
+                // usage 解析失敗不影響主回應。
             }
         }
 

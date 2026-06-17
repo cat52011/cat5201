@@ -46,7 +46,8 @@ namespace test
             string instructions,
             string userText,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             if (string.IsNullOrWhiteSpace(userText))
                 return Task.FromResult("");
@@ -63,7 +64,7 @@ namespace test
                 }
             };
 
-            return GenerateAsync(instructions, input, maxOutputTokens, ct);
+            return GenerateAsync(instructions, input, maxOutputTokens, ct, onUsage);
         }
 
         /// <summary>
@@ -74,7 +75,8 @@ namespace test
             string instructions,
             object input,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             var payload = new
             {
@@ -102,6 +104,7 @@ namespace test
             if (!resp.IsSuccessStatusCode)
                 throw new InvalidOperationException($"OpenAI API 失敗 ({(int)resp.StatusCode}): {body}");
 
+            TryExtractUsage(body, onUsage);
             return ExtractTextFromResponsesJson(body);
         }
 
@@ -115,7 +118,8 @@ namespace test
             string userText,
             Action<string>? onDelta,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             if (string.IsNullOrWhiteSpace(userText))
                 return Task.FromResult("");
@@ -132,7 +136,7 @@ namespace test
                 }
             };
 
-            return GenerateStreamAsync(instructions, input, onDelta, maxOutputTokens, ct);
+            return GenerateStreamAsync(instructions, input, onDelta, maxOutputTokens, ct, onUsage);
         }
 
         /// <summary>
@@ -145,7 +149,8 @@ namespace test
             object input,
             Action<string>? onDelta,
             int maxOutputTokens = 8000,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<int, int>? onUsage = null)
         {
             var payload = new
             {
@@ -182,6 +187,7 @@ namespace test
             string? currentEventName = null;
             var dataBuilder = new StringBuilder();
             var finalText = new StringBuilder();
+            var usage = new Usage();
 
             while (!reader.EndOfStream)
             {
@@ -201,7 +207,7 @@ namespace test
                         if (string.Equals(data, "[DONE]", StringComparison.Ordinal))
                             break;
 
-                        ProcessSseEvent(currentEventName, data, onDelta, finalText);
+                        ProcessSseEvent(currentEventName, data, onDelta, finalText, usage);
                     }
 
                     currentEventName = null;
@@ -224,14 +230,24 @@ namespace test
                 }
             }
 
+            if (onUsage != null && (usage.Input > 0 || usage.Output > 0))
+                onUsage(usage.Input, usage.Output);
+
             return finalText.ToString();
+        }
+
+        private sealed class Usage
+        {
+            public int Input;
+            public int Output;
         }
 
         private static void ProcessSseEvent(
             string? eventName,
             string data,
             Action<string>? onDelta,
-            StringBuilder finalText)
+            StringBuilder finalText,
+            Usage usage)
         {
             try
             {
@@ -241,6 +257,17 @@ namespace test
                 string type = "";
                 if (root.TryGetProperty("type", out var typeEl))
                     type = typeEl.GetString() ?? "";
+
+                // 串流結束事件帶總 usage：response.completed → response.usage.{input_tokens,output_tokens}
+                if (string.Equals(type, "response.completed", StringComparison.OrdinalIgnoreCase) &&
+                    root.TryGetProperty("response", out var respEl) &&
+                    respEl.TryGetProperty("usage", out var usageEl))
+                {
+                    if (usageEl.TryGetProperty("input_tokens", out var inEl) && inEl.TryGetInt32(out var iv))
+                        usage.Input = iv;
+                    if (usageEl.TryGetProperty("output_tokens", out var outEl) && outEl.TryGetInt32(out var ov))
+                        usage.Output = ov;
+                }
 
                 // 官方串流事件中，文字增量可由 response.output_text.delta 取得
                 // 有些實作會看 eventName，有些直接看 payload.type；這裡兩者都兼容
@@ -289,6 +316,30 @@ namespace test
             catch
             {
                 // 不因單一事件解析失敗而中止整條串流
+            }
+        }
+
+        // 非串流回應的 usage：root.usage.{input_tokens,output_tokens}
+        private static void TryExtractUsage(string json, Action<int, int>? onUsage)
+        {
+            if (onUsage == null)
+                return;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("usage", out var usageEl))
+                    return;
+
+                int input = usageEl.TryGetProperty("input_tokens", out var inEl) && inEl.TryGetInt32(out var iv) ? iv : 0;
+                int output = usageEl.TryGetProperty("output_tokens", out var outEl) && outEl.TryGetInt32(out var ov) ? ov : 0;
+
+                if (input > 0 || output > 0)
+                    onUsage(input, output);
+            }
+            catch
+            {
+                // usage 解析失敗不影響主回應。
             }
         }
 
