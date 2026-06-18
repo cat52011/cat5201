@@ -78,6 +78,22 @@ namespace test
         // 簡報生成器（個人化設定可切換；預設 Claude，Gamma 九月才開放）。
         private PresentationEngine _presentationEngine = PresentationEngine.Claude;
 
+        // 影片導演風格（個人化）。空 = 用原廠電影感預設（VideoStyle.DefaultCinematicPrompt）；
+        // 非空 = 使用者自訂風格，覆寫預設。注入給 Claude 導演 + Veo，確保所有鏡頭風格一致。
+        private string _videoStyleOverride = "";
+
+        /// <summary>影片任務實際生效的風格 prompt（使用者自訂優先，否則原廠電影感預設）。</summary>
+        public string GetEffectiveVideoStylePrompt() => VideoStyle.Resolve(_videoStyleOverride);
+
+        // 影片模型檔位（個人化）。前期測試預設 Lite（最省）；可選 Standard / Fast / Lite。
+        private VeoModelTier _videoModelTier = VeoModelTier.Lite;
+
+        /// <summary>影片任務實際使用的 Veo model id（依個人化檔位）。</summary>
+        public string GetEffectiveVeoModel() => VeoModels.ModelId(_videoModelTier);
+
+        /// <summary>目前生效的 Veo 檔位（給成本估算用）。</summary>
+        public VeoModelTier GetVeoModelTier() => _videoModelTier;
+
         // §4 stop/skip：目前正在依序執行的工作流鏈的取消來源 + 當前執行中的節點。
         // 取消這個 cts 會透過 linked token 同時取消 in-flight 節點，並讓鏈迴圈在下一步前停止。
         private CancellationTokenSource? _workflowChainCts;
@@ -409,7 +425,9 @@ namespace test
             Dictionary<string, string>? TaskRoutingOverrides = null,
             bool BlockOpus = false,
             bool BlockDeepResearch = false,
-            int ManualTimeoutSeconds = 0
+            int ManualTimeoutSeconds = 0,
+            string VideoStyleOverride = "",
+            string VideoModelTier = "Lite"
         );
 
         // 全域個人化偏好放在子資料夾，永遠不會被 SavesDir 的 *.json 專案掃描列舉到（非遞迴），
@@ -4839,7 +4857,9 @@ namespace test
                     TaskRoutingOverrides: _taskRoutingOverrides.ToStorage(),
                     BlockOpus: AiAutoCostPolicy.BlockOpus,
                     BlockDeepResearch: AiAutoCostPolicy.BlockDeepResearch,
-                    ManualTimeoutSeconds: _manualTimeoutSeconds
+                    ManualTimeoutSeconds: _manualTimeoutSeconds,
+                    VideoStyleOverride: _videoStyleOverride ?? "",
+                    VideoModelTier: VeoModels.ToStorageValue(_videoModelTier)
                 );
 
                 var dir = System.IO.Path.GetDirectoryName(PreferencesPath);
@@ -4901,6 +4921,8 @@ namespace test
                 AiAutoCostPolicy.BlockOpus = prefs.BlockOpus;
                 AiAutoCostPolicy.BlockDeepResearch = prefs.BlockDeepResearch;
                 _manualTimeoutSeconds = prefs.ManualTimeoutSeconds;
+                _videoStyleOverride = prefs.VideoStyleOverride ?? "";
+                _videoModelTier = VeoModels.ParseTier(prefs.VideoModelTier);
             }
             catch
             {
@@ -6475,6 +6497,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             RefreshMemoryPanel();
             SyncDownstreamAutoModeRadios();
             SyncPresentationEngineRadios();
+            SyncVideoStyleUI();
             BuildTaskRoutingPanel();
             SyncCostControls();
             if (SettingsOverlay != null)
@@ -6737,6 +6760,65 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             {
                 // 面板刷新失敗不影響主流程
             }
+        }
+
+        // 把「目前生效的影片風格」填進輸入框：使用者自訂時顯示自訂內容，否則顯示原廠完整 prompt
+        // （讓使用者看得到格式才能照著改寫）。
+        private void SyncVideoStyleUI()
+        {
+            if (VideoStyleInput == null)
+                return;
+
+            VideoStyleInput.Text = GetEffectiveVideoStylePrompt();
+
+            // 影片模型檔位下拉同步（Tag 對 Standard / Fast / Lite）。
+            if (VideoModelTierCombo != null)
+            {
+                string want = VeoModels.ToStorageValue(_videoModelTier);
+                foreach (var obj in VideoModelTierCombo.Items)
+                {
+                    if (obj is ComboBoxItem ci &&
+                        string.Equals(ci.Tag?.ToString(), want, StringComparison.OrdinalIgnoreCase))
+                    {
+                        VideoModelTierCombo.SelectedItem = ci;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 影片模型檔位變更：落地個人化（前期測試建議 Lite）。
+        private void VideoModelTierCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (VideoModelTierCombo?.SelectedItem is not ComboBoxItem ci)
+                return;
+
+            _videoModelTier = VeoModels.ParseTier(ci.Tag?.ToString());
+            SavePreferences();
+        }
+
+        // 失焦時落地影片風格：等於原廠預設（或空）就清成空字串（=用預設），否則存為自訂覆寫。
+        private void VideoStyleInput_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (VideoStyleInput == null)
+                return;
+
+            string text = (VideoStyleInput.Text ?? "").Trim();
+
+            _videoStyleOverride =
+                (text.Length == 0 ||
+                 string.Equals(text, VideoStyle.DefaultCinematicPrompt.Trim(), StringComparison.Ordinal))
+                    ? ""
+                    : text;
+
+            SavePreferences();
+        }
+
+        private void ResetVideoStyle_Click(object sender, RoutedEventArgs e)
+        {
+            _videoStyleOverride = "";
+            SavePreferences();
+            SyncVideoStyleUI();
         }
 
         public void ClearAutoFlowTemplate(NodeControl node)

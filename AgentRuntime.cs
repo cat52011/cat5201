@@ -1719,16 +1719,58 @@ namespace test
                 return execution;
             }
 
-            string agentId = runtimeAgent?.Id ?? "video-agent";
+            // 影片產出一律歸「video-agent」（不論觸發的 runtime agent 是誰）——這步本來就是影片代理的工作，
+            // 讓決策窗/工作區顯示 video-agent + video-director(claude)，符合「第一層分類 → 對應代理」原則。
+            string agentId = "video-agent";
+
+            // 想要的長度（從文字偵測，預設 8 秒，上限 148 秒）+ 生效的影片風格（個人化覆寫或原廠電影感預設）。
+            int targetSeconds = VideoPlanBuilder.ParseRequestedSeconds(prompt);
+            string videoStyle = _main.GetEffectiveVideoStylePrompt();
+
+            // 第一層判定影片任務後，再細分節奏：快剪（預告片/混剪/MV…）vs 連貫長鏡頭。
+            // 快剪需要 ffmpeg 本地裁切拼接；沒有 ffmpeg 就自動降級回連貫模式（並在輸出說明）。
+            var requestedCutMode = VideoPlanBuilder.DetectCutMode(prompt);
+            var ffmpeg = new FfmpegService();
+            bool fastCut = requestedCutMode == VideoCutMode.FastCut && ffmpeg.IsAvailable;
+            bool fastCutWanted = requestedCutMode == VideoCutMode.FastCut;
+            var cutMode = fastCut ? VideoCutMode.FastCut : VideoCutMode.Continuous;
+
+            // Veo 3.1 Lite 不支援延伸：連貫長片無法多段串接，只能單段 8 秒。
+            // （快剪只用 base 生成、不延伸，Lite 可正常做。）
+            bool canExtend = VeoModels.SupportsExtend(_main.GetVeoModelTier());
+            bool liteNoExtend = !fastCut && !canExtend && targetSeconds > VideoPlanBuilder.BaseSegmentSeconds;
 
             // 1) Claude 導演：劇本 / 分鏡 / 旁白 / 鏡頭 / 風格（核心，永遠執行）。
+            // 把主合成（general-agent 已寫好的企劃，使用者也喜歡看的那份）當改編底本餵給導演，
+            // 讓「實際採用的影片計畫」與主合成一致、且建立在更完整的敘事上。
+            string treatment = execution.Text ?? "";
             node.SetLoadingHint("Claude 正在寫劇本與分鏡");
-            VideoPlanPayload plan = await BuildVideoPlanAsync(node, prompt, targetSeconds: 8, ct);
+            VideoPlanPayload plan = await BuildVideoPlanAsync(node, prompt, targetSeconds, videoStyle, treatment, cutMode, ct);
             node.SetLoadingHint(null);
 
             plan.ProviderRoles.Add(VideoProviderRole.Of(
                 "劇本/分鏡/旁白/鏡頭", "Claude", VideoProviderRoleStatus.Completed,
                 $"{plan.Scenes?.Count ?? 0} 個鏡頭"));
+
+            // 成本估算（Veo 3.1 = $0.40 USD/秒 720p）：提前顯示讓使用者知道大概花多少。
+            // 快剪：N 個分鏡 × 4 秒/鏡頭；連貫：base 8 秒 + 每段延伸 7 秒；單段量化。
+            {
+                int planScenes = Math.Max(1, plan.Scenes?.Count ?? 1);
+                int estShots = fastCut ? Math.Min(planScenes, VideoPlanBuilder.MaxFastCutShots) : 1;
+                int estSecondsTotal = fastCut
+                    ? estShots * VideoPlanBuilder.FastCutGenerateSeconds
+                    : (planScenes > 1 && canExtend
+                        ? 8 + VideoPlanBuilder.ExtendSegmentSeconds * (planScenes - 1)
+                        : VideoPlanBuilder.QuantizeBaseSeconds(targetSeconds)); // Lite 不延伸→單段
+                var tier = _main.GetVeoModelTier();
+                double estUsd = estSecondsTotal * VeoModels.UsdPerSecond(tier);
+                double estAud = estUsd * 1.55; // USD→AUD 約 1.55，實際匯率浮動
+                string modeLabel = fastCut ? $"快剪 {estShots} 鏡頭" : $"連貫 {estSecondsTotal} 秒";
+                plan.ProviderRoles.Add(VideoProviderRole.Of(
+                    "預估成本", VeoModels.DisplayName(tier),
+                    VideoProviderRoleStatus.Planned,
+                    $"{modeLabel}・約生成 {estSecondsTotal} 秒影片素材・US${estUsd:F2}（≈ A${estAud:F2}）"));
+            }
 
             // 關鍵畫面 / 風格：Claude 已產出 keyframe prompt 與風格定義；實際出圖為配角。
             plan.ProviderRoles.Add(VideoProviderRole.Of(
@@ -1757,56 +1799,155 @@ namespace test
                 ? prompt
                 : plan.VideoPromptForGenerator;
 
-            // Veo 3 只接受 4–8 秒；超過就 clamp（不報錯，影片說明會寫實際秒數）。
-            int seconds = Math.Clamp(
-                plan.TotalDurationSeconds > 0 ? plan.TotalDurationSeconds : 4,
-                4, 8);
+            // 每個 scene 一段 prompt（已前置風格）。連貫＝延伸串接；快剪＝各自獨立生成後剪接。
+            var segmentPrompts = BuildSegmentPrompts(plan, videoStyle, videoPrompt, targetSeconds);
+
+            // 快剪：鏡頭數＝分鏡數（夾上限），各鏡頭以 Veo base 4 秒生成（最便宜合法值），16:9 橫式。
+            // 連貫：段數＝分鏡數，基底 8 秒 + 逐段延伸 7 秒。
+            // Lite 不支援延伸 → 連貫強制單段（8 秒）。
+            int segmentCount = fastCut
+                ? Math.Min(segmentPrompts.Count, VideoPlanBuilder.MaxFastCutShots)
+                : (canExtend ? segmentPrompts.Count : 1);
+            bool multiSegment = !fastCut && segmentCount > 1;
+
+            // Veo base 只接受 4 / 6 / 8 秒（離散，其他會 400）。
+            // 快剪每鏡頭固定 4 秒；連貫多段基底 8 秒；連貫單段量化到最近合法值。
+            int baseSeconds = fastCut
+                ? VideoPlanBuilder.FastCutGenerateSeconds
+                : (multiSegment ? 8 : VideoPlanBuilder.QuantizeBaseSeconds(targetSeconds));
+
+            // 快剪用 16:9 橫式（預告片感）；連貫多段（要延伸）也用 16:9（延伸只接受 16:9 來源），
+            // 否則第一段延伸必被拒（400 "Aspect ratio must be 16:9"）。連貫單段維持 9:16 直式。
+            string aspectRatio = (fastCut || multiSegment) ? "16:9" : "9:16";
+            string videoSize = (fastCut || multiSegment) ? "1280x720" : "720x1280";
+
+            const string providerLabel = "Veo 3.1";
 
             // 「prompt → 影片請求」artifact，全程追蹤狀態 / 進度。
             var request = new VideoRequestPayload
             {
                 Prompt = videoPrompt,
-                DurationSeconds = seconds,
-                Size = "720x1280",
+                DurationSeconds = baseSeconds,
+                Size = videoSize,
                 Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Queued)
             };
             var requestItem = AgentWorkspaceBuilder.FromCapabilityData(
                 workspace, node, agentId, "video_request", request, isUserVisibleOverride: true);
             workspace.Add(requestItem);
 
-            // 3) 影片產生器：Veo 3（唯一 provider）。
-            var veo = new VeoVideoService();
+            // 3) 影片產生器：Veo 3.1（唯一 provider）——依個人化選的檔位（標準 / Fast / Lite）。
+            var veo = new VeoVideoService(_main.GetEffectiveVeoModel());
 
+            int curSegment = 1; // OnProgress 顯示用：目前在第幾段 / 第幾個鏡頭
+            string unitWord = fastCut ? "鏡頭" : "段";
             void OnProgress(int percent, VideoGenerationStatus status)
             {
                 request.ProgressPercent = percent;
                 request.PollCount++;
                 request.Status = VideoGenerationStatusText.ToStorageValue(status);
-                node.SetLoadingHint($"影片{VideoGenerationStatusText.ToLabel(status)} {percent}%");
+                string seg = segmentCount > 1 ? $"（第 {curSegment}/{segmentCount} {unitWord}）" : "";
+                node.SetLoadingHint($"影片{VideoGenerationStatusText.ToLabel(status)}{seg} {percent}%");
             }
 
             byte[]? mp4 = null;
             string videoError = "";
-            string providerLabel;
             string jobRef = "";
             bool attempted = false;
+            int completedExtends = 0;
+            int producedShots = 0;   // 快剪：成功生成的鏡頭數
+            int actualSeconds = 0;   // 成品實際秒數（兩種模式各自計算）
 
             try
             {
                 if (veo.IsConfigured)
                 {
                     attempted = true;
-                    providerLabel = "Veo 3";
                     request.Model = veo.Model;
                     request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Generating);
 
-                    var r = await veo.GenerateAsync(videoPrompt, seconds, "9:16", OnProgress, ct);
-                    if (r.Success) { mp4 = r.Mp4Bytes; jobRef = r.OperationName; }
-                    else videoError = r.ErrorMessage;
-                }
-                else
-                {
-                    providerLabel = "Veo 3";
+                    if (fastCut)
+                    {
+                        // ── 快剪：各鏡頭獨立生成（4 秒、16:9），再用 ffmpeg 各裁短後拼接 ──
+                        double keepPerShot = Math.Clamp(
+                            (double)targetSeconds / Math.Max(1, segmentCount),
+                            1.5, VideoPlanBuilder.FastCutGenerateSeconds);
+
+                        var clips = new List<(byte[] Mp4, double KeepSeconds)>();
+                        for (int i = 0; i < segmentCount; i++)
+                        {
+                            curSegment = i + 1;
+                            var shot = await veo.GenerateAsync(segmentPrompts[i], baseSeconds, aspectRatio, OnProgress, ct);
+                            if (shot.Success && shot.Mp4Bytes.Length > 0)
+                            {
+                                clips.Add((shot.Mp4Bytes, keepPerShot));
+                                producedShots++;
+                                if (string.IsNullOrWhiteSpace(jobRef)) jobRef = shot.OperationName;
+                            }
+                            else
+                            {
+                                // 單一鏡頭失敗不致命：記錄、跳過，繼續其他鏡頭（盡量湊齊快剪）。
+                                videoError = shot.ErrorMessage;
+                            }
+                        }
+
+                        if (clips.Count > 0)
+                        {
+                            node.SetLoadingHint($"ffmpeg 剪接 {clips.Count} 個鏡頭中");
+                            var (ok, err, bytes) = await ffmpeg.TrimAndConcatAsync(clips, ct);
+                            if (ok)
+                            {
+                                mp4 = bytes;
+                                actualSeconds = (int)Math.Round(clips.Sum(c => c.KeepSeconds));
+                            }
+                            else
+                            {
+                                videoError = err;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // ── 連貫：基底段（8 秒）→ 逐段延伸 +7 秒 ──
+                        curSegment = 1;
+                        var baseResult = await veo.GenerateAsync(segmentPrompts[0], baseSeconds, aspectRatio, OnProgress, ct);
+                        if (baseResult.Success)
+                        {
+                            mp4 = baseResult.Mp4Bytes;
+                            jobRef = baseResult.OperationName;
+                            string lastUri = baseResult.VideoUri; // 延伸要用「前段影片 uri」串接
+
+                            // 後續段：每段把「前一段影片的 uri」+ 新 prompt 送回 Veo 延伸 +7 秒，保持人物/場景連續。
+                            for (int i = 1; i < segmentCount && mp4 != null; i++)
+                            {
+                                if (string.IsNullOrWhiteSpace(lastUri))
+                                {
+                                    videoError = "前段影片未回傳 uri，無法延伸。";
+                                    break;
+                                }
+
+                                curSegment = i + 1;
+                                var ext = await veo.ExtendAsync(lastUri, segmentPrompts[i], OnProgress, ct);
+                                if (ext.Success)
+                                {
+                                    mp4 = ext.Mp4Bytes;
+                                    lastUri = ext.VideoUri;
+                                    completedExtends++;
+                                }
+                                else
+                                {
+                                    // 延伸中斷：保留已接好的片段（部分成功），記錄原因後停止延伸。
+                                    videoError = ext.ErrorMessage;
+                                    break;
+                                }
+                            }
+
+                            actualSeconds = baseSeconds + VideoPlanBuilder.ExtendSegmentSeconds * completedExtends;
+                        }
+                        else
+                        {
+                            videoError = baseResult.ErrorMessage;
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -1823,27 +1964,29 @@ namespace test
             }
 
             request.JobId = jobRef;
+            if (actualSeconds <= 0) actualSeconds = baseSeconds; // 保險：未成功時退回基底秒數
+            request.DurationSeconds = actualSeconds;
 
-            // 把 Veo 3 model id 補回 requestItem，讓決策窗模型欄看得到。
+            // 把 Veo model id 補回 requestItem，讓決策窗模型欄看得到。
             if (!string.IsNullOrWhiteSpace(request.Model))
                 requestItem.ModelId = request.Model;
 
-            // 3a) 影片模型皆休眠：只交付 Claude 計畫（仍算成功，因為導演計畫已產出）。
+            // 3a) Veo 未配置：只交付 Claude 計畫（仍算成功，因為導演計畫已產出）。
             if (!attempted)
             {
                 plan.ProviderRoles.Add(VideoProviderRole.Of(
-                    "影片", "Veo 3", VideoProviderRoleStatus.SkippedNoApi, veo.NotConfiguredReason));
+                    "影片", providerLabel, VideoProviderRoleStatus.SkippedNoApi, veo.NotConfiguredReason));
                 request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Failed);
                 request.ErrorMessage = veo.NotConfiguredReason;
                 planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
                 requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
-                orchestration.MarkSuccess("generate_video", "已產出 Claude 影片計畫（影片模型休眠）");
+                orchestration.MarkSuccess("generate_video", "已產出 Claude 影片計畫（Veo 未配置）");
                 return ReplaceExecutionText(execution,
                     BuildVideoPlanNote(plan) +
-                    $"\n\nℹ 影片模型休眠：{veo.NotConfiguredReason} 啟用 Veo 3 後即可依此計畫生成影片。");
+                    $"\n\nℹ Veo 未配置：{veo.NotConfiguredReason} 設定 GEMINI_API_KEY 後即可依此計畫生成影片。");
             }
 
-            // 3b) 嘗試了但失敗。
+            // 3b) 連基底段都失敗。
             if (mp4 == null || mp4.Length == 0)
             {
                 plan.ProviderRoles.Add(VideoProviderRole.Of(
@@ -1870,15 +2013,42 @@ namespace test
 
             if (generated.Success)
             {
+                // 部分成功判定：連貫＝中途延伸失敗；快剪＝有鏡頭生成失敗（湊不齊原訂鏡頭數）。
+                bool partial = fastCut
+                    ? producedShots < segmentCount
+                    : multiSegment && completedExtends < (segmentCount - 1);
+
+                string segDetail = fastCut
+                    ? $"{producedShots}/{segmentCount} 鏡頭快剪・約 {actualSeconds} 秒"
+                    : multiSegment
+                        ? $"{completedExtends + 1}/{segmentCount} 段・約 {actualSeconds} 秒"
+                        : $"約 {actualSeconds} 秒";
+
                 plan.ProviderRoles.Add(VideoProviderRole.Of(
-                    "影片", providerLabel, VideoProviderRoleStatus.Completed, generated.FileName));
+                    "影片", providerLabel,
+                    partial ? VideoProviderRoleStatus.Failed : VideoProviderRoleStatus.Completed,
+                    partial ? $"{segDetail}（部分鏡頭中斷：{videoError}）" : $"{generated.FileName}（{segDetail}）"));
                 request.Status = VideoGenerationStatusText.ToStorageValue(VideoGenerationStatus.Completed);
                 request.ProgressPercent = 100;
                 request.FilePath = generated.FilePath;
                 planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
                 requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
                 orchestration.MarkSuccess("generate_video", generated.FileName);
-                return ReplaceExecutionText(execution, BuildVideoPlanNote(plan) + "\n\n✅ 影片已生成：" + generated.FileName);
+
+                string modeNote = fastCut ? "（快剪）" : "";
+                string note = partial
+                    ? $"\n\n✅ 影片已生成{modeNote}：{generated.FileName}（{segDetail}）\n⚠ 部分鏡頭未完成：{videoError}"
+                    : $"\n\n✅ 影片已生成{modeNote}：{generated.FileName}（{segDetail}）";
+
+                // 使用者想要快剪但缺 ffmpeg → 已自動降級連貫模式，提示如何啟用快剪。
+                if (fastCutWanted && !fastCut)
+                    note += $"\n\nℹ 偵測到你要的是快剪/預告片節奏，但本機沒有 ffmpeg，已改用連貫長鏡頭。{ffmpeg.NotAvailableReason}";
+
+                // Lite 不支援延伸 → 連貫長片被截成單段 8 秒，提示如何做更長。
+                if (liteNoExtend)
+                    note += $"\n\nℹ 你要的是約 {targetSeconds} 秒的連貫長片，但目前用的是 Veo 3.1 Lite——Lite 不支援影片延伸，只生成了 8 秒。要更長請到設定把影片模型切到 Fast 或標準版，或改用快剪（預告片/混剪）走獨立鏡頭剪接。";
+
+                return ReplaceExecutionText(execution, BuildVideoPlanNote(plan) + note);
             }
 
             plan.ProviderRoles.Add(VideoProviderRole.Of(
@@ -2059,10 +2229,51 @@ namespace test
             }
         }
 
-        private async Task<VideoPlanPayload> BuildVideoPlanAsync(
-            NodeControl node, string prompt, int targetSeconds, CancellationToken ct)
+        // 從分鏡組出「每段給 Veo 的英文 prompt」。每段一律前置生效風格，避免延伸過程風格漂移。
+        // 段數以分鏡為準（導演已依長度決定），夾在 [1, 21]；無分鏡時退回單段（整體 video_prompt）。
+        private static List<string> BuildSegmentPrompts(
+            VideoPlanPayload plan, string style, string videoPrompt, int targetSeconds)
         {
-            string directorPrompt = VideoPlanBuilder.BuildDirectorPrompt(prompt, targetSeconds);
+            string styleHead = string.IsNullOrWhiteSpace(style) ? "" : style.Trim() + "\n\n";
+
+            var scenes = (plan.Scenes ?? new List<VideoScenePayload>())
+                .Where(s => s != null)
+                .ToList();
+
+            var prompts = new List<string>();
+
+            if (scenes.Count == 0)
+            {
+                prompts.Add(styleHead + (string.IsNullOrWhiteSpace(videoPrompt) ? "Cinematic short video." : videoPrompt.Trim()));
+                return prompts;
+            }
+
+            // 段數上限：分鏡數與「依目標秒數換算」取較大者再夾上限，確保使用者要長片時段數夠。
+            int wanted = Math.Max(scenes.Count, VideoPlanBuilder.SegmentsForDuration(targetSeconds));
+            int segCount = Math.Min(Math.Min(wanted, VideoPlanBuilder.MaxSegments), Math.Max(1, scenes.Count));
+
+            for (int i = 0; i < segCount; i++)
+            {
+                var s = scenes[i];
+                string body = !string.IsNullOrWhiteSpace(s.SegmentVideoPrompt) ? s.SegmentVideoPrompt
+                            : !string.IsNullOrWhiteSpace(s.KeyframePrompt) ? s.KeyframePrompt
+                            : !string.IsNullOrWhiteSpace(s.Visual) ? s.Visual
+                            : videoPrompt;
+
+                if (!string.IsNullOrWhiteSpace(s.Camera))
+                    body = (body ?? "").Trim() + " Camera: " + s.Camera.Trim() + ".";
+
+                prompts.Add(styleHead + (string.IsNullOrWhiteSpace(body) ? "Continue the scene naturally." : body.Trim()));
+            }
+
+            return prompts;
+        }
+
+        private async Task<VideoPlanPayload> BuildVideoPlanAsync(
+            NodeControl node, string prompt, int targetSeconds, string stylePrompt, string? treatment,
+            VideoCutMode cutMode, CancellationToken ct)
+        {
+            string directorPrompt = VideoPlanBuilder.BuildDirectorPrompt(prompt, targetSeconds, stylePrompt, treatment, cutMode);
 
             var directorDecision = new NodeExecutionDecision
             {
@@ -2096,15 +2307,34 @@ namespace test
             sb.Append("\n\n【影片計畫（Claude 導演）】");
 
             if (!string.IsNullOrWhiteSpace(plan.Title))
-                sb.Append($"\n標題：{plan.Title}");
+                sb.Append($"\n片名：{plan.Title}");
             if (!string.IsNullOrWhiteSpace(plan.Logline))
                 sb.Append($"\n概念：{plan.Logline}");
             if (!string.IsNullOrWhiteSpace(plan.StyleDefinition))
                 sb.Append($"\n風格：{plan.StyleDefinition}");
+            if (!string.IsNullOrWhiteSpace(plan.MusicBrief))
+                sb.Append($"\n配樂：{plan.MusicBrief}");
 
-            sb.Append($"\n分鏡：{plan.Scenes?.Count ?? 0} 個鏡頭，約 {plan.TotalDurationSeconds} 秒");
+            var scenes = plan.Scenes ?? new System.Collections.Generic.List<VideoScenePayload>();
+            sb.Append($"\n分鏡：{scenes.Count} 個鏡頭，約 {plan.TotalDurationSeconds} 秒");
 
-            sb.Append("\n工具分工：");
+            // 逐鏡頭顯示完整劇本（旁白 / 畫面 / 運鏡），讓使用者看得到導演寫的詳細內容。
+            int idx = 1;
+            foreach (var s in scenes)
+            {
+                if (s == null) continue;
+                sb.Append($"\n\n　鏡頭 {idx}");
+                if (s.DurationSeconds > 0) sb.Append($"（約 {s.DurationSeconds} 秒）");
+                if (!string.IsNullOrWhiteSpace(s.Visual))
+                    sb.Append($"\n　· 畫面：{s.Visual.Trim()}");
+                if (!string.IsNullOrWhiteSpace(s.Camera))
+                    sb.Append($"\n　· 運鏡：{s.Camera.Trim()}");
+                if (!string.IsNullOrWhiteSpace(s.Narration))
+                    sb.Append($"\n　· 旁白：{s.Narration.Trim()}");
+                idx++;
+            }
+
+            sb.Append("\n\n工具分工：");
             foreach (var role in plan.ProviderRoles)
                 sb.Append($"\n· {role.Role}：{role.Provider}（{VideoProviderRoleStatus.ToLabel(role.Status)}）");
 

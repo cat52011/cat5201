@@ -32,17 +32,21 @@ namespace test
         private readonly string _model;
 
         private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(8);
-        private const int MaxPolls = 90; // ~12 分鐘
+        // 影片無逾時上限：輪詢不設次數上限，只由 CancellationToken（使用者取消 / 工作流停止）或 operation 完成/錯誤來結束。
 
-        public VeoVideoService()
+        public VeoVideoService(string? modelOverride = null)
         {
             _apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
                       ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY")
                       ?? "";
 
+            // 優先序：環境變數 CAT5201_VEO_MODEL（除錯 / 改 ID 用，免重編）
+            //        > 個人化選擇的檔位（standard / fast / lite）
+            //        > 預設 Lite（前期測試省錢）。
             string modelEnv = Environment.GetEnvironmentVariable("CAT5201_VEO_MODEL") ?? "";
-            // Veo 3.1 preview（其他可用：veo-3.0-generate-001 / veo-3.0-fast-generate-001）。
-            _model = string.IsNullOrWhiteSpace(modelEnv) ? "veo-3.1-generate-preview" : modelEnv;
+            _model = !string.IsNullOrWhiteSpace(modelEnv) ? modelEnv
+                   : !string.IsNullOrWhiteSpace(modelOverride) ? modelOverride
+                   : VeoModels.LiteModel;
         }
 
         // 安全閘門已移除：只要有 GEMINI_API_KEY / GOOGLE_API_KEY 就會實際呼叫 Veo（會計費）。
@@ -60,6 +64,8 @@ namespace test
             public bool Success { get; init; }
             public byte[] Mp4Bytes { get; init; } = Array.Empty<byte>();
             public string OperationName { get; init; } = "";
+            // 產生影片的 uri 參照（用於「影片延伸」——延伸要的是前段影片的 uri，不是 base64）。
+            public string VideoUri { get; init; } = "";
             public VideoGenerationStatus Status { get; init; } = VideoGenerationStatus.Failed;
             public string ErrorMessage { get; init; } = "";
         }
@@ -87,10 +93,49 @@ namespace test
                 return Fail($"建立 Veo 影片任務失敗：{ex.Message}");
             }
 
-            if (string.IsNullOrWhiteSpace(operationName))
-                return Fail("Veo API 未回傳 operation name。");
+            return await PollAndExtractAsync(operationName, onProgress, ct);
+        }
 
-            for (int i = 0; i < MaxPolls; i++)
+        /// <summary>
+        /// Veo 3.1 影片延伸：把「前一段 Veo 影片的 uri 參照」+ 新 prompt 送回，產出延續 +7 秒的完整影片（保持人物/場景連續）。
+        /// 端點同 predictLongRunning；source video 用 video.uri 參照（base64 inlineData / gcsUri 會被拒）。
+        /// uri 即前一次生成回應的 generatedSamples[0].video.uri；來源影片需為 Veo 產生且兩天內（API 限制）。
+        /// </summary>
+        public async Task<VeoResult> ExtendAsync(
+            string sourceVideoUri,
+            string prompt,
+            Action<int, VideoGenerationStatus>? onProgress,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(sourceVideoUri))
+                return Fail("延伸來源影片缺少 uri 參照（無法延伸）。");
+
+            onProgress?.Invoke(0, VideoGenerationStatus.Queued);
+
+            string operationName;
+            try
+            {
+                operationName = await CreateExtendOperationAsync(prompt, sourceVideoUri, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return Fail($"建立 Veo 影片延伸任務失敗：{ex.Message}");
+            }
+
+            if (string.IsNullOrWhiteSpace(operationName))
+                return Fail("Veo 延伸 API 未回傳 operation name。");
+
+            return await PollAndExtractAsync(operationName, onProgress, ct);
+        }
+
+        // 共用：輪詢 operation 直到 done，取出影片 bytes。
+        private async Task<VeoResult> PollAndExtractAsync(
+            string operationName,
+            Action<int, VideoGenerationStatus>? onProgress,
+            CancellationToken ct)
+        {
+            for (int i = 0; ; i++) // 無次數上限；由 ct 或 operation 完成/錯誤結束
             {
                 try { await Task.Delay(PollInterval, ct); }
                 catch (OperationCanceledException) { throw; }
@@ -126,15 +171,27 @@ namespace test
 
                     try
                     {
+                        // 先抓 video uri（延伸要用），再取 bytes（寫檔/預覽用）。
+                        string videoUri = root.TryGetProperty("response", out var respForUri)
+                            ? FindFirstString(respForUri, "uri", "videoUri", "url")
+                            : "";
+
                         byte[] bytes = await ExtractVideoBytesAsync(root, ct);
                         if (bytes.Length == 0)
-                            return Fail("Veo 回應沒有可用的影片內容。", operationName);
+                        {
+                            // 帶出實際回應結構，方便診斷（延伸的回應結構可能與 base 不同）。
+                            string raw = root.TryGetProperty("response", out var respDiag)
+                                ? respDiag.GetRawText()
+                                : root.GetRawText();
+                            return Fail($"Veo 回應沒有可用的影片內容。回應結構：{Truncate(raw, 500)}", operationName);
+                        }
 
                         return new VeoResult
                         {
                             Success = true,
                             Mp4Bytes = bytes,
                             OperationName = operationName,
+                            VideoUri = videoUri,
                             Status = VideoGenerationStatus.Completed
                         };
                     }
@@ -145,8 +202,6 @@ namespace test
                     }
                 }
             }
-
-            return Fail("Veo 影片生成逾時（超過輪詢上限）。", operationName);
         }
 
         private async Task<string> CreateOperationAsync(string prompt, int seconds, string aspectRatio, CancellationToken ct)
@@ -163,6 +218,47 @@ namespace test
                     resolution = "720p",
                     // durationSeconds 必須是「數字」，不能是字串（送字串會回 400 INVALID_ARGUMENT）。
                     durationSeconds = seconds > 0 ? seconds : 8
+                }
+            };
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+            req.Headers.Add("x-goog-api-key", _apiKey);
+
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            string body = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new InvalidOperationException(DescribeVeoError((int)resp.StatusCode, body));
+
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("name", out var n) ? (n.GetString() ?? "") : "";
+        }
+
+        // 影片延伸：source video 用 video.uri 參照前一段 Veo 影片（inlineData / gcsUri 會被 400 拒）；延伸僅支援 720p。
+        private async Task<string> CreateExtendOperationAsync(string prompt, string sourceVideoUri, CancellationToken ct)
+        {
+            string url = $"{ApiBase}/models/{_model}:predictLongRunning";
+
+            var payload = new
+            {
+                instances = new[]
+                {
+                    new
+                    {
+                        prompt = string.IsNullOrWhiteSpace(prompt) ? "Continue the scene naturally." : prompt,
+                        video = new
+                        {
+                            uri = sourceVideoUri
+                        }
+                    }
+                },
+                parameters = new
+                {
+                    // numberOfVideos 不可送（veo-3.1 會回 400 INVALID_ARGUMENT，與 base generation 同雷）。
+                    resolution = "720p"
                 }
             };
 

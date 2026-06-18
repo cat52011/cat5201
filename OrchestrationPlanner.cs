@@ -111,8 +111,8 @@ namespace test
 
             if (ContainsAny(
                     normalized,
-                    "影片", "視頻", "生成影片", "產生影片",
-                    "video", "generate video"))
+                    "影片", "視頻", "生成影片", "產生影片", "預告片", "短片",
+                    "video", "generate video", "trailer"))
             {
                 return OrchestrationTaskType.VideoGeneration;
             }

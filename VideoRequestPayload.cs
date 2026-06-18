@@ -14,7 +14,7 @@ namespace test
 
         public string Model { get; set; } = "";
 
-        public int DurationSeconds { get; init; }
+        public int DurationSeconds { get; set; }
 
         public string Size { get; set; } = "";
 

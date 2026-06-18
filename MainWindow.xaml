@@ -1122,6 +1122,84 @@ Margin="0,20,20,0">
                                          Checked="PresentationEngine_Checked"/>
                         </StackPanel>
 
+                        <!-- 影片風格 -->
+                        <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
+
+                        <TextBlock Text="影片風格"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,14,0,2"/>
+
+                        <!-- 影片模型檔位（成本）：前期測試建議 Lite -->
+                        <TextBlock Text="影片模型（成本由高到低）"
+                                   FontSize="12"
+                                   Foreground="#666"
+                                   Margin="0,8,0,4"/>
+                        <ComboBox x:Name="VideoModelTierCombo"
+                                  Style="{StaticResource RoutingComboBoxStyle}"
+                                  Width="260"
+                                  HorizontalAlignment="Left"
+                                  SelectionChanged="VideoModelTierCombo_SelectionChanged">
+                            <ComboBoxItem Tag="Standard" Style="{StaticResource RoutingComboItemStyle}" Content="Veo 3.1 標準版（最佳品質・約 US$0.40/秒）"/>
+                            <ComboBoxItem Tag="Fast" Style="{StaticResource RoutingComboItemStyle}" Content="Veo 3.1 Fast（折衷・約 US$0.15/秒）"/>
+                            <ComboBoxItem Tag="Lite" Style="{StaticResource RoutingComboItemStyle}" Content="Veo 3.1 Lite（最省・約 US$0.08/秒・測試建議）"/>
+                        </ComboBox>
+                        <TextBlock Text="前期測試建議用 Lite 省額度；正式產出再切標準版。Veo 計費以「生成秒數」計，失敗的請求一樣計費。"
+                                   FontSize="11"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,4,0,2"/>
+
+                        <TextBlock Text="生成影片時，Claude 導演與 Veo 一律套用這段視覺風格。下框預設是原廠電影感風格（35mm 底片、淺景深、柔和光線、輕微顆粒，刻意不過度銳利）。想要自己的風格時，照下面的格式直接改寫即可；清空或按「恢復預設」就回到原廠。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,8,0,8"/>
+
+                        <Border CornerRadius="10"
+                                Background="#F7F7F8"
+                                BorderBrush="#E4E4E7"
+                                BorderThickness="1"
+                                Padding="10,8">
+                            <TextBox x:Name="VideoStyleInput"
+                                     MinHeight="120"
+                                     MaxHeight="220"
+                                     FontSize="12.5"
+                                     Foreground="#222"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     LostFocus="VideoStyleInput_LostFocus"/>
+                        </Border>
+
+                        <Button x:Name="ResetVideoStyleButton"
+                                Content="恢復原廠預設風格"
+                                Height="32"
+                                Margin="0,8,0,0"
+                                HorizontalAlignment="Left"
+                                FontSize="12.5"
+                                Cursor="Hand"
+                                Background="#F1F1F3"
+                                Foreground="#444"
+                                BorderThickness="0"
+                                Click="ResetVideoStyle_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="9" Padding="16,0">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="#E4E4E7"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+
                         <!-- 任務 → AI 自訂路由 -->
                         <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
 

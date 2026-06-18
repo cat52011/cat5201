@@ -1770,6 +1770,11 @@ namespace test
 
         private TimeSpan ResolveExecutionTimeout(string? topText)
         {
+            // 影片生成：原生延伸接長片可能長達數十分鐘，且每段需輪詢——一律「無逾時上限」，
+            // 只由使用者主動取消 / 工作流停止來中止（不受手動逾時設定限制）。
+            if (IsVideoTask(topText))
+                return Timeout.InfiniteTimeSpan;
+
             // §15 個人化：使用者若手動設定逾時上限（>0 秒），一律以它為準，覆蓋以下自動判斷。
             int manualSecs = _parent?.GetManualTimeoutSeconds() ?? 0;
             if (manualSecs > 0)
@@ -1816,6 +1821,17 @@ namespace test
                 "圖片", "圖像", "生成圖片", "產生圖片",
                 "畫一張", "畫一隻", "畫一幅", "畫個", "畫張", "幫我畫", "請畫",
                 "image", "generate image", "draw");
+        }
+
+        // 生成影片偵測：關鍵詞需與 OrchestrationPlanner.ResolveTaskType 的 VideoGeneration 清單保持一致。
+        private static bool IsVideoTask(string? topText)
+        {
+            string text = topText ?? "";
+            string lower = text.ToLowerInvariant();
+
+            return ContainsAny(text, lower,
+                "影片", "視頻", "生成影片", "產生影片", "預告片", "短片",
+                "video", "generate video", "trailer");
         }
 
         private static string FormatTimeout(TimeSpan timeout)

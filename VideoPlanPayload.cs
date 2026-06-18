@@ -38,6 +38,7 @@ namespace test
         public string Visual { get; set; } = "";           // 畫面描述
         public string Camera { get; set; } = "";           // 鏡頭設計（運鏡 / 構圖）
         public string KeyframePrompt { get; set; } = "";   // 關鍵畫面 prompt（給 Flux/Midjourney）
+        public string SegmentVideoPrompt { get; set; } = ""; // 這一段約 8 秒鏡頭給 Veo 的英文影片 prompt（多段續接用）
         public int DurationSeconds { get; set; }
     }
 
