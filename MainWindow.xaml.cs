@@ -6728,14 +6728,26 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             }
         }
 
+        // 「當前記憶」按鈕：展開／收合記憶清單（展開時即時刷新）。
+        private void ToggleMemoryList_Click(object sender, RoutedEventArgs e)
+        {
+            if (MemoryListPanel == null)
+                return;
+
+            bool show = MemoryListPanel.Visibility != Visibility.Visible;
+            MemoryListPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (show)
+                RefreshMemoryPanel();
+        }
+
         private void ClearMemory_Click(object sender, RoutedEventArgs e)
         {
             if (_nodeService == null)
                 return;
 
             var result = MessageBox.Show(
-                "確定要清除全部偏好嗎？此動作無法復原。",
-                "清除偏好",
+                "確定要清除全部記憶嗎？此動作無法復原。",
+                "清除記憶",
                 MessageBoxButton.OKCancel,
                 MessageBoxImage.Question);
 
@@ -6753,8 +6765,16 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
             try
             {
+                var items = _nodeService.GetPreferenceItems();
                 if (PreferenceList != null)
-                    PreferenceList.ItemsSource = _nodeService.GetPreferenceItems();
+                    PreferenceList.ItemsSource = items;
+
+                // 空狀態提示 + 清除鈕只在有資料時顯示。
+                bool hasItems = items != null && items.Count > 0;
+                if (MemoryEmptyHint != null)
+                    MemoryEmptyHint.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
+                if (ClearAllMemoryButton != null)
+                    ClearAllMemoryButton.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
             }
             catch
             {
