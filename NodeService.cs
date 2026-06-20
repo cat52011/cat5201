@@ -1158,7 +1158,8 @@ namespace test
         {
             var root = _main.GetAttachmentsRootDir();
 
-            return _main.GetAttachmentsForNode(node)
+            // 有效附件＝本節點 + 沿上游鏈繼承的附件，讓工作流下游節點也讀得到源頭掛的檔案。
+            return _main.GetEffectiveAttachmentsForNode(node)
                 .Select(a => new AiAttachment
                 {
                     FileName = a.FileName,

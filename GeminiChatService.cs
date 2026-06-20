@@ -24,9 +24,7 @@ namespace test
         public GeminiChatService(string model = "gemini-3.1-pro-preview")
         {
             _model = string.IsNullOrWhiteSpace(model) ? "gemini-3.1-pro-preview" : model;
-            _apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
-                      ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY")
-                      ?? "";
+            _apiKey = ApiKeyStore.ResolveAny("GEMINI_API_KEY", "GOOGLE_API_KEY");
 
             if (string.IsNullOrWhiteSpace(_apiKey))
             {

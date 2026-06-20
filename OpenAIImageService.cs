@@ -27,7 +27,7 @@ namespace test
         public OpenAIImageService(string model = "gpt-image-2")
         {
             _model = model;
-            _apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("OPENAI_API_KEY");
 
             if (string.IsNullOrWhiteSpace(_apiKey))
             {

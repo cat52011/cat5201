@@ -31,7 +31,7 @@ namespace test
         public PerplexitySonarService(string model = "sonar")
         {
             _model = NormalizeModel(model);
-            _apiKey = Environment.GetEnvironmentVariable("PERPLEXITY_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("PERPLEXITY_API_KEY");
 
             if (string.IsNullOrWhiteSpace(_apiKey))
             {

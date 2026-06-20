@@ -27,8 +27,17 @@ namespace test
             "表格", "比較表", "列表", "table"
         };
 
+        private static readonly string[] NotebookLmKeywords =
+        {
+            "notebooklm", "notebook lm", "notebook-lm", "筆記本 lm", "筆記本lm", "匯入包", "import bundle"
+        };
+
         public static bool WantsPresentation(string? userInput)
             => ContainsAny(userInput, PresentationKeywords);
+
+        /// <summary>使用者要求把素材打包成 NotebookLM 可匯入的來源包（§7 B 方案）。</summary>
+        public static bool WantsNotebookLmBundle(string? userInput)
+            => ContainsAny(userInput, NotebookLmKeywords);
 
         public static bool WantsWrittenReport(string? userInput)
             => ContainsAny(userInput, WrittenReportKeywords);

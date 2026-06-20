@@ -31,7 +31,7 @@ namespace test
         public PerplexityService(string agentModel = "openai/gpt-5.5")
         {
             _agentModel = agentModel;
-            _apiKey = Environment.GetEnvironmentVariable("PERPLEXITY_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("PERPLEXITY_API_KEY");
 
             if (string.IsNullOrWhiteSpace(_apiKey))
             {

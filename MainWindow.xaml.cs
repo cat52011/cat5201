@@ -2717,6 +2717,9 @@ namespace test
             MainUI.Visibility = Visibility.Collapsed;
             _isSidebarCollapsed = false;
 
+            // API 金鑰來源先初始化（在任何 AI 服務建構 / WarmupSafely 之前），讓使用者輸入的金鑰可被解析。
+            ApiKeyStore.Initialize(System.IO.Path.GetDirectoryName(PreferencesPath) ?? SavesDir);
+
             // 全域個人化偏好先載入（在同步開關之前），確保所有設定一律以個人化為準，跨專案、跨重啟一致。
             LoadPreferences();
             SyncDownstreamAutoModeRadios();
@@ -4334,6 +4337,42 @@ namespace test
                 return list.ToList();
 
             return Array.Empty<AttachmentInfo>();
+        }
+
+        // 執行用「有效附件」＝此節點自己的附件 + 沿上游鏈所有祖先的附件（按 RelativePath 去重）。
+        // 為什麼：附件按 node.Id 隔離儲存，使用者通常只在源頭節點掛檔案；下游節點（{{input}} 只帶上游
+        // 輸出文字）原本拿不到上游附件。工作流鏈執行時，下游應「繼承」上游掛的檔案，才看得到原始輸入。
+        // 順序：最遠祖先在前、自己在最後，讓 LLM 把上游附件當輸入材料。visited 防環、多層鏈安全。
+        public IReadOnlyList<AttachmentInfo> GetEffectiveAttachmentsForNode(NodeControl node)
+        {
+            if (node == null)
+                return Array.Empty<AttachmentInfo>();
+
+            var chain = new List<NodeControl>();
+            var visited = new HashSet<Guid>();
+            var up = GetFirstUpstreamNode(node);
+            while (up != null && visited.Add(up.Id))
+            {
+                chain.Add(up);
+                up = GetFirstUpstreamNode(up);
+            }
+            chain.Reverse();   // 最遠祖先排前面
+            chain.Add(node);   // 自己最後
+
+            var ordered = new List<AttachmentInfo>();
+            var seenRel = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var n in chain)
+            {
+                foreach (var a in GetAttachmentsForNode(n))
+                {
+                    // RelativePath 非空且已收錄過 → 跳過重複；空路徑不去重，照收。
+                    if (!string.IsNullOrEmpty(a.RelativePath) && !seenRel.Add(a.RelativePath))
+                        continue;
+                    ordered.Add(a);
+                }
+            }
+
+            return ordered;
         }
 
         public void OpenAttachment(string relativePath)
@@ -6500,9 +6539,125 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             SyncVideoStyleUI();
             BuildTaskRoutingPanel();
             SyncCostControls();
+            ShowPersonalizationTab_Click(this, new RoutedEventArgs()); // 每次開啟預設停在「個人化」分頁
+            RefreshApiPanel();
             if (SettingsOverlay != null)
                 SettingsOverlay.Visibility = Visibility.Visible;
             MemoryInput?.Focus();
+        }
+
+        // ===== 設定分頁切換：個人化 / API =====
+
+        private void ShowPersonalizationTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (PersonalizationScroll != null) PersonalizationScroll.Visibility = Visibility.Visible;
+            if (ApiScroll != null) ApiScroll.Visibility = Visibility.Collapsed;
+            SetTabSelected(TabPersonalizationBtn, true);
+            SetTabSelected(TabApiBtn, false);
+        }
+
+        private void ShowApiTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (PersonalizationScroll != null) PersonalizationScroll.Visibility = Visibility.Collapsed;
+            if (ApiScroll != null) ApiScroll.Visibility = Visibility.Visible;
+            SetTabSelected(TabPersonalizationBtn, false);
+            SetTabSelected(TabApiBtn, true);
+            RefreshApiPanel();
+        }
+
+        private static void SetTabSelected(System.Windows.Controls.Button? btn, bool selected)
+        {
+            if (btn == null) return;
+            btn.Background = selected
+                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x11, 0x11, 0x11))
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF1, 0xF1, 0xF3));
+            btn.Foreground = selected
+                ? System.Windows.Media.Brushes.White
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x44, 0x44, 0x44));
+        }
+
+        // ===== API 金鑰面板 =====
+
+        // (env 變數名, 狀態文字框, 密碼框) 對應表，集中一次處理避免重複。
+        private (string Env, System.Windows.Controls.TextBlock? Status, System.Windows.Controls.PasswordBox? Box)[] ApiKeyRows() =>
+            new (string, System.Windows.Controls.TextBlock?, System.Windows.Controls.PasswordBox?)[]
+        {
+            ("OPENAI_API_KEY",     ApiStatus_OpenAI,     ApiKeyBox_OpenAI),
+            ("ANTHROPIC_API_KEY",  ApiStatus_Anthropic,  ApiKeyBox_Anthropic),
+            ("GEMINI_API_KEY",     ApiStatus_Gemini,     ApiKeyBox_Gemini),
+            ("PERPLEXITY_API_KEY", ApiStatus_Perplexity, ApiKeyBox_Perplexity),
+            ("GAMMA_API_KEY",      ApiStatus_Gamma,      ApiKeyBox_Gamma),
+        };
+
+        // 更新各列狀態徽章；密碼框一律清空（不回填祕密），留空＝不變更。
+        private void RefreshApiPanel()
+        {
+            foreach (var row in ApiKeyRows())
+            {
+                if (row.Box != null) row.Box.Password = "";
+                if (row.Status == null) continue;
+
+                switch (ApiKeyStore.GetSource(row.Env))
+                {
+                    case ApiKeyStore.KeySource.Environment:
+                        row.Status.Text = "環境變數";
+                        row.Status.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1F, 0x9D, 0x55));
+                        break;
+                    case ApiKeyStore.KeySource.UserEntered:
+                        row.Status.Text = "已儲存";
+                        row.Status.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x6B, 0xE6));
+                        break;
+                    default:
+                        row.Status.Text = "未設定";
+                        row.Status.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA8, 0xA8, 0xAC));
+                        break;
+                }
+            }
+            if (ApiSaveHint != null) ApiSaveHint.Visibility = Visibility.Collapsed;
+        }
+
+        private void SaveApiKeys_Click(object sender, RoutedEventArgs e)
+        {
+            var updates = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in ApiKeyRows())
+            {
+                string entered = row.Box?.Password ?? "";
+                if (!string.IsNullOrWhiteSpace(entered))
+                    updates[row.Env] = entered.Trim(); // 只更新有輸入的；留空＝保留原值
+            }
+
+            if (updates.Count > 0)
+            {
+                ApiKeyStore.SetUserKeys(updates);
+                _aiRouter.ResetServices(); // 讓已快取的服務用新金鑰重建
+            }
+
+            RefreshApiPanel();
+            if (ApiSaveHint != null)
+            {
+                ApiSaveHint.Text = updates.Count > 0 ? "已儲存（已加密落地）。" : "沒有新輸入的金鑰。";
+                ApiSaveHint.Foreground = new System.Windows.Media.SolidColorBrush(
+                    updates.Count > 0
+                        ? System.Windows.Media.Color.FromRgb(0x1F, 0x9D, 0x55)
+                        : System.Windows.Media.Color.FromRgb(0xA8, 0xA8, 0xAC));
+                ApiSaveHint.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void ClearApiKey_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not System.Windows.Controls.Button btn || btn.Tag is not string env || string.IsNullOrWhiteSpace(env))
+                return;
+
+            ApiKeyStore.SetUserKeys(new Dictionary<string, string?> { [env] = null });
+            _aiRouter.ResetServices();
+            RefreshApiPanel();
+            if (ApiSaveHint != null)
+            {
+                ApiSaveHint.Text = "已清除該金鑰。";
+                ApiSaveHint.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA8, 0xA8, 0xAC));
+                ApiSaveHint.Visibility = Visibility.Visible;
+            }
         }
 
         private void CloseSettings_Click(object sender, RoutedEventArgs e)

@@ -68,12 +68,20 @@ namespace test
         private int _lastOutputTokens;
         private bool _hasRealTokenUsage;
 
+        // ===== #1b 媒體生成成本累加器 =====
+        // 圖片/影片以「張數」或「秒數」計價，無法用 token 計算。
+        // 每次生成後呼叫 AddMediaCostUsd() 累加；ResetTokenUsage() 時一併清零。
+        private double _mediaGenerationCostUsd;
+        private string _mediaGenerationCostLabel = "";
+
         /// <summary>每次主回覆執行開始時清零（之後同一次執行的多輪累加）。</summary>
         public void ResetTokenUsage()
         {
             _lastInputTokens = 0;
             _lastOutputTokens = 0;
             _hasRealTokenUsage = false;
+            _mediaGenerationCostUsd = 0;
+            _mediaGenerationCostLabel = "";
         }
 
         /// <summary>累加一次 API 呼叫回傳的真實用量；任一為 null 表示該 provider 未提供，略過。</summary>
@@ -98,6 +106,18 @@ namespace test
             outputTokens = _lastOutputTokens;
             return _hasRealTokenUsage;
         }
+
+        /// <summary>累加一次媒體生成費用（圖片/影片以張或秒計價，不用 token）。</summary>
+        public void AddMediaCostUsd(double usd, string label)
+        {
+            if (usd <= 0) return;
+            _mediaGenerationCostUsd += usd;
+            if (!string.IsNullOrWhiteSpace(label))
+                _mediaGenerationCostLabel += (string.IsNullOrEmpty(_mediaGenerationCostLabel) ? "" : " + ") + label;
+        }
+
+        /// <summary>取本次執行累積的媒體生成費用（0 = 無圖片/影片生成）。</summary>
+        public (double usd, string label) GetMediaCostUsd() => (_mediaGenerationCostUsd, _mediaGenerationCostLabel);
 
         public event EventHandler? Moved;
         public event EventHandler? ContentChanged;

@@ -186,6 +186,18 @@ namespace test
             return _gemini;
         }
 
+        // 使用者在 API 設定頁更新金鑰後呼叫：清掉已快取的服務實例，
+        // 讓下次請求用新金鑰重新建構（既有實例在建構時就鎖定了舊金鑰）。
+        public void ResetServices()
+        {
+            _openAi = null;
+            _claude = null;
+            _perplexityTool = null;
+            _perplexitySonar = null;
+            _gemini = null;
+            WarmupSafely();
+        }
+
         public void WarmupSafely()
         {
             try { _openAi = new OpenAIChatService(model: AiModels.DefaultOpenAiModel); }

@@ -1381,6 +1381,33 @@ namespace test
             }
             catch { }
 
+            // §7 NotebookLM 匯出輔助（B 方案）：使用者要求時，附一份可匯入 NotebookLM 的來源文字包。
+            string? notebookLmFile = null;
+            if (OutputFormatDetector.WantsNotebookLmBundle(userInput))
+            {
+                try
+                {
+                    string bundle = NotebookLmBundleBuilder.Build(
+                        outline.Title, outline.Topic, execution.Text ?? "", workspace);
+
+                    var nb = GeneratedFileWriter.WriteMarkdown(
+                        _main.GetGeneratedFilesDir(),
+                        title: outline.Title + "_NotebookLM匯入包",
+                        content: bundle,
+                        sourceSummary: sourceSummary,
+                        extension: ".txt");
+
+                    if (nb.Success)
+                    {
+                        workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                            workspace, node, runtimeAgent?.Id ?? "presentation-agent",
+                            "generated_file", nb));
+                        notebookLmFile = nb.FileName;
+                    }
+                }
+                catch { }
+            }
+
             if (pptxResult?.Success == true || gammaUrl != null)
             {
                 string fileName = pptxResult?.FileName ?? "Gamma 線上版";
@@ -1389,6 +1416,8 @@ namespace test
                 string note = $"已生成簡報大綱：{outline.SlideCount} 張投影片。";
                 if (!string.IsNullOrWhiteSpace(gammaUrl))
                     note += $"\n線上版（Gamma）：{gammaUrl}";
+                if (!string.IsNullOrWhiteSpace(notebookLmFile))
+                    note += $"\n附 NotebookLM 匯入包：{notebookLmFile}（可貼入／上傳到 NotebookLM 當來源）。";
 
                 // 同一請求也產了書面報告時，把簡報說明接在報告文字之後，不覆蓋報告內容。
                 string combinedText = appendToText && !string.IsNullOrWhiteSpace(execution.Text)
@@ -1675,7 +1704,12 @@ namespace test
             {
                 orchestration.MarkSuccess("generate_image", generated.FileName);
 
-                string note = "\n\n已生成圖片。";
+                // §8 成本提示：圖片以「每張」計價（不是 token），用真實尺寸 / 品質估算單張成本。
+                string imgSize = string.IsNullOrWhiteSpace(image.Size) ? "1024x1024" : image.Size;
+                double imgCostUsd = ModelCostEstimator.ImageCostUsd(imgSize, "high");
+                node.AddMediaCostUsd(imgCostUsd, $"圖片 1 張 US${imgCostUsd:F2}");
+                string costHint = ModelCostEstimator.ImageCostDisplay(1, imgSize, "high");
+                string note = $"\n\n已生成圖片（gpt-image-2）。{costHint}";
 
                 return new AiFallbackExecutionResult
                 {
@@ -1764,12 +1798,16 @@ namespace test
                         : VideoPlanBuilder.QuantizeBaseSeconds(targetSeconds)); // Lite 不延伸→單段
                 var tier = _main.GetVeoModelTier();
                 double estUsd = estSecondsTotal * VeoModels.UsdPerSecond(tier);
+                // 連貫模式走 I2V：多一張英雄圖（直式 1024x1536 高品質 ≈ US$0.25）當起始幀。
+                double heroUsd = fastCut ? 0 : ModelCostEstimator.ImageCostUsd("1024x1536", "high");
+                estUsd += heroUsd;
                 double estAud = estUsd * 1.55; // USD→AUD 約 1.55，實際匯率浮動
                 string modeLabel = fastCut ? $"快剪 {estShots} 鏡頭" : $"連貫 {estSecondsTotal} 秒";
+                string heroNote = heroUsd > 0 ? $" + I2V 英雄圖 US${heroUsd:F2}" : "";
                 plan.ProviderRoles.Add(VideoProviderRole.Of(
                     "預估成本", VeoModels.DisplayName(tier),
                     VideoProviderRoleStatus.Planned,
-                    $"{modeLabel}・約生成 {estSecondsTotal} 秒影片素材・US${estUsd:F2}（≈ A${estAud:F2}）"));
+                    $"{modeLabel}・約生成 {estSecondsTotal} 秒影片素材{heroNote}・合計 US${estUsd:F2}（≈ A${estAud:F2}）"));
             }
 
             // 關鍵畫面 / 風格：Claude 已產出 keyframe prompt 與風格定義；實際出圖為配角。
@@ -1857,6 +1895,14 @@ namespace test
             int producedShots = 0;   // 快剪：成功生成的鏡頭數
             int actualSeconds = 0;   // 成品實際秒數（兩種模式各自計算）
 
+            // ── I2V：連貫模式先生成一張「調好色的英雄圖」當 Veo 起始幀 ──
+            // 參考片（yzavoku）那種 look 的本質是「先有一張調好色的靜態圖 → 讓它動」。
+            // 純 T2V 會被 Veo 自己的訓練慣性拉回乾淨現代感；先出一張在 look 裡的英雄圖當第一幀，
+            // Veo 從對的畫面開始動，產出的每一格都保有那個色調 / 質感。任一步失敗則自動退回純 T2V。
+            byte[]? heroImage = null;
+            if (!fastCut && veo.IsConfigured)
+                heroImage = await TryGenerateHeroStillAsync(node, plan, videoStyle, aspectRatio, ct);
+
             try
             {
                 if (veo.IsConfigured)
@@ -1907,9 +1953,21 @@ namespace test
                     }
                     else
                     {
-                        // ── 連貫：基底段（8 秒）→ 逐段延伸 +7 秒 ──
+                        // ── 連貫：基底段（8 秒，I2V 起始幀若有）→ 逐段延伸 +7 秒 ──
                         curSegment = 1;
-                        var baseResult = await veo.GenerateAsync(segmentPrompts[0], baseSeconds, aspectRatio, OnProgress, ct);
+                        var baseResult = await veo.GenerateAsync(segmentPrompts[0], baseSeconds, aspectRatio, OnProgress, ct, heroImage);
+
+                        // I2V 健壯性：帶起始圖時若失敗（例如某些 Veo 檔位不支援圖生影而回 400），
+                        // 不讓整支影片陣亡——用同一個 prompt 退回純 T2V 重試一次。
+                        if (!baseResult.Success && heroImage != null)
+                        {
+                            plan.ProviderRoles.Add(VideoProviderRole.Of(
+                                "I2V 起始幀", "Veo 3.1", VideoProviderRoleStatus.Failed,
+                                $"此檔位可能不支援圖生影，已退回純文字生影（T2V）：{baseResult.ErrorMessage}"));
+                            node.SetLoadingHint("圖生影不可用，改用文字生影重試");
+                            baseResult = await veo.GenerateAsync(segmentPrompts[0], baseSeconds, aspectRatio, OnProgress, ct);
+                        }
+
                         if (baseResult.Success)
                         {
                             mp4 = baseResult.Mp4Bytes;
@@ -2034,6 +2092,11 @@ namespace test
                 planItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(plan);
                 requestItem.TextSummary = AgentWorkspaceBuilder.BuildTextSummary(request);
                 orchestration.MarkSuccess("generate_video", generated.FileName);
+
+                // 記錄實際 Veo 生成費用（秒計費，與文字 token 分開累加）。
+                double videoCostUsd = actualSeconds * VeoModels.UsdPerSecond(_main.GetVeoModelTier());
+                string videoModeLabel = fastCut ? $"快剪 {actualSeconds}s" : $"連貫 {actualSeconds}s";
+                node.AddMediaCostUsd(videoCostUsd, $"Veo {videoModeLabel} US${videoCostUsd:F2}");
 
                 string modeNote = fastCut ? "（快剪）" : "";
                 string note = partial
@@ -2234,7 +2297,10 @@ namespace test
         private static List<string> BuildSegmentPrompts(
             VideoPlanPayload plan, string style, string videoPrompt, int targetSeconds)
         {
-            string styleHead = string.IsNullOrWhiteSpace(style) ? "" : style.Trim() + "\n\n";
+            // 送進 Veo 的是「精簡視覺標籤」而非完整藝評：影片模型只認得具體名詞，
+            // 整段抽象描述＋NOT 清單會稀釋訊號，所以這裡蒸餾成短而具體的正面標籤前置。
+            string veoTags = VideoStyle.RenderTagsFor(style);
+            string styleHead = string.IsNullOrWhiteSpace(veoTags) ? "" : veoTags.Trim() + "\n\n";
 
             var scenes = (plan.Scenes ?? new List<VideoScenePayload>())
                 .Where(s => s != null)
@@ -2244,7 +2310,7 @@ namespace test
 
             if (scenes.Count == 0)
             {
-                prompts.Add(styleHead + (string.IsNullOrWhiteSpace(videoPrompt) ? "Cinematic short video." : videoPrompt.Trim()));
+                prompts.Add(styleHead + (string.IsNullOrWhiteSpace(videoPrompt) ? "Cinematic short video." : videoPrompt.Trim()) + SettleTail);
                 return prompts;
             }
 
@@ -2263,10 +2329,77 @@ namespace test
                 if (!string.IsNullOrWhiteSpace(s.Camera))
                     body = (body ?? "").Trim() + " Camera: " + s.Camera.Trim() + ".";
 
-                prompts.Add(styleHead + (string.IsNullOrWhiteSpace(body) ? "Continue the scene naturally." : body.Trim()));
+                string composed = styleHead + (string.IsNullOrWhiteSpace(body) ? "Continue the scene naturally." : body.Trim());
+
+                // 收尾保險：只對「最後一段」（單段時即唯一段）追加 settle 尾巴，
+                // 強制動態減速→完全靜止→鏡頭定住，避免結尾停在動作半途像被硬切。
+                // 中間延伸段不加：延伸是接前一段最後一幀續生，中間若靜止會讓後續延伸動不起來。
+                if (i == segCount - 1)
+                    composed += SettleTail;
+
+                prompts.Add(composed);
             }
 
             return prompts;
+        }
+
+        // 送進 Veo 的單段收尾指令：把「停下來」當成動作的一部分，用模型真的能渲染的物理收束
+        // （動態減速→歸於靜止→鏡頭鎖定），而非影片模型做不出的 fade out。導演層也會寫，這裡是雙保險。
+        private const string SettleTail =
+            " In the final 2-3 seconds all motion gradually decelerates and comes to a complete, settled rest: the subject holds still and the camera locks into a steady static frame, ending the shot on a calm, fully-resolved freeze rather than stopping mid-movement. No fade out.";
+
+        // I2V：用 gpt-image-2 生成一張「調到目標色調」的英雄圖，當 Veo 連貫基底段的起始幀。
+        // 失敗（缺 OPENAI_API_KEY / 出圖失敗 / 任何例外）一律回 null → 呼叫端自動退回純 T2V，不中斷影片。
+        private async Task<byte[]?> TryGenerateHeroStillAsync(
+            NodeControl node, VideoPlanPayload plan, string videoStyle, string aspectRatio, CancellationToken ct)
+        {
+            try
+            {
+                var scene0 = (plan.Scenes ?? new List<VideoScenePayload>()).FirstOrDefault(s => s != null);
+                string keyframe = scene0?.KeyframePrompt ?? "";
+                if (string.IsNullOrWhiteSpace(keyframe))
+                    keyframe = scene0?.Visual ?? "";
+                if (string.IsNullOrWhiteSpace(keyframe))
+                    keyframe = plan.VideoPromptForGenerator ?? "";
+                if (string.IsNullOrWhiteSpace(keyframe))
+                    return null;
+
+                // 英雄圖 prompt：色調標籤前置 + 導演關鍵畫面，讓「這張靜態圖」本身就在 look 裡。
+                string tags = VideoStyle.RenderTagsFor(videoStyle);
+                string heroPrompt = $"{tags}\n\n{keyframe.Trim()}\n\nA single still cinematic frame. No text, no captions, no watermark, no logo.";
+
+                // 影片直式 → 直式圖、橫式 → 橫式圖，讓起始幀比例貼近影片，降低 Veo 拒收風險。
+                string size = aspectRatio == "16:9" ? "1536x1024" : "1024x1536";
+
+                node.SetLoadingHint("正在生成英雄圖（I2V 起始幀）");
+                var img = new OpenAIImageService(); // 缺 OPENAI_API_KEY 會丟例外 → 下方 catch 退回 T2V
+                var result = await img.GenerateAsync(heroPrompt, size, ct);
+                node.SetLoadingHint(null);
+
+                if (result.Success && result.PngBytes.Length > 0)
+                {
+                    double cost = ModelCostEstimator.ImageCostUsd(size, "high");
+                    node.AddMediaCostUsd(cost, $"I2V 英雄圖 US${cost:F2}");
+                    plan.ProviderRoles.Add(VideoProviderRole.Of(
+                        "I2V 起始幀", "gpt-image-2", VideoProviderRoleStatus.Completed,
+                        $"已生成調色英雄圖（{size}）作為 Veo 起始幀"));
+                    return result.PngBytes;
+                }
+
+                plan.ProviderRoles.Add(VideoProviderRole.Of(
+                    "I2V 起始幀", "gpt-image-2", VideoProviderRoleStatus.Failed,
+                    $"英雄圖生成失敗，改用純文字生影（T2V）：{result.ErrorMessage}"));
+                return null;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                node.SetLoadingHint(null);
+                plan.ProviderRoles.Add(VideoProviderRole.Of(
+                    "I2V 起始幀", "gpt-image-2", VideoProviderRoleStatus.SkippedNoApi,
+                    $"未生成英雄圖（改用 T2V）：{ex.Message}"));
+                return null;
+            }
         }
 
         private async Task<VideoPlanPayload> BuildVideoPlanAsync(

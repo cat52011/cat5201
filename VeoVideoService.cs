@@ -36,9 +36,7 @@ namespace test
 
         public VeoVideoService(string? modelOverride = null)
         {
-            _apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
-                      ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY")
-                      ?? "";
+            _apiKey = ApiKeyStore.ResolveAny("GEMINI_API_KEY", "GOOGLE_API_KEY");
 
             // 優先序：環境變數 CAT5201_VEO_MODEL（除錯 / 改 ID 用，免重編）
             //        > 個人化選擇的檔位（standard / fast / lite）
@@ -75,7 +73,9 @@ namespace test
             int seconds,
             string aspectRatio,
             Action<int, VideoGenerationStatus>? onProgress,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            byte[]? startImage = null,
+            string imageMime = "image/png")
         {
             if (string.IsNullOrWhiteSpace(prompt))
                 return Fail("影片描述為空。");
@@ -85,7 +85,7 @@ namespace test
             string operationName;
             try
             {
-                operationName = await CreateOperationAsync(prompt, seconds, aspectRatio, ct);
+                operationName = await CreateOperationAsync(prompt, seconds, aspectRatio, startImage, imageMime, ct);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -204,26 +204,52 @@ namespace test
             }
         }
 
-        private async Task<string> CreateOperationAsync(string prompt, int seconds, string aspectRatio, CancellationToken ct)
+        private async Task<string> CreateOperationAsync(
+            string prompt, int seconds, string aspectRatio, byte[]? startImage, string imageMime, CancellationToken ct)
         {
             string url = $"{ApiBase}/models/{_model}:predictLongRunning";
 
-            // 注意：veo-3.0-generate-001 不接受 numberOfVideos（會回 400 INVALID_ARGUMENT），故不送此欄位。
-            var payload = new
+            string asp = string.IsNullOrWhiteSpace(aspectRatio) ? "9:16" : aspectRatio;
+            int dur = seconds > 0 ? seconds : 8;
+
+            // 圖生影（I2V）：帶起始幀時，instance 多一個 image 欄位（base64 + mimeType），
+            // Veo 會「讓這張已調好色的圖動起來」，產出的每一格都保有圖的色調 / 質感。
+            // 注意：veo 不接受 numberOfVideos（400 INVALID_ARGUMENT），故不送此欄位。
+            // 兩條路徑各自用具體匿名型別建構，確保 instances 陣列元素被正確序列化（避免 object[] 被序列化成空物件）。
+            string json;
+            if (startImage != null && startImage.Length > 0)
             {
-                instances = new[] { new { prompt } },
-                parameters = new
+                var payload = new
                 {
-                    aspectRatio = string.IsNullOrWhiteSpace(aspectRatio) ? "9:16" : aspectRatio,
-                    resolution = "720p",
-                    // durationSeconds 必須是「數字」，不能是字串（送字串會回 400 INVALID_ARGUMENT）。
-                    durationSeconds = seconds > 0 ? seconds : 8
-                }
-            };
+                    instances = new[]
+                    {
+                        new
+                        {
+                            prompt,
+                            image = new
+                            {
+                                bytesBase64Encoded = Convert.ToBase64String(startImage),
+                                mimeType = string.IsNullOrWhiteSpace(imageMime) ? "image/png" : imageMime
+                            }
+                        }
+                    },
+                    parameters = new { aspectRatio = asp, resolution = "720p", durationSeconds = dur }
+                };
+                json = JsonSerializer.Serialize(payload);
+            }
+            else
+            {
+                var payload = new
+                {
+                    instances = new[] { new { prompt } },
+                    parameters = new { aspectRatio = asp, resolution = "720p", durationSeconds = dur }
+                };
+                json = JsonSerializer.Serialize(payload);
+            }
 
             using var req = new HttpRequestMessage(HttpMethod.Post, url)
             {
-                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
             };
             req.Headers.Add("x-goog-api-key", _apiKey);
 

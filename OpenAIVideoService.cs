@@ -38,7 +38,7 @@ namespace test
 
         public OpenAIVideoService()
         {
-            _apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("OPENAI_API_KEY");
 
             string modelEnv = Environment.GetEnvironmentVariable("CAT5201_VIDEO_MODEL") ?? "";
             _model = string.IsNullOrWhiteSpace(modelEnv) ? "sora-2" : modelEnv;

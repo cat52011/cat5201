@@ -95,26 +95,37 @@ namespace test
             return list;
         }
 
+        // 商業主題色（與 PptxBuilder 一致）：深藍、青色強調、淺藍副標。
+        private const string Navy = "#1F3864";
+        private const string Accent = "#2E9CCA";
+        private const string CoverSub = "#C9D6E8";
+
         private static void RenderSlide(ColumnDescriptor col, DeckSlide slide, byte[]? coverImagePng)
         {
             if (slide.IsCover)
             {
-                col.Item().PaddingTop(40).AlignCenter().Text(slide.Title)
-                    .FontSize(30).Bold().FontColor("#1F3864");
-
-                if (!string.IsNullOrWhiteSpace(slide.Subtitle))
-                    col.Item().PaddingTop(10).AlignCenter().Text(slide.Subtitle)
-                        .FontSize(16).FontColor(Colors.Grey.Darken1);
+                // 封面：深藍色塊置中標題 + 青色短線 + 副標，下方置中放封面圖。
+                col.Item().PaddingTop(24).Background(Navy).Padding(28).Column(c =>
+                {
+                    c.Item().AlignCenter().Text(slide.Title)
+                        .FontSize(30).Bold().FontColor("#FFFFFF");
+                    c.Item().PaddingTop(12).AlignCenter().Width(160).LineHorizontal(2).LineColor(Accent);
+                    if (!string.IsNullOrWhiteSpace(slide.Subtitle))
+                        c.Item().PaddingTop(12).AlignCenter().Text(slide.Subtitle)
+                            .FontSize(15).FontColor(CoverSub);
+                });
 
                 if (coverImagePng != null && coverImagePng.Length > 0)
-                    col.Item().PaddingTop(28).AlignCenter().MaxHeight(320).Image(coverImagePng).FitArea();
+                    col.Item().PaddingTop(24).AlignCenter().MaxHeight(300).Image(coverImagePng).FitArea();
 
                 return;
             }
 
-            col.Item().PaddingBottom(6).Text(slide.Title)
-                .FontSize(22).Bold().FontColor("#1F3864");
-            col.Item().PaddingBottom(10).LineHorizontal(1).LineColor("#C9D2E0");
+            // 內容頁：深藍標題列（白字）+ 青色線 + 重點。
+            col.Item().Background(Navy).PaddingVertical(8).PaddingHorizontal(14)
+                .Text(slide.Title).FontSize(20).Bold().FontColor("#FFFFFF");
+            col.Item().LineHorizontal(2).LineColor(Accent);
+            col.Item().PaddingTop(10);
 
             foreach (var b in slide.Bullets)
             {
@@ -123,7 +134,7 @@ namespace test
 
                 col.Item().PaddingVertical(3).Row(row =>
                 {
-                    row.ConstantItem(18).Text("•").FontSize(14).FontColor("#2E4D7B");
+                    row.ConstantItem(18).Text("•").FontSize(14).FontColor(Accent);
                     row.RelativeItem().Text(text => RenderInline(text, b));
                 });
             }

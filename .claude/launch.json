@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cat5201 WPF App (Debug)",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "cat5201.csproj", "--configuration", "Debug"],
+      "port": -1,
+      "_note": "WPF 桌面應用，無 HTTP port。用 Visual Studio 或 dotnet run 直接啟動，preview_start 不適用。"
+    },
+    {
+      "name": "cat5201 WPF App (Release)",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "cat5201.csproj", "--configuration", "Release"],
+      "port": -1,
+      "_note": "Release 模式，效能最佳化。"
+    }
+  ]
+}

@@ -65,6 +65,23 @@ namespace test
         // 約略匯率，僅用於估算顯示。
         private const double UsdToTwd = 32.0;
 
+        // 圖片生成成本（每張・美元）。OpenAI gpt-image 系列「以張計價」，依尺寸 / 品質不同，
+        // 與文字模型的 token 計價邏輯不同（用字數估 token 會誤導），故獨立一張表。
+        // 數字為估算：對 gpt-image-1 公布價目；gpt-image-2 尚無正式價目，取同級高品質估算。
+        // key 格式："{size}:{quality}"（小寫）。
+        private static readonly Dictionary<string, double> ImagePriceUsd = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["1024x1024:high"] = 0.17,
+            ["1024x1024:medium"] = 0.04,
+            ["1024x1024:low"] = 0.01,
+            ["1536x1024:high"] = 0.25,
+            ["1024x1536:high"] = 0.25,
+            ["1792x1024:high"] = 0.25,
+            ["1024x1792:high"] = 0.25,
+        };
+
+        private const double DefaultImageUsd = 0.17; // 1024 高品質估算
+
         public static Estimate Compute(string? modelId, string? inputText, string? outputText)
         {
             int inputTokens = EstimateTokens(inputText);
@@ -77,6 +94,31 @@ namespace test
         public static Estimate FromUsage(string? modelId, int inputTokens, int outputTokens)
         {
             return BuildEstimate(modelId, Math.Max(0, inputTokens), Math.Max(0, outputTokens), isActual: true);
+        }
+
+        /// <summary>單張圖片的估算美元成本（依尺寸 / 品質查表，查無則退回 1024 高品質估算）。</summary>
+        public static double ImageCostUsd(string? size, string? quality)
+        {
+            string s = string.IsNullOrWhiteSpace(size) ? "1024x1024" : size.Trim().ToLowerInvariant();
+            string q = string.IsNullOrWhiteSpace(quality) ? "high" : quality.Trim().ToLowerInvariant();
+
+            if (ImagePriceUsd.TryGetValue($"{s}:{q}", out var exact))
+                return exact;
+            if (ImagePriceUsd.TryGetValue($"{s}:high", out var bySize))
+                return bySize;
+
+            return DefaultImageUsd;
+        }
+
+        /// <summary>
+        /// 圖片成本提示字串，沿用文字成本的「估算 ≈ … · 約 NT$…」格式（圖片無 token，改顯示張數）。
+        /// 例：「估算 ≈ 1 張圖 · 約 NT$5.44」。
+        /// </summary>
+        public static string ImageCostDisplay(int count, string? size, string? quality)
+        {
+            int n = Math.Max(1, count);
+            double usd = ImageCostUsd(size, quality) * n;
+            return $"估算 ≈ {n} 張圖 · 約 {FormatTwd(usd)}";
         }
 
         private static Estimate BuildEstimate(string? modelId, int inputTokens, int outputTokens, bool isActual)

@@ -39,7 +39,7 @@ namespace test
 
         public GammaPresentationService()
         {
-            _apiKey = Environment.GetEnvironmentVariable("GAMMA_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("GAMMA_API_KEY");
         }
 
         /// <summary>是否已設定 API key；false 時呼叫端應走 fallback。</summary>

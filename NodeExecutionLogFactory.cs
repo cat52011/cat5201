@@ -27,13 +27,30 @@ namespace test
                 ? ModelCostEstimator.FromUsage(actualModelId, realIn, realOut)
                 : ModelCostEstimator.Compute(actualModelId, node.GetTopText(), node.GetBottomText());
 
+            // 媒體生成費用（圖片/影片以張或秒計費，與 LLM token 費用分開記錄，但合計顯示）。
+            var (mediaCostUsd, mediaCostLabel) = node.GetMediaCostUsd();
+            string costDisplay;
+            if (mediaCostUsd > 0)
+            {
+                double totalUsd = costEst.UsdCost + mediaCostUsd;
+                double totalTwd = totalUsd * 32.0;
+                string tokenPart = costEst.IsActual
+                    ? $"實際 {FormatTokens(costEst.TotalTokens)} tokens（LLM）"
+                    : $"估算 ≈ {FormatTokens(costEst.TotalTokens)} tokens（LLM）";
+                costDisplay = $"{tokenPart} + {mediaCostLabel} · 合計約 NT${totalTwd:0.00}";
+            }
+            else
+            {
+                costDisplay = costEst.Display;
+            }
+
             return new AiExecutionLogEntry
             {
                 NodeId = node.Id.ToString(),
 
                 InputTokens = costEst.InputTokens,
                 OutputTokens = costEst.OutputTokens,
-                CostDisplay = costEst.Display,
+                CostDisplay = costDisplay,
 
                 StartedAtUtc = startedAtUtc,
                 EndedAtUtc = endedAtUtc,
@@ -82,6 +99,9 @@ namespace test
                 OutputIntentSummary = decision.OutputIntentSummary ?? "",
             };
         }
+
+        private static string FormatTokens(int tokens) =>
+            tokens >= 1000 ? (tokens / 1000.0).ToString("0.0") + "k" : tokens.ToString();
 
         private static string GetSelectionModeLabel(NodeExecutionDecision decision)
         {

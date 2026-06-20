@@ -14,7 +14,7 @@ namespace test
 
         public ElevenLabsNarrationService()
         {
-            _apiKey = Environment.GetEnvironmentVariable("ELEVENLABS_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("ELEVENLABS_API_KEY");
         }
 
         public string ProviderName => "ElevenLabs";
@@ -31,7 +31,7 @@ namespace test
 
         public SunoMusicService()
         {
-            _apiKey = Environment.GetEnvironmentVariable("SUNO_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("SUNO_API_KEY");
         }
 
         public string ProviderName => "Suno";

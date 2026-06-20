@@ -904,6 +904,7 @@ Margin="0,20,20,0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
@@ -916,7 +917,7 @@ Margin="0,20,20,0">
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Grid.Column="0"
-                                   Text="個人化設定"
+                                   Text="設定"
                                    FontSize="16"
                                    FontWeight="SemiBold"
                                    Foreground="#303030"
@@ -953,8 +954,53 @@ Margin="0,20,20,0">
                     <Border Grid.Row="0" Height="1" Background="#ECECEC"
                             VerticalAlignment="Bottom" Margin="0,0,0,0"/>
 
-                    <!-- 輸入區（可捲動） -->
-                    <ScrollViewer Grid.Row="1"
+                    <!-- 分頁切換：個人化 / API -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,2">
+                        <Button x:Name="TabPersonalizationBtn"
+                                Content="個人化"
+                                Height="32"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Cursor="Hand"
+                                Background="#111"
+                                Foreground="White"
+                                BorderThickness="0"
+                                Margin="0,0,8,0"
+                                Click="ShowPersonalizationTab_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="9" Padding="18,0">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+
+                        <Button x:Name="TabApiBtn"
+                                Content="API"
+                                Height="32"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Cursor="Hand"
+                                Background="#F1F1F3"
+                                Foreground="#444"
+                                BorderThickness="0"
+                                Click="ShowApiTab_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="9" Padding="18,0">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- 個人化分頁（可捲動） -->
+                    <ScrollViewer x:Name="PersonalizationScroll"
+                                  Grid.Row="2"
                                   VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled"
                                   Margin="0,8,0,0">
@@ -1391,6 +1437,190 @@ Margin="0,20,20,0">
                                        Foreground="#A8A8AC"/>
                         </StackPanel>
                     </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- API 分頁（可捲動）：使用者可把自己的金鑰寫進程式，免設環境變數 -->
+                    <ScrollViewer x:Name="ApiScroll"
+                                  Grid.Row="2"
+                                  Visibility="Collapsed"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Margin="0,8,0,0">
+                        <StackPanel Margin="0,8,4,0">
+                            <TextBlock Text="API 金鑰"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Foreground="#444"
+                                       Margin="0,0,0,2"/>
+                            <TextBlock TextWrapping="Wrap"
+                                       FontSize="11.5"
+                                       Foreground="#9A9A9E"
+                                       Margin="0,0,0,4">
+                                <Run Text="解析順序：系統環境變數 → 這裡輸入的金鑰 → 都沒有就自動切換到其他可用模型（顯示於決策窗），全部不可用才回報失敗。"/>
+                            </TextBlock>
+                            <TextBlock TextWrapping="Wrap"
+                                       FontSize="11"
+                                       Foreground="#B0B0B6"
+                                       Margin="0,0,0,12">
+                                <Run Text="輸入的金鑰以 Windows DPAPI 加密後存在本機（只有你的帳號能解密），不會上傳。留空＝不變更；按各列「清除」可移除。"/>
+                            </TextBlock>
+
+                            <!-- OpenAI -->
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="OpenAI" FontSize="12.5" FontWeight="SemiBold" Foreground="#333"/>
+                                    <TextBlock Text="（GPT 文字、gpt-image 圖片）" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ApiStatus_OpenAI" Grid.Column="1" Text="未設定" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,-6,0,14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" CornerRadius="9" Background="#F7F7F8" BorderBrush="#E4E4E7" BorderThickness="1" Padding="10,2">
+                                    <PasswordBox x:Name="ApiKeyBox_OpenAI" Height="30" FontSize="12.5" Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
+                                </Border>
+                                <Button Grid.Column="1" Content="清除" Tag="OPENAI_API_KEY" Height="30" Margin="8,0,0,0" Padding="12,0" FontSize="11.5" Cursor="Hand" Background="#F1F1F3" Foreground="#666" BorderThickness="0" Click="ClearApiKey_Click">
+                                    <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,0"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></ControlTemplate></Button.Template>
+                                </Button>
+                            </Grid>
+
+                            <!-- Claude -->
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="Claude" FontSize="12.5" FontWeight="SemiBold" Foreground="#333"/>
+                                    <TextBlock Text="（Anthropic 文字 / 導演 / 程式碼）" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ApiStatus_Anthropic" Grid.Column="1" Text="未設定" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,-6,0,14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" CornerRadius="9" Background="#F7F7F8" BorderBrush="#E4E4E7" BorderThickness="1" Padding="10,2">
+                                    <PasswordBox x:Name="ApiKeyBox_Anthropic" Height="30" FontSize="12.5" Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
+                                </Border>
+                                <Button Grid.Column="1" Content="清除" Tag="ANTHROPIC_API_KEY" Height="30" Margin="8,0,0,0" Padding="12,0" FontSize="11.5" Cursor="Hand" Background="#F1F1F3" Foreground="#666" BorderThickness="0" Click="ClearApiKey_Click">
+                                    <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,0"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></ControlTemplate></Button.Template>
+                                </Button>
+                            </Grid>
+
+                            <!-- Gemini -->
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="Gemini" FontSize="12.5" FontWeight="SemiBold" Foreground="#333"/>
+                                    <TextBlock Text="（Google 文字、Veo 影片）" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ApiStatus_Gemini" Grid.Column="1" Text="未設定" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,-6,0,14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" CornerRadius="9" Background="#F7F7F8" BorderBrush="#E4E4E7" BorderThickness="1" Padding="10,2">
+                                    <PasswordBox x:Name="ApiKeyBox_Gemini" Height="30" FontSize="12.5" Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
+                                </Border>
+                                <Button Grid.Column="1" Content="清除" Tag="GEMINI_API_KEY" Height="30" Margin="8,0,0,0" Padding="12,0" FontSize="11.5" Cursor="Hand" Background="#F1F1F3" Foreground="#666" BorderThickness="0" Click="ClearApiKey_Click">
+                                    <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,0"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></ControlTemplate></Button.Template>
+                                </Button>
+                            </Grid>
+
+                            <!-- Perplexity -->
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="Perplexity" FontSize="12.5" FontWeight="SemiBold" Foreground="#333"/>
+                                    <TextBlock Text="（即時聯網研究 / 來源查證）" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ApiStatus_Perplexity" Grid.Column="1" Text="未設定" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,-6,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" CornerRadius="9" Background="#F7F7F8" BorderBrush="#E4E4E7" BorderThickness="1" Padding="10,2">
+                                    <PasswordBox x:Name="ApiKeyBox_Perplexity" Height="30" FontSize="12.5" Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
+                                </Border>
+                                <Button Grid.Column="1" Content="清除" Tag="PERPLEXITY_API_KEY" Height="30" Margin="8,0,0,0" Padding="12,0" FontSize="11.5" Cursor="Hand" Background="#F1F1F3" Foreground="#666" BorderThickness="0" Click="ClearApiKey_Click">
+                                    <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,0"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></ControlTemplate></Button.Template>
+                                </Button>
+                            </Grid>
+
+                            <!-- Gamma -->
+                            <Grid Margin="0,6,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="Gamma" FontSize="12.5" FontWeight="SemiBold" Foreground="#333"/>
+                                    <TextBlock Text="（AI 簡報設計引擎，九月啟用）" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ApiStatus_Gamma" Grid.Column="1" Text="未設定" FontSize="11" Foreground="#A8A8AC" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,-6,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" CornerRadius="9" Background="#F7F7F8" BorderBrush="#E4E4E7" BorderThickness="1" Padding="10,2">
+                                    <PasswordBox x:Name="ApiKeyBox_Gamma" Height="30" FontSize="12.5" Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
+                                </Border>
+                                <Button Grid.Column="1" Content="清除" Tag="GAMMA_API_KEY" Height="30" Margin="8,0,0,0" Padding="12,0" FontSize="11.5" Cursor="Hand" Background="#F1F1F3" Foreground="#666" BorderThickness="0" Click="ClearApiKey_Click">
+                                    <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,0"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></ControlTemplate></Button.Template>
+                                </Button>
+                            </Grid>
+
+                            <Button x:Name="SaveApiKeysButton"
+                                    Content="儲存 API 金鑰"
+                                    Height="36"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Cursor="Hand"
+                                    Background="#111"
+                                    Foreground="White"
+                                    BorderThickness="0"
+                                    Click="SaveApiKeys_Click">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="sbd" Background="{TemplateBinding Background}" CornerRadius="9">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" TextElement.Foreground="White"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="sbd" Property="Background" Value="#333"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+
+                            <TextBlock x:Name="ApiSaveHint"
+                                       Text=""
+                                       FontSize="11.5"
+                                       Foreground="#1F9D55"
+                                       Margin="2,8,0,0"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
                     </ScrollViewer>
                 </Grid>
             </Border>

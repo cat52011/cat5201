@@ -30,7 +30,7 @@ namespace test
         public ClaudeChatService(string model = "claude-sonnet-4-6")
         {
             _model = model;
-            _apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? "";
+            _apiKey = ApiKeyStore.Resolve("ANTHROPIC_API_KEY");
 
             if (string.IsNullOrWhiteSpace(_apiKey))
             {
