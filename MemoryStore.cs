@@ -85,7 +85,9 @@ namespace test
         }
 
         /// <summary>
-        /// 取得所有使用者偏好（Global / user_preference），依重要度排序。
+        /// 取得所有使用者偏好（Global / user_preference）。
+        /// 排序：最新加入在前（UpdatedAtUtc desc），重要度為次序。
+        /// 因為策略是「偏好彼此矛盾時以最新加入者為準」，故注入與顯示一律最新優先。
         /// </summary>
         public IReadOnlyList<MemoryItem> GetPreferences()
         {
@@ -93,8 +95,8 @@ namespace test
             {
                 return _cache
                     .Where(x => string.Equals(x.Category, "user_preference", StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(x => x.Importance)
-                    .ThenByDescending(x => x.UpdatedAtUtc)
+                    .OrderByDescending(x => x.UpdatedAtUtc)
+                    .ThenByDescending(x => x.Importance)
                     .ToList();
             }
         }

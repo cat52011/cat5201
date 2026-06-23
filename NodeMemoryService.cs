@@ -29,12 +29,8 @@ namespace test
             return UpsertDetected(detected);
         }
 
-        /// <summary>任務文字被動擷取偏好（含意圖詞才取明確類別；語言一律觀察）。</summary>
-        private void CapturePassivePreference(string topText)
-        {
-            var detected = _prefExtractor.ExtractFromTaskText(topText);
-            UpsertDetected(detected);
-        }
+        // 註：全域記憶（偏好）改為「只能手動輸入或右鍵節點加入記憶」，不再從任務文字自動被動擷取。
+        // 原 CapturePassivePreference 已停用移除；PreferenceExtractor.ExtractFromTaskText 暫保留備用，目前無呼叫者。
 
         private IReadOnlyList<string> UpsertDetected(IReadOnlyList<PreferenceExtractor.DetectedPreference> detected)
         {
@@ -138,9 +134,6 @@ namespace test
             if (!string.IsNullOrEmpty(sourceNodeId))
                 _store.RemoveUserMarkedByNode(sourceNodeId);
 
-            // 一併把內容當被動偏好觀察（與自動記憶一致）。
-            CapturePassivePreference(topText);
-
             _store.Add(new MemoryItem
             {
                 Scope = MemoryScope.File,
@@ -181,8 +174,8 @@ namespace test
             if (string.IsNullOrWhiteSpace(bottomText))
                 return Task.CompletedTask;
 
-            // 被動偏好擷取（含意圖詞才取明確偏好；語言一律觀察記錄）。
-            CapturePassivePreference(topText);
+            // 全域偏好不再自動被動擷取（改為只接受手動輸入 / 右鍵加入記憶）。
+            // 這裡仍照常寫入 episodic（執行/Agent/共享）記憶供同鏈召回。
 
             string fileKey = GetCurrentFileKey();
             string title = BuildTitle(topText, taskMode);
@@ -504,9 +497,13 @@ namespace test
 
             var lines = new List<string>
             {
-                "【使用者偏好（最高優先，必須遵守；僅當本次節點內容明確指定不同時才例外）】"
+                "【使用者全域記憶 / 偏好（高優先，需遵守）】",
+                "衝突處理規則：",
+                "1) 若本節點的輸入明顯與下列偏好牴觸，以「本節點輸入」為準（節點優先）。",
+                "2) 若下列偏好彼此矛盾，以「較新（排在越前面）」的為準——清單已依加入時間由新到舊排列。"
             };
 
+            // 已由 GetPreferences 依 UpdatedAtUtc 由新到舊排序：越上面＝越新＝衝突時優先。
             foreach (var p in preferences)
                 lines.Add($"- {p.Content}");
 

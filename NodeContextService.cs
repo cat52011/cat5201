@@ -31,6 +31,8 @@ namespace test
             var upstream = CollectUpstream(current, 20);
             var downstream = CollectDownstream(current, 6);
 
+            bundle.ChainDirectiveContext = BuildChainDirectiveSection(upstream, topLimit: 400);
+
             bundle.UpstreamContext = BuildContextSection(
                 upstream,
                 topLimit: 1200,
@@ -61,6 +63,8 @@ namespace test
             var upstream = CollectUpstream(current, 12);
             var downstream = CollectDownstream(current, 3);
 
+            bundle.ChainDirectiveContext = BuildChainDirectiveSection(upstream, topLimit: 300);
+
             bundle.UpstreamContext = BuildContextSection(
                 upstream,
                 topLimit: 700,
@@ -90,6 +94,8 @@ namespace test
 
             var upstream = CollectUpstream(current, 20);
             var downstream = CollectDownstream(current, 6);
+
+            bundle.ChainDirectiveContext = BuildChainDirectiveSection(upstream, topLimit: 400);
 
             bundle.UpstreamContext = BuildContextSection(
                 upstream,
@@ -292,6 +298,31 @@ namespace test
                 .ToList();
 
             return list.Count == 0 ? "" : string.Join("\n\n", list);
+        }
+
+        // 上游鏈設定/指示摘錄：祖先節點的 Top 指示，「最接近本節點者在前」。
+        // upstream 參數由 CollectUpstream 提供，順序為「最遠祖先 → 最近上游」，故反轉成最近優先。
+        private static string BuildChainDirectiveSection(IReadOnlyList<NodeControl> upstream, int topLimit)
+        {
+            if (upstream == null || upstream.Count == 0)
+                return "";
+
+            var nearestFirst = Enumerable.Reverse(upstream).ToList();
+
+            var lines = new List<string>();
+            int rank = 0;
+            foreach (var n in nearestFirst)
+            {
+                var top = Truncate((n.GetTopText() ?? "").Trim(), topLimit);
+                if (string.IsNullOrWhiteSpace(top))
+                    continue;
+
+                string tag = rank == 0 ? "（最接近本節點 · 最優先）" : "（較遠上游）";
+                lines.Add($"- {tag} {top}");
+                rank++;
+            }
+
+            return lines.Count == 0 ? "" : string.Join("\n", lines);
         }
 
         private List<NodeControl> CollectUpstream(NodeControl current, int maxDepth)

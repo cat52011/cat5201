@@ -2030,6 +2030,20 @@ namespace test
             BottomDisplay.Text = text ?? "";
         }
 
+        // 載入存檔時呼叫：節點已有輸出 → 還原右下角「重新生成答案」鈕（StatusFooter + RegenerateButton）。
+        // 僅顯示按鈕，不套用成功綠框與還原計時器，避免一開檔整片綠；維持閒置黑框外觀。
+        public void RestoreRegenerateAffordance()
+        {
+            if (RegenerateButton == null)
+                return;
+
+            _runStatus = NodeRunStatus.Idle;
+            if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
+            if (StatusText != null) StatusText.Text = "";
+            if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
+            RegenerateButton.Visibility = Visibility.Visible;
+        }
+
         public void ClearBottomText()
         {
             ClearOutputFiles();

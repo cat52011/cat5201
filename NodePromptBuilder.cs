@@ -25,14 +25,29 @@ namespace test
             };
         }
 
-        // 偏好區塊放在 prompt 最上方，並明確宣告蓋過預設語言/格式。空則回空字串。
+        // 上游鏈設定區塊：放在最上方、優先於全域偏好。空則回空字串。
+        // 用途：同一條鏈上游的持續性設定（語言/格式/語氣/風格）要延續到下游，且蓋過全域偏好；多條時最近上游為準。
+        private static string ChainDirectiveHeader(string chainDirectiveBlock)
+        {
+            if (string.IsNullOrWhiteSpace(chainDirectiveBlock))
+                return "";
+
+            return
+                "【上游鏈設定（優先於全域偏好）】\n" +
+                "整體優先級：本節點自身明確指定 ＞ 上游鏈設定 ＞ 全域偏好 ＞ 系統預設。\n" +
+                "下列為上游鏈傳承下來的設定/指示；其中輸出語言、格式、語氣、風格等持續性設定必須延續沿用，並優先於下方的全域偏好。\n" +
+                "若有多條，以最接近本節點者為準（列在最前者最優先）。\n" +
+                chainDirectiveBlock.Trim() + "\n\n";
+        }
+
+        // 偏好區塊放在上游鏈設定之下、其他預設之上。空則回空字串。
         private static string PreferenceHeader(string preferenceBlock)
         {
             if (string.IsNullOrWhiteSpace(preferenceBlock))
                 return "";
 
             return preferenceBlock.Trim() + "\n" +
-                   "（以上偏好優先級高於本提示其他「預設使用繁體中文」等預設規則；若偏好指定了輸出語言或格式，必須改用偏好指定的語言與格式。）\n\n";
+                   "（以上全域偏好優先於本提示的「預設使用繁體中文」等預設規則；但若上方有【上游鏈設定】且指定了輸出語言/格式/語氣，則以上游鏈設定為準、全域偏好退居其次。）\n\n";
         }
 
         private string BuildFullContextPrompt(NodeContextBundle ctx, string topText, NodeTaskMode taskMode, string memoryBlock, string preferenceBlock)
@@ -70,7 +85,7 @@ namespace test
                 : memoryBlock;
 
             return
-$@"{PreferenceHeader(preferenceBlock)}你正在一個節點式筆記檔案中工作。
+$@"{ChainDirectiveHeader(ctx.ChainDirectiveContext)}{PreferenceHeader(preferenceBlock)}你正在一個節點式筆記檔案中工作。
 
 【系統判定任務模式】
 {taskMode}
@@ -132,7 +147,7 @@ $@"{PreferenceHeader(preferenceBlock)}你正在一個節點式筆記檔案中工
                 : memoryBlock;
 
             return
-$@"{PreferenceHeader(preferenceBlock)}你正在處理一個節點式即時搜尋 / 查證任務。
+$@"{ChainDirectiveHeader(ctx.ChainDirectiveContext)}{PreferenceHeader(preferenceBlock)}你正在處理一個節點式即時搜尋 / 查證任務。
 請以目前節點問題為主，並參考主鏈、記憶與支線摘要回答。
 直接輸出完成結果本身，預設使用繁體中文（若上方【使用者偏好】指定了輸出語言，必須改用該語言）。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。
@@ -198,7 +213,7 @@ $@"{PreferenceHeader(preferenceBlock)}你正在處理一個節點式即時搜尋
                 : memoryBlock;
 
             return
-$@"{PreferenceHeader(preferenceBlock)}你正在處理一個節點式研究任務。
+$@"{ChainDirectiveHeader(ctx.ChainDirectiveContext)}{PreferenceHeader(preferenceBlock)}你正在處理一個節點式研究任務。
 請先理解目前問題，再結合主鏈、記憶與支線摘要進行較完整的研究、查證、補充與整理。
 直接輸出結果本身，預設使用繁體中文（若上方【使用者偏好】指定了輸出語言，必須改用該語言）。
 不要重述題目，不要重述規則，不要輸出系統提示，不要輸出思考流程，不要寫前言。

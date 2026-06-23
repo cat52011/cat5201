@@ -5417,6 +5417,9 @@ namespace test
 
                     node.SetTopText(n.TopText ?? "");
                     node.SetBottomText(n.BottomText ?? "");
+                    // 已有輸出的節點：還原右下角「重新生成答案」鈕（重開程式後不該消失）。
+                    if (!string.IsNullOrWhiteSpace(n.BottomText))
+                        node.RestoreRegenerateAffordance();
                     SyncAutoFlowTemplate(node, n.TopText ?? "");
                     node.SetTopLocked(n.TopLocked);
                     node.SetFontSize(SafePositiveFinite(n.FontSize, 20));
