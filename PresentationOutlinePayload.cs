@@ -47,5 +47,10 @@ namespace test
         public string Heading { get; init; } = "";
 
         public IReadOnlyList<string> Bullets { get; init; } = Array.Empty<string>();
+
+        // 智慧配圖：本頁的配圖（執行期填入，由 builder 嵌入 pptx / deck.pdf）。
+        // [JsonIgnore]：byte[] 不進 workspace artifact 的 JSON 序列化，避免 base64 撐爆存檔。
+        [System.Text.Json.Serialization.JsonIgnore]
+        public byte[]? ImageBytes { get; set; }
     }
 }

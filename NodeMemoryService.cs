@@ -64,6 +64,9 @@ namespace test
         public int ClearAllMemory() => _store.ClearAll();
         public int ClearPreferences() => _store.ClearPreferences();
         public int ClearEpisodicMemory() => _store.ClearEpisodic();
+
+        /// <summary>清除「當前記憶」清單顯示的全部內容＝偏好 + 使用者標記（user_marked）。</summary>
+        public int ClearShownMemory() => _store.ClearPreferences() + _store.ClearUserMarked();
         public (int preferences, int episodic) GetMemoryStats() => _store.GetStats();
 
         public IReadOnlyList<string> GetPreferenceDisplayList() =>
@@ -71,9 +74,13 @@ namespace test
                 .Select(x => string.IsNullOrWhiteSpace(x.Title) ? x.Content : x.Title)
                 .ToList();
 
-        /// <summary>個人化清單用：整句顯示 + 可刪除的 key。</summary>
-        public IReadOnlyList<PreferenceView> GetPreferenceItems() =>
-            _store.GetPreferences()
+        // user_marked 在「當前記憶」清單的刪除 key 前綴；DeletePreference 依此前綴改走 by-Id 刪除。
+        public const string MarkedKeyPrefix = "__marked__:";
+
+        /// <summary>個人化「當前記憶」清單：偏好 + 使用者明確標記的節點記憶；整句顯示 + 可刪除的 key。</summary>
+        public IReadOnlyList<PreferenceView> GetPreferenceItems()
+        {
+            var list = _store.GetPreferences()
                 .Select(x => new PreferenceView
                 {
                     Display = string.IsNullOrWhiteSpace(x.Title) ? x.Content : x.Title,
@@ -81,10 +88,79 @@ namespace test
                 })
                 .ToList();
 
-        public int DeletePreference(string key) => _store.RemovePreference(key);
+            // 使用者右鍵「加入記憶」的節點（user_marked）也要出現在當前記憶中，並可個別刪除。
+            foreach (var m in _store.GetUserMarked())
+            {
+                list.Add(new PreferenceView
+                {
+                    Display = string.IsNullOrWhiteSpace(m.Title) ? m.Content : m.Title,
+                    Key = MarkedKeyPrefix + m.Id
+                });
+            }
+
+            return list;
+        }
+
+        public int DeletePreference(string key)
+        {
+            if (!string.IsNullOrEmpty(key) && key.StartsWith(MarkedKeyPrefix, StringComparison.Ordinal))
+                return _store.RemoveById(key.Substring(MarkedKeyPrefix.Length));
+
+            return _store.RemovePreference(key);
+        }
 
         /// <summary>取得偏好區塊文字（給 AgentRuntime final synthesis 用，不需要 node）。</summary>
         public string GetPreferenceBlock() => BuildPreferenceBlock(_store.GetPreferences());
+
+        /// <summary>
+        /// 使用者右鍵「將此節點加入記憶」：把節點內容存成一筆最高重要性的共享記憶。
+        /// SourceNodeId 記錄來源節點僅供「同節點重標時去重」；user_marked 在 RecallRelevant 一律視為全域、
+        /// 不受跨鏈隔離（見該方法的 category 例外），所以仍是全畫布可召回。
+        /// 同一節點重複標記 → 先移除舊的再寫新的（避免清單出現重複）。
+        /// 回傳標題供 UI 提示。
+        /// </summary>
+        public string RememberNodeManually(
+            NodeControl node,
+            string agentId,
+            string topText,
+            string bottomText,
+            NodeTaskMode taskMode,
+            string modelId)
+        {
+            topText ??= "";
+            bottomText ??= "";
+
+            string fileKey = GetCurrentFileKey();
+            string title = BuildTitle(topText, taskMode);
+            string sourceNodeId = node?.Id.ToString() ?? "";
+
+            // 同一節點先前已標記過 → 去重（覆蓋更新）。
+            if (!string.IsNullOrEmpty(sourceNodeId))
+                _store.RemoveUserMarkedByNode(sourceNodeId);
+
+            // 一併把內容當被動偏好觀察（與自動記憶一致）。
+            CapturePassivePreference(topText);
+
+            _store.Add(new MemoryItem
+            {
+                Scope = MemoryScope.File,
+                Category = "user_marked",
+                FileKey = fileKey,
+                SourceNodeId = sourceNodeId,  // 僅供同節點去重；recall 對 user_marked 一律全域
+                AgentId = agentId ?? "",
+                IsSharedMemory = true,
+                Title = $"⭐ 使用者標記：{title}",
+                Content = BuildFileLevelSummary(topText, bottomText),
+                Tags = BuildTags(topText, taskMode),
+                TaskMode = NodeTaskModeHelper.ToStorageValue(taskMode),
+                ModelId = AiModelHelper.NormalizeNodeModel(modelId),
+                Importance = 0.97,            // 高於自動記憶，召回排序優先
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+
+            return title;
+        }
 
         public Task RememberExecutionResultAsync(
             NodeControl node,
@@ -286,14 +362,30 @@ namespace test
         {
             string fileKey = GetCurrentFileKey();
 
-            var all = _store.Query(fileKey, agentId, topText, maxCount * 2);
+            IEnumerable<MemoryItem> all = _store.Query(fileKey, agentId, topText, maxCount * 2);
 
-            var agentItems = all
+            // 跨鏈隔離：episodic / 執行類記憶只保留「同一條有向鏈」（本節點 + 祖先 + 後代）的節點所產生的，
+            // 避免畫布上其它分支（兄弟 / 旁系，例如另一個掛附件的節點）的內容污染本節點——
+            // 使用者要求：不在同一條鏈上的節點只要「大概知道」（靠 NodeContextService 支線摘要），不可被詳細注入。
+            // 偏好記憶走獨立路徑（GetPreferences），不受此限、維持全域。
+            // 例外：使用者明確要求「統整整個畫布」時，不隔離。
+            if (currentNode != null && !WantsWholeCanvasSummary(topText))
+            {
+                var chainIds = _main.GetSameChainNodeIds(currentNode);
+                all = all.Where(x =>
+                    string.IsNullOrEmpty(x.SourceNodeId)
+                    || string.Equals(x.Category, "user_marked", StringComparison.OrdinalIgnoreCase) // 使用者明確標記：一律全域，不受跨鏈隔離
+                    || chainIds.Contains(x.SourceNodeId));
+            }
+
+            var allList = all.ToList();
+
+            var agentItems = allList
                 .Where(x => string.Equals(x.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
                 .Take(maxCount)
                 .ToList();
 
-            var sharedItems = all
+            var sharedItems = allList
                 .Where(x => x.IsSharedMemory)
                 .Take(3)
                 .ToList();
@@ -320,6 +412,27 @@ namespace test
                 PreferenceBlock = preferenceBlock
             };
         }
+
+        // 偵測使用者是否明確要求「統整 / 彙整整個畫布」——此時記憶召回不做跨鏈隔離，允許看到全畫布內容。
+        private static bool WantsWholeCanvasSummary(string topText)
+        {
+            string s = (topText ?? "").ToLowerInvariant();
+            if (s.Length == 0) return false;
+
+            string[] keys =
+            {
+                "整個畫布", "整張畫布", "全畫布", "全部節點", "所有節點",
+                "整個流程", "統整畫布", "彙整畫布", "彙總畫布", "綜整畫布",
+                "whole canvas", "entire canvas", "all nodes", "across the canvas"
+            };
+
+            foreach (var k in keys)
+                if (s.Contains(k, StringComparison.Ordinal))
+                    return true;
+
+            return false;
+        }
+
         // Memory v1 視覺化：回報本次召回的偏好 / 記憶計數與簡短說明，供 decision-viz 顯示。
         // 與實際執行（NodeExecutionCoreService）相同的略過規則，避免顯示與真正注入不一致。
         public MemoryRecallStats GetRecallStats(
@@ -372,6 +485,7 @@ namespace test
             return (category ?? "").ToLowerInvariant() switch
             {
                 "execution_result" => "執行結果",
+                "user_marked" => "使用者標記",
                 "capability_result" => "能力追蹤",
                 "delegation_result" => "委派追蹤",
                 "summary" => "摘要",

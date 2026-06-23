@@ -15,6 +15,7 @@
         Planning = 10,
         Presentation = 11,
         ImageGeneration = 12,
-        VideoGeneration = 13
+        VideoGeneration = 13,
+        ImageEdit = 14
     }
 }

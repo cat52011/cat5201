@@ -6,6 +6,9 @@ using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 
 namespace test
 {
@@ -25,7 +28,7 @@ namespace test
                 var mainPart = doc.AddMainDocumentPart();
                 var body = new Body();
 
-                AppendParagraphs(body, markdownContent ?? "");
+                AppendParagraphs(mainPart, body, markdownContent ?? "");
                 body.AppendChild(new SectionProperties());
 
                 mainPart.Document = new Document(body);
@@ -35,7 +38,7 @@ namespace test
             return stream.ToArray();
         }
 
-        private static void AppendParagraphs(Body body, string markdown)
+        private static void AppendParagraphs(MainDocumentPart mainPart, Body body, string markdown)
         {
             var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
             bool inFence = false;
@@ -53,6 +56,16 @@ namespace test
                 if (inFence)
                 {
                     body.AppendChild(MakeCodeParagraph(rawLine));
+                    continue;
+                }
+
+                // Markdown 圖片：![alt](本機絕對路徑) → 嵌入 Word 圖片（報告智慧配圖用）。
+                var imgMatch = Regex.Match(rawLine.Trim(), @"^!\[[^\]]*\]\(([^)]+)\)$");
+                if (imgMatch.Success)
+                {
+                    var imgPara = MakeImageParagraph(mainPart, imgMatch.Groups[1].Value.Trim());
+                    if (imgPara != null)
+                        body.AppendChild(imgPara);
                     continue;
                 }
 
@@ -174,6 +187,84 @@ namespace test
             run.AppendChild(new Text(text) { Space = SpaceProcessingModeValues.Preserve });
             para.AppendChild(run);
             return para;
+        }
+
+        // ---- Markdown 圖片 → Word 內嵌圖片 ----
+
+        private static Paragraph? MakeImageParagraph(MainDocumentPart mainPart, string imagePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+                    return null;
+
+                byte[] bytes = File.ReadAllBytes(imagePath);
+
+                var imagePart = mainPart.AddImagePart(ImagePartType.Png);
+                using (var ms = new MemoryStream(bytes))
+                    imagePart.FeedData(ms);
+                string relId = mainPart.GetIdOfPart(imagePart);
+
+                var (pw, ph) = ReadPngSize(bytes);
+                const long maxWidthEmu = 4572000; // 12 cm，留邊距
+                long cx = maxWidthEmu;
+                long cy = (long)(maxWidthEmu * (double)ph / Math.Max(1, pw));
+
+                return new Paragraph(
+                    new ParagraphProperties(
+                        new Justification { Val = JustificationValues.Center },
+                        new SpacingBetweenLines { Before = "120", After = "160" }),
+                    new Run(BuildImageDrawing(relId, cx, cy)));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // PNG IHDR 寬高（big-endian，位移 16..23）；讀不到時退回 1024×1024。
+        private static (int w, int h) ReadPngSize(byte[] png)
+        {
+            if (png != null && png.Length >= 24)
+            {
+                int w = (png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19];
+                int h = (png[20] << 24) | (png[21] << 16) | (png[22] << 8) | png[23];
+                if (w > 0 && h > 0) return (w, h);
+            }
+            return (1024, 1024);
+        }
+
+        private static Drawing BuildImageDrawing(string relId, long cx, long cy)
+        {
+            return new Drawing(
+                new DW.Inline(
+                    new DW.Extent { Cx = cx, Cy = cy },
+                    new DW.EffectExtent { LeftEdge = 0, TopEdge = 0, RightEdge = 0, BottomEdge = 0 },
+                    new DW.DocProperties { Id = 1U, Name = "ReportImage" },
+                    new DW.NonVisualGraphicFrameDrawingProperties(
+                        new A.GraphicFrameLocks { NoChangeAspect = true }),
+                    new A.Graphic(
+                        new A.GraphicData(
+                            new PIC.Picture(
+                                new PIC.NonVisualPictureProperties(
+                                    new PIC.NonVisualDrawingProperties { Id = 0U, Name = "image.png" },
+                                    new PIC.NonVisualPictureDrawingProperties()),
+                                new PIC.BlipFill(
+                                    new A.Blip { Embed = relId },
+                                    new A.Stretch(new A.FillRectangle())),
+                                new PIC.ShapeProperties(
+                                    new A.Transform2D(
+                                        new A.Offset { X = 0L, Y = 0L },
+                                        new A.Extents { Cx = cx, Cy = cy }),
+                                    new A.PresetGeometry(new A.AdjustValueList())
+                                    { Preset = A.ShapeTypeValues.Rectangle })))
+                        { Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture" }))
+                {
+                    DistanceFromTop = 0U,
+                    DistanceFromBottom = 0U,
+                    DistanceFromLeft = 0U,
+                    DistanceFromRight = 0U
+                });
         }
 
         // ---- Markdown 表格 → Word 表格 ----

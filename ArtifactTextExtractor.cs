@@ -28,11 +28,19 @@ namespace test
                 return "";
 
             var sb = new StringBuilder();
+            var mainPart = doc.MainDocumentPart;
             // 依文件順序逐一處理段落與表格（表格要還原成 Markdown 表格才看得到結構）。
             foreach (var el in body.Elements())
             {
                 if (el is W.Paragraph para)
-                    sb.AppendLine(ParagraphToMarkdown(para));
+                {
+                    // 段落含內嵌圖 → 以 base64 圖片語法輸出，讓預覽也看得到報告配圖。
+                    string imgMd = ParagraphImageMarkdown(mainPart, para);
+                    if (!string.IsNullOrEmpty(imgMd))
+                        sb.AppendLine(imgMd);
+                    else
+                        sb.AppendLine(ParagraphToMarkdown(para));
+                }
                 else if (el is W.Table table)
                     AppendTableMarkdown(sb, table);
             }
@@ -89,6 +97,29 @@ namespace test
                 return "- " + trimmedStart.Substring(2);
 
             return body;
+        }
+
+        // 段落含內嵌圖片時，取出圖片 bytes 轉成 base64 的 Markdown 圖片語法；無圖回空字串。
+        private static string ParagraphImageMarkdown(MainDocumentPart? mainPart, W.Paragraph para)
+        {
+            if (mainPart == null) return "";
+
+            var blip = para.Descendants<D.Blip>().FirstOrDefault();
+            string? embed = blip?.Embed?.Value;
+            if (string.IsNullOrEmpty(embed)) return "";
+
+            try
+            {
+                if (mainPart.GetPartById(embed) is not ImagePart imgPart) return "";
+                using var s = imgPart.GetStream();
+                using var ms = new System.IO.MemoryStream();
+                s.CopyTo(ms);
+                return "![圖](data:image/png;base64," + System.Convert.ToBase64String(ms.ToArray()) + ")";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private static void AppendTableMarkdown(StringBuilder sb, W.Table table)
@@ -184,6 +215,40 @@ namespace test
             {
                 return null;
             }
+        }
+
+        /// <summary>PPTX → 每張投影片的第一張圖（封面 + 內容頁配圖），順序與 ExtractPptxSlides 對齊；該張無圖則為 null。</summary>
+        public static List<byte[]?> ExtractPptxSlideImages(string path)
+        {
+            var result = new List<byte[]?>();
+            try
+            {
+                using var pres = PresentationDocument.Open(path, false);
+                var presPart = pres.PresentationPart;
+                var slideIds = presPart?.Presentation?.SlideIdList?.Elements<DocumentFormat.OpenXml.Presentation.SlideId>();
+                if (presPart == null || slideIds == null)
+                    return result;
+
+                foreach (var slideId in slideIds)
+                {
+                    byte[]? img = null;
+                    var relId = slideId.RelationshipId?.Value;
+                    if (!string.IsNullOrEmpty(relId) && presPart.GetPartById(relId) is SlidePart slidePart)
+                    {
+                        var imagePart = slidePart.ImageParts?.FirstOrDefault();
+                        if (imagePart != null)
+                        {
+                            using var s = imagePart.GetStream();
+                            using var ms = new System.IO.MemoryStream();
+                            s.CopyTo(ms);
+                            img = ms.ToArray();
+                        }
+                    }
+                    result.Add(img);
+                }
+            }
+            catch { }
+            return result;
         }
 
         /// <summary>XLSX → 第一個工作表的逐列儲存格文字（給預覽渲染成 HTML 表格）。</summary>

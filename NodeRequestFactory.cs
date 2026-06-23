@@ -62,23 +62,24 @@ namespace test
 
             return ext switch
             {
-                ".cs" => "text/plain",
-                ".xaml" => "text/plain",
-                ".java" => "text/plain",
-                ".cpp" => "text/plain",
-                ".h" => "text/plain",
-                ".hpp" => "text/plain",
-                ".py" => "text/plain",
-                ".js" => "text/plain",
-                ".ts" => "text/plain",
+                // 程式碼 / 純文字
+                ".cs" or ".xaml" or ".java" or ".cpp" or ".c" or ".h" or ".hpp"
+                    or ".py" or ".js" or ".ts" or ".txt" or ".log" or ".xml"
+                    or ".html" or ".htm" or ".css" or ".sh" or ".bat" => "text/plain",
                 ".json" => "application/json",
-                ".csv" => "text/csv",
-                ".txt" => "text/plain",
-                ".md" => "text/markdown",
-                ".pdf" => "application/pdf",
-                _ => string.IsNullOrWhiteSpace(mimeType)
-                    ? "application/octet-stream"
-                    : mimeType
+                ".csv"  => "text/csv",
+                ".md"   => "text/markdown",
+                ".pdf"  => "application/pdf",
+                // 圖片
+                ".png"  => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                ".gif"  => "image/gif",
+                // Office（提供正確 MIME，各 provider 可自行決定是否接受）
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                _ => string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType
             };
         }
 

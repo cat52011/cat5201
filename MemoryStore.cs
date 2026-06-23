@@ -99,6 +99,63 @@ namespace test
             }
         }
 
+        /// <summary>
+        /// 取得使用者右鍵明確標記的節點記憶（user_marked），最新在前。
+        /// 用於「個人化 → 當前記憶」清單，與偏好並列顯示。
+        /// </summary>
+        public IReadOnlyList<MemoryItem> GetUserMarked()
+        {
+            lock (_sync)
+            {
+                return _cache
+                    .Where(x => string.Equals(x.Category, "user_marked", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.UpdatedAtUtc)
+                    .ToList();
+            }
+        }
+
+        /// <summary>依記憶 Id 刪除單一筆（給「當前記憶」清單刪除 user_marked 用）。</summary>
+        public int RemoveById(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return 0;
+
+            lock (_sync)
+            {
+                int n = _cache.RemoveAll(x => string.Equals(x.Id, id, StringComparison.Ordinal));
+                SaveUnsafe();
+                return n;
+            }
+        }
+
+        /// <summary>移除某來源節點的全部 user_marked（同節點重新標記前先去重）。</summary>
+        public int RemoveUserMarkedByNode(string sourceNodeId)
+        {
+            if (string.IsNullOrWhiteSpace(sourceNodeId))
+                return 0;
+
+            lock (_sync)
+            {
+                int n = _cache.RemoveAll(x =>
+                    string.Equals(x.Category, "user_marked", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(x.SourceNodeId, sourceNodeId, StringComparison.Ordinal));
+                SaveUnsafe();
+                return n;
+            }
+        }
+
+        /// <summary>清除全部使用者標記記憶（user_marked）。</summary>
+        public int ClearUserMarked()
+        {
+            lock (_sync)
+            {
+                int n = _cache.RemoveAll(x =>
+                    string.Equals(x.Category, "user_marked", StringComparison.OrdinalIgnoreCase));
+                SaveUnsafe();
+                return n;
+            }
+        }
+
         /// <summary>依 PreferenceKey 刪除單一偏好。</summary>
         public int RemovePreference(string preferenceKey)
         {

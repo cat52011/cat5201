@@ -45,7 +45,8 @@ namespace test
                 for (int i = 0; i < models.Count; i++)
                 {
                     var slide = models[i];
-                    byte[]? imageForSlide = slide.IsCover ? coverImagePng : null;
+                    // 封面用 coverImagePng；內容頁用該頁自己的智慧配圖（slide.ImageBytes）。
+                    byte[]? imageForSlide = slide.IsCover ? coverImagePng : slide.ImageBytes;
 
                     // 頁尾：封面不放；其餘顯示「標題 ｜ n / 總數」。
                     string footer = slide.IsCover
@@ -84,6 +85,7 @@ namespace test
             public string Title = "";
             public string[] Body = Array.Empty<string>();
             public bool IsCover = false;
+            public byte[]? ImageBytes = null;
         }
 
         private static System.Collections.Generic.IEnumerable<SlideModel> BuildSlideModels(PresentationOutlinePayload outline)
@@ -119,7 +121,8 @@ namespace test
                     yield return new SlideModel
                     {
                         Title = s.Heading ?? "",
-                        Body = (s.Bullets ?? Array.Empty<string>()).ToArray()
+                        Body = (s.Bullets ?? Array.Empty<string>()).ToArray(),
+                        ImageBytes = s.ImageBytes
                     };
                 }
             }
@@ -306,6 +309,15 @@ namespace test
                     new[] { new BodyLine(title, 0) },
                     fontSize: 2800, bold: true, colorHex: "FFFFFF", anchorCenter: true));
 
+                // 內容頁有智慧配圖時：內文佔左、圖置於右側（圖文並茂）；無圖時內文佔滿全寬。
+                bool contentHasImage = coverImagePng != null && coverImagePng.Length > 0;
+                const long imgSide = 3600000;                       // ~3.94 in 方形
+                const long imgX = SlideWidth - imgSide - 685800;    // 右側、留右邊距
+                const long imgY = 1900000;
+                long bodyWidth = contentHasImage
+                    ? imgX - 685800 - 274320                        // 左欄寬：到圖左緣前留間距
+                    : SlideWidth - 1371600;
+
                 if (slide.Body != null && slide.Body.Length > 0)
                 {
                     var lines = slide.Body
@@ -315,9 +327,18 @@ namespace test
 
                     if (lines.Length > 0)
                         shapeTree.Append(MakeTextShape(
-                            5U, "Body", 685800, 1554480, SlideWidth - 1371600, SlideHeight - 2103120,
+                            5U, "Body", 685800, 1554480, bodyWidth, SlideHeight - 2103120,
                             paragraphs: lines,
                             fontSize: 2000, bold: false, colorHex: ThemeBody, bulleted: true));
+                }
+
+                if (contentHasImage)
+                {
+                    var imagePart = slidePart.AddImagePart(ImagePartType.Png);
+                    using (var ms = new MemoryStream(coverImagePng!))
+                        imagePart.FeedData(ms);
+                    string relId = slidePart.GetIdOfPart(imagePart);
+                    shapeTree.Append(MakePicture(7U, "ContentImage", relId, imgX, imgY, imgSide, imgSide));
                 }
 
                 if (!string.IsNullOrWhiteSpace(footerText))

@@ -169,6 +169,89 @@ namespace test
             }
         }
 
+        /// <summary>
+        /// 圖片編輯（image-to-image）：吃一張輸入圖 + 編輯指令，輸出改過的圖。
+        /// 用 OpenAI /v1/images/edits（multipart）；edits 端點以 gpt-image-1 最穩定。
+        /// 用於「上傳照片 → 依指令改建 / 重新裝潢 / 改圖」，盡量保留原圖整體結構。
+        /// </summary>
+        public async Task<ImageResult> EditAsync(
+            byte[] imageBytes,
+            string prompt,
+            string size = "1024x1024",
+            CancellationToken ct = default)
+        {
+            if (imageBytes == null || imageBytes.Length == 0)
+                return new ImageResult { Success = false, ErrorMessage = "沒有輸入圖片可供編輯。" };
+            if (string.IsNullOrWhiteSpace(prompt))
+                return new ImageResult { Success = false, ErrorMessage = "編輯描述為空。" };
+
+            try
+            {
+                using var form = new MultipartFormDataContent();
+                form.Add(new StringContent("gpt-image-1"), "model");
+                form.Add(new StringContent(prompt), "prompt");
+                form.Add(new StringContent(size), "size");
+                form.Add(new StringContent("high"), "quality");
+
+                var imgContent = new ByteArrayContent(imageBytes);
+                imgContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+                form.Add(imgContent, "image", "input.png");
+
+                using var req = new HttpRequestMessage(
+                    HttpMethod.Post, "https://api.openai.com/v1/images/edits");
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                req.Content = form;
+
+                using var resp = await _http.SendAsync(
+                    req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                string body = await resp.Content.ReadAsStringAsync(ct);
+
+                if (!resp.IsSuccessStatusCode)
+                    return new ImageResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"OpenAI Images Edit API {(int)resp.StatusCode}：{Truncate(body, 400)}"
+                    };
+
+                using var doc = JsonDocument.Parse(body);
+                if (!doc.RootElement.TryGetProperty("data", out var data) ||
+                    data.ValueKind != JsonValueKind.Array || data.GetArrayLength() == 0)
+                    return new ImageResult { Success = false, ErrorMessage = "OpenAI Images Edit API 回傳沒有 data。" };
+
+                var first = data[0];
+                string revised = first.TryGetProperty("revised_prompt", out var revEl) ? (revEl.GetString() ?? "") : "";
+                string b64 = first.TryGetProperty("b64_json", out var b64El) ? (b64El.GetString() ?? "") : "";
+
+                byte[] bytes;
+                if (!string.IsNullOrWhiteSpace(b64))
+                {
+                    bytes = Convert.FromBase64String(b64);
+                }
+                else
+                {
+                    string url = first.TryGetProperty("url", out var urlEl) ? (urlEl.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(url))
+                        return new ImageResult { Success = false, ErrorMessage = "OpenAI Images Edit API 回傳沒有 b64_json 也沒有 url。" };
+
+                    using var imgResp = await _http.GetAsync(url, ct);
+                    if (!imgResp.IsSuccessStatusCode)
+                        return new ImageResult { Success = false, ErrorMessage = $"下載編輯後圖片失敗：HTTP {(int)imgResp.StatusCode}" };
+                    bytes = await imgResp.Content.ReadAsByteArrayAsync(ct);
+                }
+
+                return new ImageResult { Success = true, PngBytes = bytes, RevisedPrompt = revised, Size = size };
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return new ImageResult { Success = false, ErrorMessage = ex.Message };
+            }
+        }
+
         private static string Truncate(string s, int max)
         {
             s ??= "";

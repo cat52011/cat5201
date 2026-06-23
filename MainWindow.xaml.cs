@@ -154,6 +154,15 @@ namespace test
         private bool _isPanning = false;
         private Point _lastMousePos;
 
+        // ===== 變更上游節點（rewire）狀態 =====
+        // 設計原則：成功前完全不更動連線資料——只把「主上游連線」暫時隱藏，改用一條 ghost 虛線跟著滑鼠。
+        // 因此 ESC 取消 / 中途存檔 / 關程式都自動還原回原上游（資料根本沒被改過）。
+        private bool _rewireMode;
+        private Connection? _rewireConn;        // 被改接的主上游連線（EndNode == 觸發節點）
+        private NodeControl? _rewireChild;      // 觸發 rewire 的下游節點
+        private PathShape? _rewireGhost;        // 跟著滑鼠的虛線
+        public bool IsRewireActive => _rewireMode;
+
         private static readonly Random _random = new();
 
         private string SavesDir => @"D:\desk\college\final\file";
@@ -456,6 +465,16 @@ namespace test
             Viewport.MouseDown += Viewport_MouseDown;
             Viewport.MouseUp += Viewport_MouseUp;
             Viewport.MouseMove += Viewport_MouseMove;
+
+            // 變更上游進行中：ESC 取消、還原原上游。
+            PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Escape && _rewireMode)
+                {
+                    CancelRewire();
+                    e.Handled = true;
+                }
+            };
 
             Loaded += MainWindow_Loaded;
         }
@@ -3471,7 +3490,7 @@ namespace test
                         await ShowHtmlContentAsync(
                             ArtifactHtmlRenderer.BuildSlidesHtml(
                                 ArtifactTextExtractor.ExtractPptxSlides(path), allowRegen: true,
-                                coverImagePng: ArtifactTextExtractor.ExtractPptxFirstImage(path)), path);
+                                slideImages: ArtifactTextExtractor.ExtractPptxSlideImages(path)), path);
                     return;
                 }
 
@@ -3490,7 +3509,7 @@ namespace test
                     await ShowHtmlContentAsync(
                         ArtifactHtmlRenderer.BuildSlidesHtml(
                             ArtifactTextExtractor.ExtractPptxSlides(path), allowRegen: true,
-                            coverImagePng: coverPng), path);
+                            slideImages: ArtifactTextExtractor.ExtractPptxSlideImages(path)), path);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -4238,6 +4257,223 @@ namespace test
             return false;
         }
 
+        // ===== 右鍵：將此節點加入記憶 =====
+        // 存成一筆使用者明確標記的共享記憶（user_marked，重要性 0.97、SourceNodeId 留空 → 不受跨鏈隔離、全畫布可召回）。
+        // 同時會出現在「個人化 → 當前記憶」清單（NodeMemoryService 把 user_marked 併入該清單）。
+        public void AddNodeToMemory(NodeControl node)
+        {
+            if (node == null || _nodeService == null)
+                return;
+
+            string topText = node.GetTopText() ?? "";
+            string bottomText = node.GetBottomText() ?? "";
+
+            if (string.IsNullOrWhiteSpace(bottomText))
+            {
+                MessageBox.Show("這個節點還沒有產出內容，無法加入記憶。", "加入記憶",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            string agentId = GetNodeSelectedAgent(node);
+            string modelId = GetNodeSelectedModel(node);
+            NodeTaskMode taskMode = GetNodeTaskMode(node);
+
+            string title = _nodeService.RememberNodeManually(node, agentId, topText, bottomText, taskMode, modelId);
+
+            // 加入後立即刷新並展開「當前記憶」面板，讓使用者馬上看到（需求：標記的節點要出現在個人化當前記憶中）。
+            RefreshMemoryPanel();
+            if (MemoryListPanel != null)
+            {
+                MemoryListPanel.Visibility = Visibility.Visible;
+                RefreshMemoryPanel();
+            }
+
+            MessageBox.Show($"已加入記憶：\n⭐ {title}", "加入記憶",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        // ===== 右鍵：更換連接方向 =====
+        // 把「此節點這一端」的連線從上面兩個連接孔（ThumbTL ↔ ThumbTR）互換，純視覺移動接點。
+        // 不改 StartNode / EndNode（上下游關係不變），也完全不碰記憶。
+        public void SwapNodeConnectionSide(NodeControl node)
+        {
+            if (node == null)
+                return;
+
+            bool changed = false;
+            foreach (var c in _connections)
+            {
+                if (ReferenceEquals(c.EndNode, node))
+                {
+                    c.EndThumb = c.EndThumb == "ThumbTL" ? "ThumbTR" : "ThumbTL";
+                    UpdateConnectionGeometry(c);
+                    changed = true;
+                }
+                if (ReferenceEquals(c.StartNode, node))
+                {
+                    c.StartThumb = c.StartThumb == "ThumbTL" ? "ThumbTR" : "ThumbTL";
+                    UpdateConnectionGeometry(c);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                SaveState();
+        }
+
+        // 此節點有沒有任何連線相連（給右鍵「更換連接方向」決定是否啟用）。
+        public bool NodeHasAnyConnection(NodeControl node)
+        {
+            if (node == null) return false;
+            foreach (var c in _connections)
+                if (ReferenceEquals(c.StartNode, node) || ReferenceEquals(c.EndNode, node))
+                    return true;
+            return false;
+        }
+
+        // ===== 變更上游節點（rewire）流程 =====
+        // 1) 右鍵「變更上游節點」→ BeginRewireUpstream：找出主上游連線，隱藏它、改用 ghost 跟滑鼠。
+        // 2) 滑鼠移動 → UpdateRewireGhost。
+        // 3) 左鍵點到合法節點 → TryCompleteRewire：依滑鼠在新節點中線左右決定接左孔/右孔，改 StartNode。
+        // 4) ESC / 失敗 → CancelRewire：原連線資料未被改過，直接還原顯示。
+        public void BeginRewireUpstream(NodeControl child)
+        {
+            if (child == null || _rewireMode)
+                return;
+            if (IsWorkflowChainRunning)
+                return;
+
+            var conn = _connections.FirstOrDefault(c => ReferenceEquals(c.EndNode, child));
+            if (conn == null)
+                return;
+
+            _rewireMode = true;
+            _rewireConn = conn;
+            _rewireChild = child;
+
+            if (conn.Path != null)
+                conn.Path.Visibility = Visibility.Collapsed;
+
+            _rewireGhost = new PathShape
+            {
+                Stroke = (SolidColorBrush)new BrushConverter().ConvertFromString("#5B6CFF")!,
+                StrokeThickness = 3,
+                StrokeDashArray = new DoubleCollection { 4, 4 },
+                IsHitTestVisible = false
+            };
+            Canvas.SetZIndex(_rewireGhost, GetNextZIndex());
+            MainCanvas.Children.Add(_rewireGhost);
+
+            Mouse.OverrideCursor = Cursors.Cross;
+
+            // 初始 ghost 起點畫在原上游孔位，避免閃一下。
+            UpdateRewireGhost(GetThumbCenterOnCanvas(conn.StartNode, conn.StartThumb));
+        }
+
+        public void UpdateRewireGhost(Point mouseCanvas)
+        {
+            if (!_rewireMode || _rewireGhost == null || _rewireChild == null || _rewireConn == null)
+                return;
+
+            var end = GetThumbCenterOnCanvas(_rewireChild, _rewireConn.EndThumb);
+            var start = mouseCanvas;
+
+            var geometry = new System.Windows.Media.PathGeometry();
+            var figure = new System.Windows.Media.PathFigure { StartPoint = start };
+            figure.Segments.Add(new System.Windows.Media.BezierSegment
+            {
+                Point1 = new Point((start.X + end.X) / 2, start.Y),
+                Point2 = new Point((start.X + end.X) / 2, end.Y),
+                Point3 = end
+            });
+            geometry.Figures.Add(figure);
+            _rewireGhost.Data = geometry;
+        }
+
+        // 嘗試把主上游接到 target。不合法（自己 / 自己的下游後代）→ 擋下、提示音、保持 rewire 狀態等待重選。
+        public void TryCompleteRewire(NodeControl target)
+        {
+            if (!_rewireMode || _rewireConn == null || _rewireChild == null || target == null)
+                return;
+
+            if (ReferenceEquals(target, _rewireChild))
+            {
+                System.Media.SystemSounds.Asterisk.Play();   // 不能接自己
+                return;
+            }
+
+            // 不能接到自己的下游後代（會形成循環）。
+            if (GetDescendantIds(_rewireChild).Contains(target.Id.ToString()))
+            {
+                System.Media.SystemSounds.Asterisk.Play();
+                return;
+            }
+
+            // 需求：依滑鼠在新節點「中線」的左右，決定接左孔(ThumbTL)或右孔(ThumbTR)。
+            double centerX = SafeFinite(Canvas.GetLeft(target), 0) + SafePositiveFinite(target.Width, 300) / 2.0;
+            Point mouse = Mouse.GetPosition(MainCanvas);
+            string startThumb = mouse.X < centerX ? "ThumbTL" : "ThumbTR";
+
+            // 成功——此刻才動連線資料：改上游節點與其接孔，下游端(EndNode/EndThumb)維持不變。
+            var conn = _rewireConn;
+            conn.StartNode = target;
+            conn.StartThumb = startThumb;
+
+            EndRewire();
+            UpdateConnectionGeometry(conn);
+            HookNode(target);
+            SaveState();
+        }
+
+        public void CancelRewire() => EndRewire();
+
+        // 收尾：移除 ghost、把原連線顯示回來、清狀態。成功與取消共用——
+        // 取消時連線資料根本沒被改過所以等同還原；成功時資料已指向新上游，顯示回來即生效。
+        private void EndRewire()
+        {
+            if (_rewireGhost != null)
+            {
+                MainCanvas.Children.Remove(_rewireGhost);
+                _rewireGhost = null;
+            }
+
+            if (_rewireConn?.Path != null)
+                _rewireConn.Path.Visibility = Visibility.Visible;
+
+            Mouse.OverrideCursor = null;
+
+            _rewireMode = false;
+            _rewireConn = null;
+            _rewireChild = null;
+        }
+
+        // 此節點的所有下游後代 ID（沿出邊 BFS，不含自己）。用於 rewire 防循環。
+        private HashSet<string> GetDescendantIds(NodeControl node)
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (node == null)
+                return ids;
+
+            var visited = new HashSet<Guid> { node.Id };
+            var queue = new Queue<NodeControl>();
+            queue.Enqueue(node);
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                foreach (var c in _connections)
+                {
+                    if (ReferenceEquals(c.StartNode, cur) && c.EndNode != null && visited.Add(c.EndNode.Id))
+                    {
+                        ids.Add(c.EndNode.Id.ToString());
+                        queue.Enqueue(c.EndNode);
+                    }
+                }
+            }
+
+            return ids;
+        }
+
         public bool IsInitialNode(NodeControl node)
             => ReferenceEquals(_initialNode, node);
 
@@ -4304,7 +4540,10 @@ namespace test
 
                     var ext = System.IO.Path.GetExtension(src);
                     var mime = MimeFromExt(ext);
-                    var kind = IsImageExt(ext) ? "image" : "file";
+                    var kind = IsImageExt(ext) ? "image"
+                        : ext.ToLowerInvariant() == ".pdf" ? "pdf"
+                        : ext.ToLowerInvariant() is ".html" or ".htm" ? "html"
+                        : "file";
 
                     var safeName = System.IO.Path.GetFileName(src);
                     var uniqueName = $"{Guid.NewGuid():N}_{safeName}";
@@ -4373,6 +4612,55 @@ namespace test
             }
 
             return ordered;
+        }
+
+        // 「同一條有向鏈」的節點 ID 集合＝此節點 + 所有上游祖先 + 所有下游後代（沿連線方向）。
+        // 用途：記憶召回的跨鏈隔離——畫布上不同分支（兄弟/旁系，例如另一個掛附件的節點）的執行記憶
+        // 不應互相注入污染；只有同一條鏈上的節點才彼此「詳細可見」，旁支只靠 NodeContextService 的
+        // 「支線摘要」大概知道。沿有向邊 BFS，所以共同母節點的不同子分支彼此不在對方的鏈集合內。
+        public HashSet<string> GetSameChainNodeIds(NodeControl node)
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (node == null)
+                return ids;
+
+            var conns = GetConnectionsForContext().ToList();
+            ids.Add(node.Id.ToString());
+
+            // 祖先：沿入邊（EndNode==cursor → 取 StartNode）向上 BFS。
+            var visited = new HashSet<Guid> { node.Id };
+            var queue = new Queue<NodeControl>();
+            queue.Enqueue(node);
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                foreach (var c in conns)
+                {
+                    if (ReferenceEquals(c.EndNode, cur) && c.StartNode != null && visited.Add(c.StartNode.Id))
+                    {
+                        ids.Add(c.StartNode.Id.ToString());
+                        queue.Enqueue(c.StartNode);
+                    }
+                }
+            }
+
+            // 後代：沿出邊（StartNode==cursor → 取 EndNode）向下 BFS。
+            visited = new HashSet<Guid> { node.Id };
+            queue.Enqueue(node);
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                foreach (var c in conns)
+                {
+                    if (ReferenceEquals(c.StartNode, cur) && c.EndNode != null && visited.Add(c.EndNode.Id))
+                    {
+                        ids.Add(c.EndNode.Id.ToString());
+                        queue.Enqueue(c.EndNode);
+                    }
+                }
+            }
+
+            return ids;
         }
 
         public void OpenAttachment(string relativePath)
@@ -4495,7 +4783,7 @@ namespace test
                             ArtifactHtmlRenderer.BuildSlidesHtml(
                                 ArtifactTextExtractor.ExtractPptxSlides(targetFull),
                                 allowRegen: _previewOwnerNode != null,
-                                coverImagePng: ArtifactTextExtractor.ExtractPptxFirstImage(targetFull)),
+                                slideImages: ArtifactTextExtractor.ExtractPptxSlideImages(targetFull)),
                             targetFull);
                         break;
 
@@ -5533,6 +5821,18 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
         private void Viewport_MouseDown(object sender, MouseButtonEventArgs e)
         {
+            // 變更上游進行中：左鍵點擊節點 = 嘗試接上新上游；點空白不處理（用 ESC 取消）。
+            if (_rewireMode && e.ChangedButton == MouseButton.Left)
+            {
+                var target = FindAncestor<NodeControl>(e.OriginalSource as DependencyObject);
+                if (target != null)
+                {
+                    TryCompleteRewire(target);
+                    e.Handled = true;
+                }
+                return;
+            }
+
             if (e.ChangedButton == MouseButton.Middle)
             {
                 _isPanning = true;
@@ -5556,6 +5856,12 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
         private void Viewport_MouseMove(object sender, MouseEventArgs e)
         {
+            if (_rewireMode)
+            {
+                UpdateRewireGhost(e.GetPosition(MainCanvas));
+                return;
+            }
+
             if (_isPanning)
             {
                 var pos = e.GetPosition(this);
@@ -6909,7 +7215,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             if (result != MessageBoxResult.OK)
                 return;
 
-            _nodeService.ClearPreferenceMemory();
+            _nodeService.ClearShownMemory();
             RefreshMemoryPanel();
         }
 

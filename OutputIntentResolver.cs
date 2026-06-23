@@ -55,7 +55,7 @@ namespace test
         private static string BuildSystemPrompt()
         {
             return
-@"你是一個「輸出格式判斷器」。根據使用者輸入，判斷他想要的『產出檔案』是下列哪幾種（可多選，也可能完全不要檔案）：
+@"你是一個「輸出格式判斷器」。根據使用者輸入，判斷他『要你實際產出的檔案』是下列哪幾種（可多選，也可能完全不要檔案）：
 
 - presentation：簡報 / 投影片 / ppt / slides
 - report：書面報告 / 文件 / 文章 / 說明文（Word 類）
@@ -69,13 +69,29 @@ namespace test
   ""table"": true/false
 }
 
-判斷原則：
-- 使用者明說要簡報 → presentation=true。
-- 使用者明說要報告 / 文件 / 寫一篇 → report=true。
-- 使用者要表格 / 比較表 / excel / 把數據列出來 → table=true。
-- 同時要多種就都標 true（例：「報告加簡報」→ presentation 與 report 都 true）。
-- 只是問問題、聊天、要一段純文字回答、不需要產生檔案 → 三個都 false。
-- 不確定時保守判斷，寧可 false。";
+★最重要的原則：區分「使用者要你做出什麼檔案」與「使用者只是在描述內容」。
+只有使用者『下令產出』某種檔案時才標 true。輸入內文裡提到的格式名稱，如果只是被當作『主題的一部分』『系統功能的介紹』『要寫進簡報的條列內容』，一律不算，不要標 true。
+
+判斷步驟：
+1. 找出使用者的主要指令動詞（做一份 / 製作 / 生成 / 寫一份…）以及它的受詞是什麼檔案。
+2. 那個受詞才決定要產什麼檔。內文後面的描述、條列、舉例一律不影響判斷。
+
+範例：
+- 「做一份簡報，內容介紹這個能生成 PDF / Word / PPT / Excel 的系統」
+  → 只有 presentation=true。Word/Excel/PPT 只是被介紹的功能，不是要產的檔。report=false, table=false。
+- 「做一份 9 頁簡報，重點包含：核心能力（檔案生成 PDF/Word/PPT/Excel）、技術亮點…」
+  → 只有 presentation=true。括號裡是要寫進投影片的條列內容，不是輸出需求。
+- 「做一份報告，另外也幫我做一份簡報」
+  → report=true 且 presentation=true（兩個都是明確指令）。
+- 「整理成 excel 表格」 → table=true。
+- 「幫我分析這份財報」（沒說要任何檔案）→ 三個都 false。
+
+其他原則：
+- 使用者明確下令要簡報 → presentation=true。
+- 使用者明確下令要報告 / 文件 / 寫一篇 → report=true。
+- 使用者明確下令要表格 / 比較表 / excel → table=true。
+- 只是問問題、聊天、要一段純文字回答 → 三個都 false。
+- 不確定某個格式到底是『要產的檔』還是『內文描述』時，當作內文描述，標 false（寧可少產，不要多產）。";
         }
 
         private static string BuildUserPrompt(string text)

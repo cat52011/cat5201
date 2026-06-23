@@ -153,7 +153,13 @@ namespace test
             public string FileName { get; set; } = "";
             public string RelativePath { get; set; } = "";
             public string Kind { get; set; } = "file";
-            public string KindGlyph => Kind == "image" ? "??" : "??";
+            public string KindGlyph => Kind switch
+            {
+                "image" => "🖼",
+                "pdf"   => "📄",
+                "html"  => "🌐",
+                _       => "📎"
+            };
         }
 
         // 本次執行產生的可開啟檔案（報告 / 簡報 deck 等），顯示在輸出區下方。
@@ -1260,6 +1266,36 @@ namespace test
             bool canSkip = !chainRunning && !_isGenerating && _parent.NodeHasDownstream(this);
             SkipStepMenuItem.IsEnabled = canSkip;
             SkipStepMenuItem.Visibility = canSkip ? Visibility.Visible : Visibility.Collapsed;
+
+            // 加入記憶：只要此節點有產出內容就能手動標記為重要記憶。
+            bool canRemember = !busy && !string.IsNullOrWhiteSpace(GetBottomText());
+            AddToMemoryMenuItem.IsEnabled = canRemember;
+            AddToMemoryMenuItem.Visibility = canRemember ? Visibility.Visible : Visibility.Collapsed;
+
+            // 變更上游：只有「有上游連線」且非初始節點、鏈未在跑時才提供。
+            bool canRewire = !busy && !_parent.IsInitialNode(this) && _parent.GetFirstUpstreamNode(this) != null;
+            ChangeUpstreamMenuItem.IsEnabled = canRewire;
+            ChangeUpstreamMenuItem.Visibility = canRewire ? Visibility.Visible : Visibility.Collapsed;
+
+            // 更換連接方向：只要此節點有任何連線相連即可（純視覺互換接孔，不影響上下游/記憶）。
+            bool canSwapSide = !busy && _parent.NodeHasAnyConnection(this);
+            SwapConnectionSideMenuItem.IsEnabled = canSwapSide;
+            SwapConnectionSideMenuItem.Visibility = canSwapSide ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void AddToMemoryMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.AddNodeToMemory(this);
+        }
+
+        private void ChangeUpstreamMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.BeginRewireUpstream(this);
+        }
+
+        private void SwapConnectionSideMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _parent?.SwapNodeConnectionSide(this);
         }
 
         private void EditMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2246,6 +2282,11 @@ namespace test
             if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
             if (sender is not Thumb thumb) return;
 
+            // 變更上游進行中：點到連接點不可拉出新節點。不建立暫時連線（_tempPath 維持 null），
+            // 真正的「接上新上游」交給 Corner_DragCompleted → TryCompleteRewire 處理。
+            if (_parent.IsRewireActive)
+                return;
+
             var center = GetThumbCenterOnCanvas(thumb, mw.MainCanvas);
             _startPoint = center;
 
@@ -2288,6 +2329,14 @@ namespace test
             if (_parent == null) return;
             if (Window.GetWindow(this) is not MainWindow mw || mw.MainCanvas == null) return;
             if (sender is not Thumb thumb) return;
+
+            // 變更上游進行中：點/放在這個節點的連接點 = 把上游改接到「本節點」，不生新下游節點。
+            // 接左孔/右孔由 MainWindow 依滑鼠相對本節點中線判定。
+            if (_parent.IsRewireActive)
+            {
+                _parent.TryCompleteRewire(this);
+                return;
+            }
 
             if (_tempPath != null)
             {

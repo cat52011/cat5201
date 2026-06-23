@@ -74,6 +74,23 @@ namespace test
                     continue;
                 }
 
+                // Markdown 圖片：![alt](本機絕對路徑) → 置中嵌入（報告智慧配圖用）。
+                var imgMatch = Regex.Match(rawLine.Trim(), @"^!\[[^\]]*\]\(([^)]+)\)$");
+                if (imgMatch.Success)
+                {
+                    string imgPath = imgMatch.Groups[1].Value.Trim();
+                    try
+                    {
+                        if (System.IO.File.Exists(imgPath))
+                        {
+                            byte[] imgBytes = System.IO.File.ReadAllBytes(imgPath);
+                            col.Item().PaddingVertical(6).AlignCenter().MaxHeight(280).Image(imgBytes).FitArea();
+                        }
+                    }
+                    catch { }
+                    continue;
+                }
+
                 // Markdown 表格 → QuestPDF 表格。
                 if (IsTableRow(rawLine) && i + 1 < lines.Length && IsTableSeparator(lines[i + 1]))
                 {

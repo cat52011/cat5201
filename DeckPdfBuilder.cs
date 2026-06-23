@@ -61,6 +61,7 @@ namespace test
             public string Title = "";
             public string Subtitle = "";
             public string[] Bullets = Array.Empty<string>();
+            public byte[]? ImageBytes = null;
         }
 
         private static List<DeckSlide> BuildSlides(PresentationOutlinePayload outline)
@@ -88,7 +89,8 @@ namespace test
                         ? (string.IsNullOrWhiteSpace(s.Heading) ? outline.Title : s.Heading)
                         : (s.Heading ?? ""),
                     Subtitle = isCover ? (outline.Topic ?? "") : "",
-                    Bullets = (s.Bullets ?? Array.Empty<string>()).ToArray()
+                    Bullets = (s.Bullets ?? Array.Empty<string>()).ToArray(),
+                    ImageBytes = isCover ? null : s.ImageBytes
                 });
             }
 
@@ -121,13 +123,31 @@ namespace test
                 return;
             }
 
-            // 內容頁：深藍標題列（白字）+ 青色線 + 重點。
+            // 內容頁：深藍標題列（白字）+ 青色線 + 重點（有智慧配圖時左文右圖）。
             col.Item().Background(Navy).PaddingVertical(8).PaddingHorizontal(14)
                 .Text(slide.Title).FontSize(20).Bold().FontColor("#FFFFFF");
             col.Item().LineHorizontal(2).LineColor(Accent);
             col.Item().PaddingTop(10);
 
-            foreach (var b in slide.Bullets)
+            bool hasImg = slide.ImageBytes != null && slide.ImageBytes.Length > 0;
+            if (hasImg)
+            {
+                col.Item().Row(row =>
+                {
+                    row.RelativeItem(6).Column(bc => RenderBullets(bc, slide.Bullets));
+                    row.ConstantItem(20);
+                    row.RelativeItem(4).AlignMiddle().MaxHeight(300).Image(slide.ImageBytes!).FitArea();
+                });
+            }
+            else
+            {
+                RenderBullets(col, slide.Bullets);
+            }
+        }
+
+        private static void RenderBullets(ColumnDescriptor col, string[] bullets)
+        {
+            foreach (var b in bullets)
             {
                 if (string.IsNullOrWhiteSpace(b))
                     continue;

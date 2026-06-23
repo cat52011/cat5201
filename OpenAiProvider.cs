@@ -89,21 +89,14 @@ namespace test
 
                 if (a.IsImage)
                 {
-                    content.Add(new
-                    {
-                        type = "input_image",
-                        image_url = dataUrl
-                    });
+                    content.Add(new { type = "input_image", image_url = dataUrl });
                 }
-                else
+                else if (IsOpenAiSupportedFileType(a.MimeType))
                 {
-                    content.Add(new
-                    {
-                        type = "input_file",
-                        filename = a.FileName,
-                        file_data = dataUrl
-                    });
+                    // OpenAI Responses API 只接受 pdf / text 類附件；其他格式跳過避免 400。
+                    content.Add(new { type = "input_file", filename = a.FileName, file_data = dataUrl });
                 }
+                // docx / pptx / xlsx / octet-stream 等不支援類型 → 略過，不送給 OpenAI。
             }
 
             return new object[]
@@ -117,8 +110,17 @@ namespace test
         }
 
         private static string ToDataUrl(byte[] bytes, string mimeType)
+            => $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
+
+        // OpenAI Responses API input_file 支援的 MIME 類型白名單。
+        // 不在此清單的附件（docx/pptx/xlsx/octet-stream）直接跳過，避免 400 invalid_value。
+        private static bool IsOpenAiSupportedFileType(string? mimeType)
         {
-            return $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
+            if (string.IsNullOrWhiteSpace(mimeType)) return false;
+            string m = mimeType.ToLowerInvariant();
+            return m.StartsWith("text/", StringComparison.Ordinal)
+                || m == "application/pdf"
+                || m == "application/json";
         }
     }
 }

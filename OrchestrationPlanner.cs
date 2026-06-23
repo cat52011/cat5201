@@ -12,9 +12,16 @@ namespace test
             AgentDefinition runtimeAgent,
             AgentCapabilityExecutionPlan capabilityPlan,
             bool autoMode,
-            bool hasAttachments)
+            bool hasAttachments,
+            bool hasImageAttachment = false,
+            OutputIntent? outputIntent = null)
         {
             var taskType = ResolveTaskType(userInput, decision?.TaskMode ?? NodeTaskMode.Chat);
+
+            // 圖片編輯優先覆寫：有圖片附件 + 編輯意圖 → ImageEdit（不論分類器怎麼說）。
+            if (hasImageAttachment && IsImageEditIntent(userInput))
+                taskType = OrchestrationTaskType.ImageEdit;
+
             string pipelineId = ResolvePipelineId(taskType, hasAttachments);
 
             var stages = new List<OrchestrationStagePayload>();
@@ -36,9 +43,10 @@ namespace test
             AddStage(stages, "final_synthesis", "Final synthesis", runtimeAgent?.Id ?? "");
 
             // §6 多輸出：除了主任務型別，也看使用者是否「同時」要書面報告與簡報。
-            // 例：「給我一個報告介紹這個 包括簡報跟書面報告」→ 兩個 stage 都加，兩種檔都產。
-            bool wantsReport = OutputFormatDetector.WantsWrittenReport(userInput);
-            bool wantsDeck = OutputFormatDetector.WantsPresentation(userInput);
+            // 優先用第一層 LLM 判斷結果（OutputIntentResolver，語意理解，與實際產檔同一真相）；
+            // 子代理委派沒有 outputIntent 時才 fallback 關鍵字掃描，使顯示的 stage 與實際產檔一致。
+            bool wantsReport = outputIntent?.WantsReport ?? OutputFormatDetector.WantsWrittenReport(userInput);
+            bool wantsDeck   = outputIntent?.WantsPresentation ?? OutputFormatDetector.WantsPresentation(userInput);
 
             // File Generation v1：GenerateFile 任務（或簡報任務又要求書面報告）在最終答案之後，多一個寫檔階段。
             if (taskType == OrchestrationTaskType.GenerateFile ||
@@ -53,6 +61,10 @@ namespace test
             // Image Gen v1：ImageGeneration 任務在最終答案之後，多一個產生圖片階段。
             if (taskType == OrchestrationTaskType.ImageGeneration)
                 AddStage(stages, "generate_image", "Generate image", "image-agent");
+
+            // Image Edit：上傳圖 + 編輯指令 → 改圖階段。
+            if (taskType == OrchestrationTaskType.ImageEdit)
+                AddStage(stages, "generate_image_edit", "Edit image", "image-agent");
 
             // Video Gen v1：VideoGeneration 任務在最終答案之後，多一個（長時間、需輪詢的）產生影片階段。
             if (taskType == OrchestrationTaskType.VideoGeneration)
@@ -145,6 +157,19 @@ namespace test
             };
         }
 
+        // 有圖片附件時，使用者是否想「編輯這張圖」（改建 / 裝潢 / 改圖 / 套風格…）。
+        public static bool IsImageEditIntent(string? text)
+        {
+            string s = (text ?? "").ToLowerInvariant();
+            if (s.Length == 0) return false;
+
+            return ContainsAny(s,
+                "改建", "改造", "翻新", "拉皮", "重新裝潢", "裝潢", "重新設計", "改設計", "重繪", "重畫",
+                "改圖", "改這張", "改成", "編輯", "修改", "修圖", "p圖", "ps成", "photoshop", "去背",
+                "換成", "換掉", "替換", "重新上色", "上色", "風格化", "套用風格", "依照片", "根據照片", "根據附圖", "根據圖",
+                "edit", "redesign", "renovate", "remodel", "inpaint", "restyle", "retouch", "modify");
+        }
+
         private static string ResolvePipelineId(OrchestrationTaskType taskType, bool hasAttachments)
         {
             return taskType switch
@@ -154,6 +179,7 @@ namespace test
                 OrchestrationTaskType.Presentation => "presentation",
                 OrchestrationTaskType.GenerateFile => hasAttachments ? "attachment_to_file" : "generate_file",
                 OrchestrationTaskType.ImageGeneration => "image_generation",
+                OrchestrationTaskType.ImageEdit => "image_edit",
                 OrchestrationTaskType.VideoGeneration => "video_generation",
                 OrchestrationTaskType.Media => "media_generation",
                 OrchestrationTaskType.Workflow => "auto_workflow",

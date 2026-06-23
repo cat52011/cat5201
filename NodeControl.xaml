@@ -352,6 +352,19 @@
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="StopWorkflowMenuItem_Click"/>
             <Separator Style="{StaticResource NodeMenuSeparatorStyle}"/>
+            <MenuItem x:Name="AddToMemoryMenuItem"
+                      Header="🧠 將此節點加入記憶"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="AddToMemoryMenuItem_Click"/>
+            <MenuItem x:Name="ChangeUpstreamMenuItem"
+                      Header="🔀 變更上游節點"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="ChangeUpstreamMenuItem_Click"/>
+            <MenuItem x:Name="SwapConnectionSideMenuItem"
+                      Header="↔ 更換連接方向"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="SwapConnectionSideMenuItem_Click"/>
+            <Separator Style="{StaticResource NodeMenuSeparatorStyle}"/>
             <MenuItem x:Name="DeleteMenuItem"
                       Header="刪除"
                       Foreground="#D32F2F"
@@ -402,7 +415,7 @@
             <Border Grid.Row="0" Background="#00FFFFFF">
                 <Grid>
                     <TextBox x:Name="TopEditor"
-                             Margin="20,10,20,10"
+                             Margin="20,10,20,44"
                              TextWrapping="Wrap"
                              AcceptsReturn="True"
                              Background="Transparent"
@@ -411,6 +424,7 @@
                              IsReadOnly="True"
                              IsHitTestVisible="True"
                              Focusable="True"
+                             VerticalScrollBarVisibility="Auto"
                              TextChanged="TopEditor_TextChanged"
                              PreviewMouseLeftButtonDown="TopEditor_PreviewMouseLeftButtonDown"
                              LostKeyboardFocus="TopEditor_LostKeyboardFocus"
@@ -760,7 +774,8 @@
                         <!-- 失敗時：從失敗續跑（整段重新執行）。固定在右下角、黑底白字 -->
                         <Button x:Name="RerunButton"
                                 Grid.Column="2"
-                                Content="↻ 重新執行"
+                                Content="↻"
+                                ToolTip="重新執行"
                                 Visibility="Collapsed"
                                 Style="{StaticResource StatusPillButtonStyle}"
                                 Foreground="White"

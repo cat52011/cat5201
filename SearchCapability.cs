@@ -51,20 +51,32 @@ namespace test
         {
             string originalQuery = context.TopText ?? "";
 
-            // 只有真正的財經意圖（財報 / 股價 / 營收…）或 cashtag 才走報價卡財經研究。
-            // 單純提到公司名（例如「介紹台積電的簡報」）走一般研究，不硬抓股價。
-            bool financeQuery = FinanceTaskDetector.IsFinanceFocused(originalQuery);
-
-            if (financeQuery)
+            try
             {
-                return await ExecuteAuthoritativeFinanceResearchAsync(
-                    originalQuery,
-                    ct);
-            }
+                // 只有真正的財經意圖（財報 / 股價 / 營收…）或 cashtag 才走報價卡財經研究。
+                // 單純提到公司名（例如「介紹台積電的簡報」）走一般研究，不硬抓股價。
+                bool financeQuery = FinanceTaskDetector.IsFinanceFocused(originalQuery);
 
-            return await ExecuteGeneralSearchAsync(
-                originalQuery,
-                ct);
+                if (financeQuery)
+                    return await ExecuteAuthoritativeFinanceResearchAsync(originalQuery, ct);
+
+                return await ExecuteGeneralSearchAsync(originalQuery, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Perplexity 服務暫時不可用（5xx / 網路錯誤）→ 回傳 soft result，
+                // 讓主流程繼續用 AI 自身知識回答，不 throw 以避免觸發 Required 失敗路徑。
+                var fallbackPayload = new SearchSummaryPayload
+                {
+                    Query = originalQuery,
+                    Summary = $"⚠️ 搜尋服務暫時無法使用（{ex.Message}），以下回答基於 AI 訓練資料，不含即時外部資訊。"
+                };
+                return AgentCapabilityResult.WithData("search_summary", fallbackPayload);
+            }
         }
 
         private async Task<AgentCapabilityResult> ExecuteAuthoritativeFinanceResearchAsync(

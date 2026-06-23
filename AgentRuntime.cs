@@ -146,13 +146,23 @@ namespace test
     decision.TaskMode,
     capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
 
+            bool hasImageAttachment = capabilityContext.Attachments != null &&
+                capabilityContext.Attachments.Any(a => a != null &&
+                    ((!string.IsNullOrEmpty(a.MimeType) && a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                     || a.FileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                     || a.FileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                     || a.FileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+                     || a.FileName.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)));
+
             var orchestrationPlan = OrchestrationPlanner.Build(
                 topText,
                 decision,
                 runtimeAgent,
                 capabilityPlan,
                 _main.IsAutoModelSelectionEnabled(),
-                capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0);
+                capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0,
+                hasImageAttachment,
+                request.OutputIntent);
 
             // Sub-agents (DelegationDepth > 0) write internal orchestration_plans only;
             // the root agent's plan is the authoritative visible one.
@@ -843,11 +853,14 @@ namespace test
             }
 
             // Image Gen v1：圖片任務不需要 LLM 描述圖片，只讓它輸出一句確認語。
-            if (orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration)
+            if (orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration ||
+                orchestrationPlan.TaskType == OrchestrationTaskType.ImageEdit)
             {
+                bool isEdit = orchestrationPlan.TaskType == OrchestrationTaskType.ImageEdit;
                 finalInput =
-                    "你是圖片生成助理。使用者請你依描述生成圖片，圖片生成程式已準備好。" +
-                    "請只用一句繁體中文確認你會根據描述生成圖片，不要展開描述圖片內容，不要給提示詞。" +
+                    (isEdit
+                        ? "你是圖片編輯助理。使用者上傳了圖片並請你依指令修改，圖片編輯程式已準備好。請只用一句繁體中文確認你會依指令修改上傳的圖片，不要展開描述、不要給提示詞。"
+                        : "你是圖片生成助理。使用者請你依描述生成圖片，圖片生成程式已準備好。請只用一句繁體中文確認你會根據描述生成圖片，不要展開描述圖片內容，不要給提示詞。") +
                     "\n\n【使用者描述】\n" + topText;
             }
             else if (!string.IsNullOrWhiteSpace(request.PreferenceBlock))
@@ -868,7 +881,8 @@ namespace test
             bool useStreamingForFinalExecution =
                 request.UseStreaming &&
                 !hasCodeDiffDraft &&
-                orchestrationPlan.TaskType != OrchestrationTaskType.ImageGeneration;
+                orchestrationPlan.TaskType != OrchestrationTaskType.ImageGeneration &&
+                orchestrationPlan.TaskType != OrchestrationTaskType.ImageEdit;
 
             if (synthesisExecution != null && synthesisExecution.IsSuccess)
             {
@@ -1089,6 +1103,22 @@ namespace test
                     request.CancellationToken);
             }
 
+            // Image Edit：上傳圖 + 編輯指令 → 用 OpenAI images/edits 改圖，輸出改建後的照片。
+            if (execution.IsSuccess &&
+                orchestrationPlan.TaskType == OrchestrationTaskType.ImageEdit &&
+                request.DelegationDepth == 0)
+            {
+                execution = await GenerateImageEdit(
+                    node,
+                    runtimeAgent,
+                    topText,
+                    workspace,
+                    orchestrationPlan,
+                    execution,
+                    orchestration,
+                    request.CancellationToken);
+            }
+
             // Video Gen v1：VideoGeneration 任務在最終答案後呼叫影片 API（非同步、需輪詢），
             // 完成後存檔、加入 workspace artifact。未啟用時（休眠）標記未啟用，不影響主答案。
             if (execution.IsSuccess &&
@@ -1163,7 +1193,11 @@ namespace test
             bool dirty = DocumentAuthor.LooksDirty(sourceMaterial);
             string? existingTable = DocumentAuthor.ExtractMarkdownTable(sourceMaterial);
 
-            bool authorReport = intent.WantsReport && dirty;
+            // 報告一律請 Report Author 重寫成完整書面散文：避免「同時生簡報＋報告」時，
+            // 報告沿用偏簡報風（條列 / 濃縮）的主答案而變得跟簡報一樣——書面報告必須是文章體。
+            // （dirty 仍保留給日後判斷用，但不再是是否重寫的條件。）
+            _ = dirty;
+            bool authorReport = intent.WantsReport;
             bool authorTable = intent.WantsTable && existingTable == null;
 
             if (authorReport || authorTable)
@@ -1235,6 +1269,10 @@ namespace test
             // 報告：.docx + 內容一致的 report.pdf（兩者都吃 reportMarkdown）。
             if (intent.WantsReport)
             {
+                // 階段3：報告智慧配圖（同簡報規格）——使用者要圖時，Claude 挑適合的章節生成呼應的圖並嵌入。
+                if (PresentationWantsCoverImage(userInput))
+                    reportMarkdown = await IllustrateReportMarkdownAsync(node, reportMarkdown, genDir, ct);
+
                 TryEmit(() => GeneratedFileWriter.WriteDocx(
                     genDir, title, DocxReportBuilder.Build(reportMarkdown), sourceSummary), "report-agent");
                 TryEmit(() => GeneratedFileWriter.WritePdf(
@@ -1263,12 +1301,47 @@ namespace test
         }
 
         private static string ExtractReportTitle(string userInput)
-        {
-            string text = (userInput ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
-            if (string.IsNullOrWhiteSpace(text))
-                return "報告";
+            => DeriveCleanTitle(userInput, "報告");
 
-            return text.Length > 40 ? text.Substring(0, 40).Trim() : text;
+        // 從使用者輸入提煉「乾淨簡短主題」當檔名（像聊天存檔那樣乾淨）：
+        // 去掉祈使動詞 / 格式詞（做一份、輸出成…）/ 頁數 / 配圖等雜訊，只留核心主題。
+        // 提煉後為空（純指令、無主題）時回 fallback。
+        private static string DeriveCleanTitle(string? userInput, string fallback)
+        {
+            string t = (userInput ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            if (t.Length == 0) return fallback;
+
+            string[] prefixes = { "幫我", "請幫我", "請", "麻煩", "幫忙", "我要", "我想要", "我想", "想要", "可以" };
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var p in prefixes)
+                    if (t.StartsWith(p, System.StringComparison.Ordinal))
+                    {
+                        t = t.Substring(p.Length).TrimStart('，', '、', ' ');
+                        changed = true;
+                    }
+            }
+
+            string[] noise =
+            {
+                "做一份", "做一個", "做成", "製作", "生成", "寫一份", "寫一個", "幫我做", "整理成", "彙整成", "輸出成", "輸出為", "產生",
+                "關於", "有關", "針對",
+                "並幫我生成一張封面圖", "並生成一張封面圖", "並生成封面圖", "幫我生成封面圖", "加上封面圖", "封面圖",
+                "都要配圖", "並配圖", "要配圖", "也要配圖", "配圖", "附圖", "加圖", "插圖",
+                "的書面報告", "書面報告", "報告", "簡報", "投影片", "文件", "表格", "懶人包",
+                "以及", "並且", "並", "還有",
+                "pdf", "PDF", "word", "Word", "ppt", "PPT", "pptx", "docx", "xlsx", "excel", "Excel", "marp"
+            };
+            foreach (var n in noise) t = t.Replace(n, "");
+
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"\d+\s*[頁張]", "");
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"[一二三四五六七八九十兩]+\s*[頁張]", "");
+
+            t = t.Trim('，', '。', '、', '：', ':', '；', ';', ' ', '的', '　');
+            if (t.Length == 0) return fallback;
+            return t.Length > 24 ? t.Substring(0, 24).Trim() : t;
         }
 
         /// <summary>
@@ -1335,6 +1408,10 @@ namespace test
             {
                 (coverImageBytes, _) = await TryGenerateCoverImageAsync(
                     node, runtimeAgent, outline, workspace, orchestrationPlan, ct);
+
+                // 階段2：智慧內容頁配圖——Claude 挑適合的內容頁、生成與內容呼應的圖，
+                // 填入各 slide.ImageBytes，由 PptxBuilder / DeckPdfBuilder 嵌入（圖文並茂）。
+                await GenerateSlideIllustrationsAsync(node, outline, ct);
             }
 
             // .pptx 二進位檔：只有使用者在個人化選了「Gamma」生成器才走 Gamma（Claude 內容 + Gamma 設計）；
@@ -1353,7 +1430,7 @@ namespace test
                     byte[] pptxBytes = PptxBuilder.Build(outline, coverImageBytes);
                     pptxResult = GeneratedFileWriter.WritePptx(
                         _main.GetGeneratedFilesDir(),
-                        title: outline.Title,
+                        title: DeriveCleanTitle(userInput, outline.Title),
                         content: pptxBytes,
                         sourceSummary: sourceSummary);
 
@@ -1370,7 +1447,7 @@ namespace test
             {
                 var pdfResult = GeneratedFileWriter.WritePdf(
                     _main.GetGeneratedFilesDir(),
-                    title: outline.Title,
+                    title: DeriveCleanTitle(userInput, outline.Title),
                     content: DeckPdfBuilder.Build(outline, coverImageBytes),
                     sourceSummary: sourceSummary);
 
@@ -1548,9 +1625,13 @@ namespace test
                     ? outline.Title
                     : $"{outline.Title}：{outline.Topic}";
 
-                string prompt =
-                    $"專業簡報封面用的乾淨示意插圖，主題：{subject}。" +
-                    "簡潔現代、留白充足、無文字、無浮水印。";
+                // 「沒意義」的舊作法是把標題塞進死板模板；改成讓 Claude 讀簡報實際內容，
+                // 萃取「一個能代表整份簡報的具體象徵畫面」，再套統一的簡約資訊示意風格。
+                string brief = await BuildIllustrationBriefAsync(
+                    node, BuildCoverBriefMaterial(outline), "簡報封面", ct);
+                if (string.IsNullOrWhiteSpace(brief))
+                    brief = $"A symbolic minimalist illustration representing the concept of: {subject}";
+                string prompt = IllustrationStyle.Compose(brief);
 
                 var imageService = new OpenAIImageService("gpt-image-2");
                 var image = await imageService.GenerateAsync(prompt, "1024x1024", ct);
@@ -1578,6 +1659,281 @@ namespace test
         /// 並在答案尾端附上一句說明（圖片本體由輸出區直接顯示，檔案 chip 可開啟原圖）。
         /// 生成失敗不影響主答案，只把 generate_image 階段標記為 failed。
         /// </summary>
+        // 通用配圖 brief：把一段內容素材交給 Claude，萃取成「一個具體、單一焦點、可畫的英文畫面提示」，
+        // 並套用統一的簡約資訊示意風格指示。封面、（後續）內容頁、報告章節配圖共用，確保調性一致。
+        private async Task<string> BuildIllustrationBriefAsync(
+            NodeControl node, string material, string contextLabel, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(material))
+                return "";
+
+            string briefPrompt =
+                $"你是簡報 / 報告配圖的視覺設計師。下面是一份「{contextLabel}」要表達的內容。\n" +
+                "請從中找出『一個最能代表它的核心概念』，寫成一段【具體、精煉、單一焦點】的英文圖片提示，描述畫面主體、構圖與象徵元素。\n\n" +
+                "嚴格規則：\n" +
+                "1. 只輸出最終英文圖片提示本身，不要任何解釋、前後綴、引號或 markdown。\n" +
+                "2. 聚焦單一清楚概念，用象徵 / 隱喻的視覺元素表達，讓人一眼看懂主題。\n" +
+                "3. 不要捏造任何文字、商標、數據或品牌名。\n" +
+                $"4. {IllustrationStyle.BriefStyleGuidance}\n\n" +
+                "=== 內容 ===\n" + material;
+
+            var decision = new NodeExecutionDecision
+            {
+                RequestedAgentId = "general-agent",
+                ActualAgentId = "general-agent",
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ActualModelId = "",
+                TaskMode = NodeTaskMode.Chat,
+                ResolverLabel = "Illustration Brief (Claude)",
+                ResolverReason = "Claude 先把內容轉成具體、單一焦點的配圖畫面，避免生出無意義的抽象圖。",
+                StatusLabel = "Auto",
+                ForceSingleModel = true
+            };
+
+            try
+            {
+                var r = await _executeWithFallbackAsync(node, briefPrompt, decision, null, false, ct);
+                return r.IsSuccess ? (r.Text ?? "").Trim() : "";
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return ""; }
+        }
+
+        // 封面 brief 的素材：標題 + 主題 + 前幾個內容頁的重點，讓封面圖能代表整份簡報、與內容呼應。
+        private static string BuildCoverBriefMaterial(PresentationOutlinePayload outline)
+        {
+            if (outline == null) return "";
+
+            var sb = new System.Text.StringBuilder();
+            if (!string.IsNullOrWhiteSpace(outline.Title)) sb.AppendLine($"簡報標題：{outline.Title}");
+            if (!string.IsNullOrWhiteSpace(outline.Topic)) sb.AppendLine($"主題：{outline.Topic}");
+
+            var contentSlides = (outline.Slides ?? System.Array.Empty<PresentationSlidePayload>())
+                .Where(s => string.Equals(s.Kind, "content", System.StringComparison.OrdinalIgnoreCase))
+                .Take(4);
+            foreach (var s in contentSlides)
+            {
+                string firstBullet = (s.Bullets != null && s.Bullets.Count > 0) ? s.Bullets[0] : "";
+                sb.AppendLine($"- {s.Heading}：{firstBullet}".TrimEnd('：', ' '));
+            }
+
+            return sb.ToString().Trim();
+        }
+
+        // 簡報內容頁智慧配圖數量上限（控制成本）。
+        private const int MaxContentSlideImages = 3;
+
+        // 智慧內容頁配圖：由 Claude 從內容頁挑「最適合用圖表達」的頁並寫配圖提示，
+        // 再用 gpt-image-2 生成與內容呼應的圖、填入 slide.ImageBytes（由 PptxBuilder / DeckPdfBuilder 嵌入）。
+        // 缺 OPENAI_API_KEY / 任何失敗一律略過，不影響簡報主體。
+        private async Task GenerateSlideIllustrationsAsync(
+            NodeControl node, PresentationOutlinePayload outline, CancellationToken ct)
+        {
+            if (outline?.Slides == null) return;
+
+            var contentSlides = outline.Slides
+                .Where(s => string.Equals(s.Kind, "content", System.StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var sections = contentSlides
+                .Select(s => (s.Order, s.Heading ?? "",
+                    string.Join("；", (s.Bullets ?? System.Array.Empty<string>()).Take(3))))
+                .ToList();
+
+            var plan = await PlanIllustrationsAsync(node, sections, MaxContentSlideImages, "簡報", ct);
+            if (plan.Count == 0) return;
+
+            OpenAIImageService imageService;
+            try { imageService = new OpenAIImageService("gpt-image-2"); }
+            catch { return; }  // 沒有 OPENAI_API_KEY → 略過內容頁配圖
+
+            foreach (var slide in outline.Slides)
+            {
+                if (!string.Equals(slide.Kind, "content", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!plan.TryGetValue(slide.Order, out var brief) || string.IsNullOrWhiteSpace(brief))
+                    continue;
+
+                try
+                {
+                    var img = await imageService.GenerateAsync(IllustrationStyle.Compose(brief), "1024x1024", ct);
+                    if (img.Success && img.PngBytes != null && img.PngBytes.Length > 0)
+                    {
+                        slide.ImageBytes = img.PngBytes;
+                        double usd = ModelCostEstimator.ImageCostUsd("1024x1024", "high");
+                        node.AddMediaCostUsd(usd, $"內容配圖 US${usd:F2}");
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { }
+            }
+        }
+
+        // 用一次 Claude 呼叫，從內容區塊挑最多 maxCount 個適合配圖的，並寫具體英文配圖提示。
+        // sections：(id, title, body) 清單（簡報＝內容頁，報告＝章節）；回傳 id → 英文提示。任何失敗回空字典。
+        private async Task<Dictionary<int, string>> PlanIllustrationsAsync(
+            NodeControl node,
+            IReadOnlyList<(int id, string title, string body)> sections,
+            int maxCount, string contextLabel, CancellationToken ct)
+        {
+            var result = new Dictionary<int, string>();
+            if (sections == null || sections.Count == 0) return result;
+
+            var sb = new System.Text.StringBuilder();
+            foreach (var s in sections)
+            {
+                string body = (s.body ?? "").Replace("\n", " ").Trim();
+                if (body.Length > 120) body = body.Substring(0, 120);
+                sb.AppendLine($"[{s.id}] {s.title}：{body}".TrimEnd('：', ' '));
+            }
+
+            string planPrompt =
+                $"你是{contextLabel}配圖總監。下面是內容區塊清單（每行開頭 [編號]）。\n" +
+                $"請挑選最多 {maxCount} 個『最適合用圖表達』的區塊（概念、流程、對比、情境類適合；純數據 / 純條列可不選），\n" +
+                "為每個選中的區塊寫一段具體、單一焦點的英文配圖提示，描述畫面主體與象徵元素，與該區塊內容呼應。\n" +
+                "只輸出 JSON（不要 markdown 圍欄、不要多餘文字），格式：{\"items\":[{\"id\":編號,\"prompt\":\"英文提示\"}]}。\n" +
+                $"風格參考：{IllustrationStyle.BriefStyleGuidance}\n\n" +
+                "=== 內容區塊 ===\n" + sb;
+
+            var decision = new NodeExecutionDecision
+            {
+                RequestedAgentId = "general-agent",
+                ActualAgentId = "general-agent",
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ActualModelId = "",
+                TaskMode = NodeTaskMode.Chat,
+                ResolverLabel = "Illustration Plan (Claude)",
+                ResolverReason = "Claude 挑選適合配圖的區塊並寫具體配圖提示。",
+                StatusLabel = "Auto",
+                ForceSingleModel = true
+            };
+
+            try
+            {
+                var r = await _executeWithFallbackAsync(node, planPrompt, decision, null, false, ct);
+                if (!r.IsSuccess || string.IsNullOrWhiteSpace(r.Text)) return result;
+
+                string json = ExtractFirstJsonObject(r.Text);
+                if (string.IsNullOrWhiteSpace(json)) return result;
+
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("items", out var arr) &&
+                    arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var el in arr.EnumerateArray())
+                    {
+                        if (result.Count >= maxCount) break;
+                        if (!el.TryGetProperty("id", out var o) ||
+                            !el.TryGetProperty("prompt", out var p)) continue;
+
+                        int id;
+                        if (o.ValueKind == System.Text.Json.JsonValueKind.Number) id = o.GetInt32();
+                        else if (!int.TryParse(o.GetString(), out id)) continue;
+
+                        string prompt = (p.GetString() ?? "").Trim();
+                        if (!string.IsNullOrWhiteSpace(prompt))
+                            result[id] = prompt;
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+
+            return result;
+        }
+
+        // 從模型回傳抓出第一個完整 JSON 物件（容忍圍欄 / 前後雜訊）。
+        private static string ExtractFirstJsonObject(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            int start = text.IndexOf('{');
+            int end = text.LastIndexOf('}');
+            return (start < 0 || end <= start) ? "" : text.Substring(start, end - start + 1);
+        }
+
+        // 報告智慧配圖數量上限（控制成本）。
+        private const int MaxReportImages = 3;
+
+        // 階段3 報告智慧配圖（同簡報規格）：解析 markdown 的 ## 章節，由 Claude 挑適合的章節，
+        // 生成與內容呼應的圖、寫成 png，並在該章節標題行後插入 markdown 圖片語法
+        // （DocxReportBuilder / PdfReportBuilder 會嵌入）。缺金鑰 / 任何失敗一律回原 markdown。
+        private async Task<string> IllustrateReportMarkdownAsync(
+            NodeControl node, string markdown, string genDir, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(markdown)) return markdown;
+
+            var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+
+            // 收集 ## 章節：id = 標題行索引、body = 到下一個標題前的文字。
+            var sections = new List<(int id, string title, string body)>();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].StartsWith("## ", System.StringComparison.Ordinal)) continue;
+
+                string title = lines[i].Substring(3).Trim();
+                var bodySb = new System.Text.StringBuilder();
+                for (int j = i + 1;
+                     j < lines.Length &&
+                     !lines[j].StartsWith("## ", System.StringComparison.Ordinal) &&
+                     !lines[j].StartsWith("# ", System.StringComparison.Ordinal);
+                     j++)
+                {
+                    bodySb.Append(lines[j]).Append(' ');
+                }
+                sections.Add((i, title, bodySb.ToString().Trim()));
+            }
+
+            if (sections.Count == 0) return markdown;
+
+            var plan = await PlanIllustrationsAsync(node, sections, MaxReportImages, "報告", ct);
+            if (plan.Count == 0) return markdown;
+
+            OpenAIImageService imageService;
+            try { imageService = new OpenAIImageService("gpt-image-2"); }
+            catch { return markdown; }  // 沒有 OPENAI_API_KEY → 不配圖
+
+            // 生圖、存 png，記錄要在哪一行（章節標題行）後插入圖片語法。
+            var inserts = new Dictionary<int, string>();
+            foreach (var (id, title, _) in sections)
+            {
+                if (!plan.TryGetValue(id, out var brief) || string.IsNullOrWhiteSpace(brief)) continue;
+
+                try
+                {
+                    var img = await imageService.GenerateAsync(IllustrationStyle.Compose(brief), "1024x1024", ct);
+                    if (!img.Success || img.PngBytes == null || img.PngBytes.Length == 0) continue;
+
+                    System.IO.Directory.CreateDirectory(genDir);
+                    string path = System.IO.Path.Combine(genDir, $"report_img_{System.Guid.NewGuid():N}.png");
+                    await System.IO.File.WriteAllBytesAsync(path, img.PngBytes, ct);
+
+                    inserts[id] = $"![{title}]({path})";
+                    double usd = ModelCostEstimator.ImageCostUsd("1024x1024", "high");
+                    node.AddMediaCostUsd(usd, $"報告配圖 US${usd:F2}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { }
+            }
+
+            if (inserts.Count == 0) return markdown;
+
+            // 重組：在每個被選中的 ## 章節標題行後插入「空行 + 圖片語法 + 空行」。
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                sb.AppendLine(lines[i]);
+                if (inserts.TryGetValue(i, out var imgMd))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine(imgMd);
+                    sb.AppendLine();
+                }
+            }
+
+            return sb.ToString();
+        }
+
         // 把（可能含上游搜尋結果的）原始輸入交給 Claude，萃取真正主體並寫成具體、可畫的圖片提示。
         private async Task<string> BuildImageBriefAsync(NodeControl node, string rawRequest, CancellationToken ct)
         {
@@ -1726,6 +2082,144 @@ namespace test
             orchestration.MarkFailed("generate_image", generated.ErrorMessage);
             return execution;
         }
+
+        // Image Edit：上傳圖 + 指令 → OpenAI images/edits 改圖，輸出改建後的照片。
+        // 缺圖 / 缺金鑰 / 失敗一律附註說明、不中斷主答案。
+        private async Task<AiFallbackExecutionResult> GenerateImageEdit(
+            NodeControl node,
+            AgentDefinition runtimeAgent,
+            string userInput,
+            AgentWorkspace workspace,
+            OrchestrationPlanPayload orchestrationPlan,
+            AiFallbackExecutionResult execution,
+            OrchestrationStateMachine orchestration,
+            CancellationToken ct)
+        {
+            orchestration.MarkRunning("generate_image_edit");
+
+            byte[]? srcImage = GetFirstImageAttachmentBytes(node);
+            if (srcImage == null)
+            {
+                orchestration.MarkFailed("generate_image_edit", "找不到可編輯的圖片附件。");
+                return AppendNote(execution, "\n\n⚠ 沒有找到可編輯的圖片附件，請在這個節點掛上要修改的照片再試。");
+            }
+
+            // 把中文指令（可能含「影片風格」這種與圖片無關的雜訊）轉成乾淨的英文編輯指令，並強調保留整體結構。
+            string prompt = await BuildImageEditPromptAsync(node, userInput, ct);
+            if (string.IsNullOrWhiteSpace(prompt))
+                prompt = (userInput ?? "").Trim();
+
+            OpenAIImageService.ImageResult image;
+            try
+            {
+                var svc = new OpenAIImageService("gpt-image-1");
+                image = await svc.EditAsync(srcImage, prompt, "1024x1024", ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                orchestration.MarkFailed("generate_image_edit", ex.Message);
+                return AppendNote(execution, $"\n\n⚠ 圖片編輯失敗：{ex.Message}");
+            }
+
+            if (!image.Success)
+            {
+                orchestration.MarkFailed("generate_image_edit", image.ErrorMessage);
+                return AppendNote(execution, $"\n\n⚠ 圖片編輯失敗：{image.ErrorMessage}");
+            }
+
+            string sourceSummary = $"{orchestrationPlan.PipelineId} / gpt-image-1 edit";
+            var generated = GeneratedFileWriter.WriteImage(
+                _main.GetGeneratedFilesDir(),
+                title: DeriveCleanTitle(userInput, "改建照片"),
+                content: image.PngBytes,
+                sourceSummary: sourceSummary);
+
+            workspace.Add(AgentWorkspaceBuilder.FromCapabilityData(
+                workspace, node, runtimeAgent?.Id ?? "image-agent", "generated_file", generated));
+
+            if (generated.Success)
+            {
+                orchestration.MarkSuccess("generate_image_edit", generated.FileName);
+                double usd = ModelCostEstimator.ImageCostUsd("1024x1024", "high");
+                node.AddMediaCostUsd(usd, $"圖片編輯 1 張 US${usd:F2}");
+                string costHint = ModelCostEstimator.ImageCostDisplay(1, "1024x1024", "high");
+                return AppendNote(execution, $"\n\n已輸出改建後的照片（gpt-image-1 編輯）。{costHint}");
+            }
+
+            orchestration.MarkFailed("generate_image_edit", generated.ErrorMessage);
+            return execution;
+        }
+
+        // 取節點（含沿上游鏈繼承）的第一張圖片附件 bytes；無則 null。
+        private byte[]? GetFirstImageAttachmentBytes(NodeControl node)
+        {
+            try
+            {
+                string root = _main.GetAttachmentsRootDir();
+                foreach (var a in _main.GetEffectiveAttachmentsForNode(node))
+                {
+                    bool isImg =
+                        (!string.IsNullOrEmpty(a.MimeType) && a.MimeType.StartsWith("image/", System.StringComparison.OrdinalIgnoreCase))
+                        || a.FileName.EndsWith(".png", System.StringComparison.OrdinalIgnoreCase)
+                        || a.FileName.EndsWith(".jpg", System.StringComparison.OrdinalIgnoreCase)
+                        || a.FileName.EndsWith(".jpeg", System.StringComparison.OrdinalIgnoreCase)
+                        || a.FileName.EndsWith(".webp", System.StringComparison.OrdinalIgnoreCase);
+                    if (!isImg) continue;
+
+                    string path = System.IO.Path.Combine(root, a.RelativePath);
+                    if (System.IO.File.Exists(path))
+                        return System.IO.File.ReadAllBytes(path);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // 把使用者的中文修改指令轉成乾淨英文編輯指令（保留整體結構、去除與圖片無關的雜訊如「影片風格」）。
+        private async Task<string> BuildImageEditPromptAsync(NodeControl node, string userInput, CancellationToken ct)
+        {
+            string p =
+                "你是圖片編輯提示詞工程師。使用者上傳了一張照片，並用中文描述想怎麼修改它。\n" +
+                "請把它轉成一段給圖片編輯模型的英文編輯指令：明確說出要改哪裡、改成什麼樣子，" +
+                "並明確強調保留原圖的整體結構 / 構圖 / 視角 / 其餘部分不變（only change what is requested, keep the overall structure and composition intact）。\n" +
+                "規則：只輸出英文編輯指令本身，不要解釋 / 引號 / markdown；不要提到『影片』或任何與圖片編輯無關的字；不要捏造文字或商標。\n\n" +
+                "【使用者指令】\n" + (userInput ?? "").Trim();
+
+            var decision = new NodeExecutionDecision
+            {
+                RequestedAgentId = "general-agent",
+                ActualAgentId = "general-agent",
+                RequestedModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ModelId = AiModelHelper.NormalizeNodeModel(AiModels.Claude_Sonnet46),
+                ActualModelId = "",
+                TaskMode = NodeTaskMode.Chat,
+                ResolverLabel = "Image Edit Prompt (Claude)",
+                ResolverReason = "Claude 把中文修改指令轉成乾淨英文編輯指令，強調保留整體結構。",
+                StatusLabel = "Auto",
+                ForceSingleModel = true
+            };
+
+            try
+            {
+                var r = await _executeWithFallbackAsync(node, p, decision, null, false, ct);
+                return r.IsSuccess ? (r.Text ?? "").Trim() : "";
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return ""; }
+        }
+
+        private static AiFallbackExecutionResult AppendNote(AiFallbackExecutionResult e, string note)
+            => new AiFallbackExecutionResult
+            {
+                IsSuccess = e.IsSuccess,
+                Text = (e.Text ?? "").TrimEnd() + note,
+                ActualModelId = e.ActualModelId ?? "",
+                UsedFallback = e.UsedFallback,
+                Summary = e.Summary ?? "",
+                ErrorMessage = e.ErrorMessage ?? "",
+                Attempts = e.Attempts ?? System.Array.Empty<AiFallbackAttempt>()
+            };
 
         /// <summary>
         /// Video Gen v1（多工具導演流程）：

@@ -151,6 +151,16 @@ namespace test
 
         public int DeletePreference(string key) => _memoryService.DeletePreference(key);
 
+        /// <summary>右鍵「將此節點加入記憶」：存一筆最高重要性、全域可見的共享記憶。回傳標題。</summary>
+        public string RememberNodeManually(
+            NodeControl node, string agentId, string topText, string bottomText,
+            NodeTaskMode taskMode, string modelId)
+        {
+            var title = _memoryService.RememberNodeManually(node, agentId, topText, bottomText, taskMode, modelId);
+            TryRefreshMemoryPanel();
+            return title;
+        }
+
         /// <summary>(偏好筆數, episodic 筆數)。</summary>
         public (int preferences, int episodic) GetMemoryStats()
             => _memoryService.GetMemoryStats();
@@ -158,6 +168,9 @@ namespace test
         public int ClearAllMemory() => _memoryService.ClearAllMemory();
         public int ClearPreferenceMemory() => _memoryService.ClearPreferences();
         public int ClearEpisodicMemory() => _memoryService.ClearEpisodicMemory();
+
+        /// <summary>清除「當前記憶」清單顯示的全部內容（偏好 + 使用者標記）。</summary>
+        public int ClearShownMemory() => _memoryService.ClearShownMemory();
 
         /// <summary>執行後在 UI 執行緒刷新側邊欄記憶面板（被動偏好/記憶數可能已變動）。</summary>
         private void TryRefreshMemoryPanel()
@@ -531,6 +544,12 @@ namespace test
             var workspace = reuseWorkspace ?? new AgentWorkspace();
             bool skipCapabilities = skipCapabilitiesOverride ?? ShouldSkipCapabilities(topText);
 
+            // 重新生成（沿用上次 workspace）時，先移除上一輪的「已生成檔案」artifact：
+            // 本輪會重新產生簡報 / 報告檔，若不清掉舊的，SetOutputFiles 會把舊+新一起列成 chip，
+            // 而舊檔實體已被節點的 ClearOutputFiles 刪除 → 變成殘留、打不開的 chip。
+            if (reuseWorkspace != null)
+                workspace.RemoveByType("generated_file");
+
             try
             {
                 var outputIntent = await ResolveOutputIntentAsync(topText, ct);
@@ -835,6 +854,23 @@ namespace test
                         useStreaming ? countingDelta : null,
                         useStreaming && decision.UseStreaming && i == 0,
                         ct);
+
+                    // 額度用盡 / 模型無回應時，部分 provider 不拋例外而是回空字串。
+                    // 對 LLM 文字生成，空回應＝實質失敗：記為此候選失敗並繼續 fallback 到下一個模型，
+                    // 而不是把空字串當「成功」回傳（否則使用者只看到「沒有回傳內容」、且永遠不會切模型）。
+                    // 若串流已 emit 過內容（emittedChars>0）則不在此攔截，交由既有「串流中斷不再 fallback」邏輯處理。
+                    if (string.IsNullOrWhiteSpace(text) && emittedChars == 0)
+                    {
+                        attempts.Add(new AiFallbackAttempt
+                        {
+                            AttemptIndex = i + 1,
+                            ModelId = candidateModel,
+                            Reason = candidate.Reason,
+                            Success = false,
+                            ErrorMessage = "模型沒有回傳內容（可能額度用盡或無回應），改試下一個模型。"
+                        });
+                        continue;
+                    }
 
                     attempts.Add(new AiFallbackAttempt
                     {
@@ -1327,23 +1363,21 @@ namespace test
 
             return ext switch
             {
-                ".cs" => "text/plain",
-                ".xaml" => "text/plain",
-                ".java" => "text/plain",
-                ".cpp" => "text/plain",
-                ".h" => "text/plain",
-                ".hpp" => "text/plain",
-                ".py" => "text/plain",
-                ".js" => "text/plain",
-                ".ts" => "text/plain",
+                ".cs" or ".xaml" or ".java" or ".cpp" or ".c" or ".h" or ".hpp"
+                    or ".py" or ".js" or ".ts" or ".txt" or ".log" or ".xml"
+                    or ".html" or ".htm" or ".css" or ".sh" or ".bat" => "text/plain",
                 ".json" => "application/json",
-                ".csv" => "text/csv",
-                ".txt" => "text/plain",
-                ".md" => "text/markdown",
-                ".pdf" => "application/pdf",
-                _ => string.IsNullOrWhiteSpace(mimeType)
-                    ? "application/octet-stream"
-                    : mimeType
+                ".csv"  => "text/csv",
+                ".md"   => "text/markdown",
+                ".pdf"  => "application/pdf",
+                ".png"  => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                ".gif"  => "image/gif",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                _ => string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType
             };
         }
         private sealed class AutoFlowRunContext

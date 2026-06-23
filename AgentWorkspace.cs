@@ -44,6 +44,21 @@ namespace test
             }
         }
 
+        // 移除指定型別的所有 artifact，回傳移除筆數。
+        // 用途：重新生成沿用上次 workspace 時，先清掉上一輪的「已生成檔案」artifact，
+        // 避免新舊檔案一起被列成 chip（舊檔實體已被節點刪除 → 殘留打不開的 chip）。
+        public int RemoveByType(string itemType)
+        {
+            if (string.IsNullOrWhiteSpace(itemType))
+                return 0;
+
+            lock (_sync)
+            {
+                return _items.RemoveAll(x =>
+                    string.Equals(x.ItemType, itemType, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
         public string BuildPromptBlock()
         {
             var items = GetAll();

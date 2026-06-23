@@ -61,6 +61,10 @@ namespace test
             blockquote {
                 margin: 14px 0; padding: 6px 16px; border-left: 3px solid #d6d9e0;
                 color: #555; background: #fafafb;
+            }
+            img {
+                max-width: 100%; height: auto; display: block;
+                margin: 18px auto; border-radius: 8px;
             }";
 
         private const string SlidesCss = @"
@@ -134,19 +138,22 @@ namespace test
             => BuildSlidesHtml(slides, allowRegen: false);
 
         public static string BuildSlidesHtml(IReadOnlyList<IReadOnlyList<string>> slides, bool allowRegen)
-            => BuildSlidesHtml(slides, allowRegen, null);
+            => BuildSlidesHtml(slides, allowRegen, (IReadOnlyList<byte[]?>?)null);
+
+        // 向後相容：只帶封面圖的舊呼叫 → 包成「只有第一張有圖」的清單。
+        public static string BuildSlidesHtml(
+            IReadOnlyList<IReadOnlyList<string>> slides, bool allowRegen, byte[]? coverImagePng)
+            => BuildSlidesHtml(slides, allowRegen,
+                coverImagePng == null ? null : new List<byte[]?> { coverImagePng });
 
         /// <summary>
         /// allowRegen=true 時每張投影片右下角加「重生這張」鈕，點擊 postMessage 回宿主重生並覆蓋 .pptx。
-        /// coverImagePng 非 null 時，封面（第一張）渲染嵌入的封面圖，讓預覽也看得到簡報裡的封面圖。
+        /// slideImages：每張投影片的圖（與 slides 順序對齊，封面 + 內容頁配圖），該張無圖則為 null，
+        /// 讓預覽看得到簡報裡所有嵌入的圖（不只封面）。
         /// </summary>
         public static string BuildSlidesHtml(
-            IReadOnlyList<IReadOnlyList<string>> slides, bool allowRegen, byte[]? coverImagePng)
+            IReadOnlyList<IReadOnlyList<string>> slides, bool allowRegen, IReadOnlyList<byte[]?>? slideImages)
         {
-            string? coverDataUri = coverImagePng != null && coverImagePng.Length > 0
-                ? "data:image/png;base64," + Convert.ToBase64String(coverImagePng)
-                : null;
-
             var sb = new StringBuilder();
             sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
             sb.Append("<style>").Append(SlidesCss).Append("</style></head><body>");
@@ -177,9 +184,13 @@ namespace test
                       .Append(WebUtility.HtmlEncode(title))
                       .Append("</div>");
 
-                    // 封面圖：只在第一張、且有嵌入圖時顯示。
-                    if (n == 1 && coverDataUri != null)
-                        sb.Append("<img class='cover-img' src='").Append(coverDataUri).Append("' alt='封面圖' />");
+                    // 該張投影片的圖（封面或內容頁配圖）：有圖就顯示。
+                    byte[]? imgBytes = (slideImages != null && (n - 1) < slideImages.Count)
+                        ? slideImages[n - 1] : null;
+                    if (imgBytes != null && imgBytes.Length > 0)
+                        sb.Append("<img class='cover-img' src='data:image/png;base64,")
+                          .Append(Convert.ToBase64String(imgBytes))
+                          .Append("' alt='圖' />");
 
                     sb.Append("<div class='slide-body'>");
                     if (slide != null)
