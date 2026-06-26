@@ -1272,6 +1272,12 @@ namespace test
             AddToMemoryMenuItem.IsEnabled = canRemember;
             AddToMemoryMenuItem.Visibility = canRemember ? Visibility.Visible : Visibility.Collapsed;
 
+            // 重新生成答案：節點已有輸出且不在忙碌時才提供（沿用既有 research/分析成果，只重生最終答案）。
+            // 原本是輸出區右下角的按鈕，已移到此右鍵選單。
+            bool canRegenerate = !busy && !string.IsNullOrWhiteSpace(GetBottomText());
+            RegenerateMenuItem.IsEnabled = canRegenerate;
+            RegenerateMenuItem.Visibility = canRegenerate ? Visibility.Visible : Visibility.Collapsed;
+
             // 變更上游：只有「有上游連線」且非初始節點、鏈未在跑時才提供。
             bool canRewire = !busy && !_parent.IsInitialNode(this) && _parent.GetFirstUpstreamNode(this) != null;
             ChangeUpstreamMenuItem.IsEnabled = canRewire;
@@ -1366,7 +1372,6 @@ namespace test
                 StatusText.Foreground = amber;
             }
             if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
-            if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
             if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
         }
 
@@ -1649,28 +1654,25 @@ namespace test
             {
                 case NodeRunStatus.Running:
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
-                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
                     if (StatusText != null) StatusText.Text = "";
                     if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
                     break;
 
                 case NodeRunStatus.Success:
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
-                    // §3：成功後提供「重新生成答案」(沿用 research)。
-                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Visible;
+                    // §3：成功後可從右鍵選單「重新生成答案」(沿用 research)。footer 已無內容，收起避免空白條。
                     if (StatusText != null)
                     {
                         StatusText.Text = "";
                         StatusText.Foreground = new SolidColorBrush(Color.FromRgb(0x9E, 0x9E, 0x9E));
                     }
-                    if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
+                    if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
                     // 成功的綠框只短暫提示，之後回到黑框，避免畫布上一片綠。
                     StartStatusRevertTimer();
                     break;
 
                 case NodeRunStatus.Failed:
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Visible;
-                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
                     if (StatusText != null)
                     {
                         StatusText.Text = string.IsNullOrWhiteSpace(detail) ? "執行失敗" : detail;
@@ -1681,7 +1683,6 @@ namespace test
 
                 default: // Idle
                     if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
-                    if (RegenerateButton != null) RegenerateButton.Visibility = Visibility.Collapsed;
                     if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
                     break;
             }
@@ -1760,7 +1761,7 @@ namespace test
         }
 
         // §3：只重新生成最終答案，沿用上一次的 research / capability 成果（較快、不重跑搜尋）。
-        private async void RegenerateButton_Click(object sender, RoutedEventArgs e)
+        private async void RegenerateMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (_isGenerating)
                 return;
@@ -2030,18 +2031,15 @@ namespace test
             BottomDisplay.Text = text ?? "";
         }
 
-        // 載入存檔時呼叫：節點已有輸出 → 還原右下角「重新生成答案」鈕（StatusFooter + RegenerateButton）。
-        // 僅顯示按鈕，不套用成功綠框與還原計時器，避免一開檔整片綠；維持閒置黑框外觀。
+        // 載入存檔時呼叫：節點已有輸出 → 維持閒置黑框外觀。
+        // 「重新生成答案」已改到右鍵選單（ContextMenu_Opened 依「有輸出」即啟用），不再需要還原右下角按鈕；
+        // footer 無內容時收起，避免一開檔出現空白狀態條。
         public void RestoreRegenerateAffordance()
         {
-            if (RegenerateButton == null)
-                return;
-
             _runStatus = NodeRunStatus.Idle;
-            if (StatusFooter != null) StatusFooter.Visibility = Visibility.Visible;
-            if (StatusText != null) StatusText.Text = "";
             if (RerunButton != null) RerunButton.Visibility = Visibility.Collapsed;
-            RegenerateButton.Visibility = Visibility.Visible;
+            if (StatusText != null) StatusText.Text = "";
+            if (StatusFooter != null) StatusFooter.Visibility = Visibility.Collapsed;
         }
 
         public void ClearBottomText()

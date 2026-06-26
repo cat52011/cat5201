@@ -342,6 +342,10 @@
                       Header="執行此節點與下游"
                       Style="{StaticResource NodeMenuItemStyle}"
                       Click="RunWorkflowMenuItem_Click"/>
+            <MenuItem x:Name="RegenerateMenuItem"
+                      Header="🔄 重新生成答案"
+                      Style="{StaticResource NodeMenuItemStyle}"
+                      Click="RegenerateMenuItem_Click"/>
             <MenuItem x:Name="SkipStepMenuItem"
                       Header="⏭ 略過此步、從下一步續跑"
                       Style="{StaticResource NodeMenuItemStyle}"
@@ -785,22 +789,7 @@
                                 Margin="0,6,0,0"
                                 Click="RerunButton_Click"/>
 
-                        <!-- 成功時：只重新生成答案（沿用既有 research / capability 成果）。固定右下角、無底黑字 -->
-                        <Button x:Name="RegenerateButton"
-                                Grid.Column="2"
-                                Content="&#xE72C;"
-                                FontFamily="Segoe MDL2 Assets"
-                                Visibility="Collapsed"
-                                Style="{StaticResource StatusPillButtonStyle}"
-                                FontSize="14"
-                                Padding="8,0"
-                                Foreground="#222222"
-                                Background="Transparent"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Bottom"
-                                Margin="0,6,0,0"
-                                ToolTip="重新生成答案：沿用這次的搜尋與分析成果，只重新生成最終答案（較快、不重跑 research）"
-                                Click="RegenerateButton_Click"/>
+                        <!-- 「重新生成答案」已移到節點右鍵選單（RegenerateMenuItem）。 -->
                     </Grid>
 
                 </Grid>
