@@ -28,7 +28,14 @@ namespace test
             int maxOutputTokens,
             CancellationToken ct)
         {
-            var attachments = _main.GetAttachmentsForNode(currentNode)
+            // 個人化開關（IsReadUpstreamAttachmentsEnabled）：
+            //  關（預設）→ 只帶本節點自己的附件（較省）；下游只靠上游的文字輸出。
+            //  開 → 沿上游鏈繼承附件（GetEffectiveAttachmentsForNode），下游看得到母節點掛的原始檔案，但較貴。
+            var sourceAttachments = _main.IsReadUpstreamAttachmentsEnabled()
+                ? _main.GetEffectiveAttachmentsForNode(currentNode)
+                : _main.GetAttachmentsForNode(currentNode);
+
+            var attachments = sourceAttachments
                 .Select(a => new AiAttachment
                 {
                     FileName = a.FileName ?? "",

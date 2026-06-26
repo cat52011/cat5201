@@ -11,10 +11,15 @@ namespace test
         public bool WantsReport { get; init; }
         public bool WantsTable { get; init; }
 
+        // 影片 / 圖片也納入同一個第一層 LLM 判斷（與簡報/報告/表格同一真相來源），
+        // 不再只靠 OrchestrationPlanner 的關鍵字白名單——避免「給我一個15秒的影片」這種講法漏掉。
+        public bool WantsVideo { get; init; }
+        public bool WantsImage { get; init; }
+
         // debug：API 原始回覆 / 判斷來源
         public string Source { get; init; } = "";
 
-        public bool WantsAny => WantsPresentation || WantsReport || WantsTable;
+        public bool WantsAny => WantsPresentation || WantsReport || WantsTable || WantsVideo || WantsImage;
 
         /// <summary>白話摘要，給決策窗「執行摘要」顯示這次第一層判斷出的想要輸出。</summary>
         public string ToSummary()
@@ -23,19 +28,24 @@ namespace test
             if (WantsReport) parts.Add("報告");
             if (WantsTable) parts.Add("表格");
             if (WantsPresentation) parts.Add("簡報");
+            if (WantsImage) parts.Add("圖片");
+            if (WantsVideo) parts.Add("影片");
             return parts.Count == 0 ? "純文字回答" : string.Join("、", parts);
         }
 
         public static OutputIntent None => new OutputIntent { Source = "none" };
 
-        /// <summary>關鍵字後援判斷（API 失敗或未啟用時用）。</summary>
+        /// <summary>關鍵字後援判斷（API 失敗或未啟用時用）。影片/圖片沿用 OrchestrationPlanner 的關鍵字。</summary>
         public static OutputIntent FromKeywords(string? text)
         {
+            var taskType = OrchestrationPlanner.ResolveTaskType(text, NodeTaskMode.Chat);
             return new OutputIntent
             {
                 WantsPresentation = OutputFormatDetector.WantsPresentation(text),
                 WantsReport = OutputFormatDetector.WantsWrittenReport(text),
                 WantsTable = OutputFormatDetector.WantsSpreadsheet(text),
+                WantsVideo = taskType == OrchestrationTaskType.VideoGeneration,
+                WantsImage = taskType == OrchestrationTaskType.ImageGeneration,
                 Source = "keywords"
             };
         }

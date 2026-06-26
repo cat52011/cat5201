@@ -163,6 +163,15 @@ namespace test
 
                 if (ended)
                     break;
+
+                // 自然講完就停：這一輪輸出沒有逼近 8000 上限，代表模型是「講完了」而非「被截斷」，
+                // 不再多跑 continuation。模型常忘了輸出 [[END_OF_RESPONSE]] 標記，舊版只認標記，
+                // 因此一個其實 1 輪就答完的簡單問題會空跑滿 5 輪，每輪重送整包 prompt+附件、token 又逐輪累加，
+                // 造成動輒上百 K token。只在 provider 有回報真實 OutputTokens 時套用；沒回報時退回靠標記的舊行為，
+                // 避免長輸出在不回報 usage 的 provider 上被中途截斷。
+                if (response.OutputTokens.HasValue &&
+                    response.OutputTokens.Value < _mainReplyMaxOutputTokens - 512)
+                    break;
             }
 
             return _textProcessing.RemoveRepeatedBlocks(finalText.ToString().Trim());
@@ -208,17 +217,20 @@ namespace test
                 var request = await buildRequestFactory(followUp);
                 string reply;
 
+                int? roundOutputTokens;
                 if (round == 0)
                 {
                     var streamed = await provider.GenerateStreamAsync(request, delta => onDelta?.Invoke(delta), ct);
                     currentNode.RecordTokenUsage(streamed.InputTokens, streamed.OutputTokens);
                     reply = streamed.Text;
+                    roundOutputTokens = streamed.OutputTokens;
                 }
                 else
                 {
                     var normal = await provider.GenerateAsync(request, ct);
                     currentNode.RecordTokenUsage(normal.InputTokens, normal.OutputTokens);
                     reply = normal.Text;
+                    roundOutputTokens = normal.OutputTokens;
                 }
 
                 if (string.IsNullOrWhiteSpace(reply))
@@ -251,6 +263,12 @@ namespace test
                 }
 
                 if (ended)
+                    break;
+
+                // 自然講完就停（與非串流路徑同邏輯）：這輪輸出沒逼近 8000 上限＝模型講完，不是被截斷，
+                // 不再多跑 continuation，避免空跑多輪重送整包 prompt+附件、token 逐輪累加。
+                if (roundOutputTokens.HasValue &&
+                    roundOutputTokens.Value < _mainReplyMaxOutputTokens - 512)
                     break;
             }
 

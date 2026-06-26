@@ -62,6 +62,11 @@ namespace test
         private bool _syncingCostControls;
         public int GetManualTimeoutSeconds() => _manualTimeoutSeconds;
 
+        // 個人化：下游節點執行時是否一併讀取上游（母）節點掛的附件（圖片／PDF／HTML…）。
+        // 預設關閉＝只讀上游的文字輸出（較省）；開啟＝沿上游鏈繼承附件，下游看得到原始檔案但較貴。
+        private bool _readUpstreamAttachments;
+        public bool IsReadUpstreamAttachmentsEnabled() => _readUpstreamAttachments;
+
         private readonly HashSet<string> _expandedDecisionStepKeys = new();
         private readonly Dictionary<Guid, NodeDecisionViewData> _liveDecisionViewsByNode = new();
 
@@ -436,7 +441,8 @@ namespace test
             bool BlockDeepResearch = false,
             int ManualTimeoutSeconds = 0,
             string VideoStyleOverride = "",
-            string VideoModelTier = "Lite"
+            string VideoModelTier = "Lite",
+            bool ReadUpstreamAttachments = false
         );
 
         // 全域個人化偏好放在子資料夾，永遠不會被 SavesDir 的 *.json 專案掃描列舉到（非遞迴），
@@ -1077,6 +1083,59 @@ namespace test
         public bool IsAdvancedAutoResolverEnabled()
         {
             return _isAdvancedAutoResolverEnabled;
+        }
+
+        // 第一層意圖閘門（Auto 模式）：實際產生影片/圖片/檔案前的二次確認。
+        // 回傳 true = 使用者同意產出；false = 只給純文字回答。
+        // 在 UI 執行緒上同步彈窗（AgentRuntime.ExecuteAsync 本就跑在 UI 執行緒），故回傳已完成的 Task。
+        public Task<bool> ConfirmGenerationAsync(OrchestrationTaskType taskType, OutputIntent? outputIntent)
+        {
+            var targets = new List<string>();
+
+            void AddTarget(string label)
+            {
+                if (!string.IsNullOrEmpty(label) && !targets.Contains(label))
+                    targets.Add(label);
+            }
+
+            switch (taskType)
+            {
+                case OrchestrationTaskType.VideoGeneration:
+                    AddTarget("影片（Veo，需較長時間且依秒計費）");
+                    break;
+                case OrchestrationTaskType.ImageGeneration:
+                    AddTarget("圖片（gpt-image，約 NT$55/張）");
+                    break;
+                case OrchestrationTaskType.ImageEdit:
+                    AddTarget("修改後的圖片");
+                    break;
+                case OrchestrationTaskType.Presentation:
+                    AddTarget("簡報 PPTX");
+                    break;
+                case OrchestrationTaskType.GenerateFile:
+                    AddTarget("檔案");
+                    break;
+            }
+
+            if (outputIntent != null)
+            {
+                if (outputIntent.WantsPresentation) AddTarget("簡報 PPTX");
+                if (outputIntent.WantsReport) AddTarget("書面報告（Word／PDF）");
+                if (outputIntent.WantsTable) AddTarget("表格（Excel）");
+                if (outputIntent.WantsImage) AddTarget("圖片（gpt-image，約 NT$55/張）");
+                if (outputIntent.WantsVideo) AddTarget("影片（Veo，需較長時間且依秒計費）");
+            }
+
+            string what = targets.Count > 0 ? string.Join("、", targets) : "檔案／媒體";
+
+            var result = MessageBox.Show(
+                this,
+                $"偵測到這次輸入可能要產生：\n\n　{what}\n\n要執行嗎？\n（選「否」就只會給你純文字回答，不產生任何檔案／媒體）",
+                "要產生檔案／媒體嗎？",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            return Task.FromResult(result == MessageBoxResult.Yes);
         }
 
         public void SetAutoModelSelectionEnabled(bool enabled, bool save = true)
@@ -5186,7 +5245,8 @@ namespace test
                     BlockDeepResearch: AiAutoCostPolicy.BlockDeepResearch,
                     ManualTimeoutSeconds: _manualTimeoutSeconds,
                     VideoStyleOverride: _videoStyleOverride ?? "",
-                    VideoModelTier: VeoModels.ToStorageValue(_videoModelTier)
+                    VideoModelTier: VeoModels.ToStorageValue(_videoModelTier),
+                    ReadUpstreamAttachments: _readUpstreamAttachments
                 );
 
                 var dir = System.IO.Path.GetDirectoryName(PreferencesPath);
@@ -5250,6 +5310,7 @@ namespace test
                 _manualTimeoutSeconds = prefs.ManualTimeoutSeconds;
                 _videoStyleOverride = prefs.VideoStyleOverride ?? "";
                 _videoModelTier = VeoModels.ParseTier(prefs.VideoModelTier);
+                _readUpstreamAttachments = prefs.ReadUpstreamAttachments;
             }
             catch
             {
@@ -7102,11 +7163,21 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                     TimeoutInput.Text = _manualTimeoutSeconds > 0
                         ? _manualTimeoutSeconds.ToString()
                         : "";
+                if (ReadUpstreamAttachmentsSwitch != null)
+                    ReadUpstreamAttachmentsSwitch.IsChecked = _readUpstreamAttachments;
             }
             finally
             {
                 _syncingCostControls = false;
             }
+        }
+
+        private void ReadUpstreamAttachmentsSwitch_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_syncingCostControls)
+                return;
+            _readUpstreamAttachments = ReadUpstreamAttachmentsSwitch?.IsChecked == true;
+            SavePreferences();
         }
 
         private void BlockOpusSwitch_Changed(object sender, RoutedEventArgs e)

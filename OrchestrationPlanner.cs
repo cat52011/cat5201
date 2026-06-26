@@ -14,13 +14,27 @@ namespace test
             bool autoMode,
             bool hasAttachments,
             bool hasImageAttachment = false,
-            OutputIntent? outputIntent = null)
+            OutputIntent? outputIntent = null,
+            bool allowMediaGeneration = true)
         {
             var taskType = ResolveTaskType(userInput, decision?.TaskMode ?? NodeTaskMode.Chat);
 
             // 圖片編輯優先覆寫：有圖片附件 + 編輯意圖 → ImageEdit（不論分類器怎麼說）。
             if (hasImageAttachment && IsImageEditIntent(userInput))
                 taskType = OrchestrationTaskType.ImageEdit;
+            // 第一層 LLM 意圖補強：影片/圖片不再只靠關鍵字白名單。關鍵字沒抓到、但第一層
+            // OutputIntentResolver（語意判斷）說要影片/圖片時，以 LLM 為準——和簡報/報告/表格同一真相來源，
+            // 修掉「給我一個15秒的影片」這種講法因不在白名單而被當成純文字的漏判。
+            else if (outputIntent?.WantsVideo == true && !ProducesMediaOrFile(taskType))
+                taskType = OrchestrationTaskType.VideoGeneration;
+            else if (outputIntent?.WantsImage == true && !ProducesMediaOrFile(taskType))
+                taskType = OrchestrationTaskType.ImageGeneration;
+
+            // 第一層意圖閘門：未獲准產出（純手動模式，或使用者在二次確認框選「否」）時，
+            // 把會產生檔案/媒體的任務型別降級為純文字任務——連帶不加任何產出階段，
+            // 主合成也不會被影片/簡報的框架污染，使用者選的模型就只做純文字回答。
+            if (!allowMediaGeneration && ProducesMediaOrFile(taskType))
+                taskType = TextTaskTypeFromMode(decision?.TaskMode ?? NodeTaskMode.Chat);
 
             string pipelineId = ResolvePipelineId(taskType, hasAttachments);
 
@@ -45,29 +59,31 @@ namespace test
             // §6 多輸出：除了主任務型別，也看使用者是否「同時」要書面報告與簡報。
             // 優先用第一層 LLM 判斷結果（OutputIntentResolver，語意理解，與實際產檔同一真相）；
             // 子代理委派沒有 outputIntent 時才 fallback 關鍵字掃描，使顯示的 stage 與實際產檔一致。
-            bool wantsReport = outputIntent?.WantsReport ?? OutputFormatDetector.WantsWrittenReport(userInput);
-            bool wantsDeck   = outputIntent?.WantsPresentation ?? OutputFormatDetector.WantsPresentation(userInput);
+            bool wantsReport = allowMediaGeneration && (outputIntent?.WantsReport ?? OutputFormatDetector.WantsWrittenReport(userInput));
+            bool wantsDeck   = allowMediaGeneration && (outputIntent?.WantsPresentation ?? OutputFormatDetector.WantsPresentation(userInput));
 
             // File Generation v1：GenerateFile 任務（或簡報任務又要求書面報告）在最終答案之後，多一個寫檔階段。
-            if (taskType == OrchestrationTaskType.GenerateFile ||
-                (taskType == OrchestrationTaskType.Presentation && wantsReport))
+            if (allowMediaGeneration &&
+                (taskType == OrchestrationTaskType.GenerateFile ||
+                 (taskType == OrchestrationTaskType.Presentation && wantsReport)))
                 AddStage(stages, "generate_file", "Generate file", "file-writer");
 
             // Presentation Agent v1：Presentation 任務（或寫檔任務又要求簡報）在最終答案之後，多一個產生 deck 階段。
-            if (taskType == OrchestrationTaskType.Presentation ||
-                (taskType == OrchestrationTaskType.GenerateFile && wantsDeck))
+            if (allowMediaGeneration &&
+                (taskType == OrchestrationTaskType.Presentation ||
+                 (taskType == OrchestrationTaskType.GenerateFile && wantsDeck)))
                 AddStage(stages, "presentation_outline", "Build presentation outline", "presentation-agent");
 
             // Image Gen v1：ImageGeneration 任務在最終答案之後，多一個產生圖片階段。
-            if (taskType == OrchestrationTaskType.ImageGeneration)
+            if (allowMediaGeneration && taskType == OrchestrationTaskType.ImageGeneration)
                 AddStage(stages, "generate_image", "Generate image", "image-agent");
 
             // Image Edit：上傳圖 + 編輯指令 → 改圖階段。
-            if (taskType == OrchestrationTaskType.ImageEdit)
+            if (allowMediaGeneration && taskType == OrchestrationTaskType.ImageEdit)
                 AddStage(stages, "generate_image_edit", "Edit image", "image-agent");
 
             // Video Gen v1：VideoGeneration 任務在最終答案之後，多一個（長時間、需輪詢的）產生影片階段。
-            if (taskType == OrchestrationTaskType.VideoGeneration)
+            if (allowMediaGeneration && taskType == OrchestrationTaskType.VideoGeneration)
                 AddStage(stages, "generate_video", "Generate video", "video-agent");
 
             return new OrchestrationPlanPayload
@@ -121,10 +137,14 @@ namespace test
                 return OrchestrationTaskType.ImageGeneration;
             }
 
+            // 影片：必須是「明確要產生影片」的命令式說法，才判為 VideoGeneration。
+            // 不可只因內文出現「影片 / video」就觸發——那會把「他發了個影片限動」這種純聊天誤判成要生影片。
             if (ContainsAny(
                     normalized,
-                    "影片", "視頻", "生成影片", "產生影片", "預告片", "短片",
-                    "video", "generate video", "trailer"))
+                    "生成影片", "產生影片", "做一支影片", "做一部影片", "做個影片", "做成影片",
+                    "製作影片", "幫我做影片", "剪一支影片", "剪輯影片", "剪成影片",
+                    "拍一支影片", "拍一部影片", "拍個影片", "預告片", "短影片", "音樂影片",
+                    "generate video", "make a video", "create a video", "video clip", "trailer", "montage"))
             {
                 return OrchestrationTaskType.VideoGeneration;
             }
@@ -145,6 +165,13 @@ namespace test
                 return OrchestrationTaskType.Planning;
             }
 
+            return TextTaskTypeFromMode(mode);
+        }
+
+        // 純文字任務型別（不產生任何檔案/媒體），由節點的 TaskMode 推得。
+        // 供 ResolveTaskType 的尾段 fallback，以及意圖閘門把產檔/媒體任務降級時共用。
+        private static OrchestrationTaskType TextTaskTypeFromMode(NodeTaskMode mode)
+        {
             return mode switch
             {
                 NodeTaskMode.Research => OrchestrationTaskType.Research,
@@ -155,6 +182,30 @@ namespace test
                 NodeTaskMode.Code => OrchestrationTaskType.Code,
                 _ => OrchestrationTaskType.Chat
             };
+        }
+
+        // 是否為「會實際產生檔案或媒體」的任務型別（需要二次確認、且純手動模式下要降級的對象）。
+        public static bool ProducesMediaOrFile(OrchestrationTaskType taskType)
+        {
+            return taskType == OrchestrationTaskType.GenerateFile
+                || taskType == OrchestrationTaskType.Presentation
+                || taskType == OrchestrationTaskType.ImageGeneration
+                || taskType == OrchestrationTaskType.ImageEdit
+                || taskType == OrchestrationTaskType.VideoGeneration
+                || taskType == OrchestrationTaskType.Media;
+        }
+
+        // 寬鬆閘門：輸入「有沒有提到」影片/圖片（不分是要產出還是只是描述）。
+        // 用途：NodeService 用它決定要不要花一次便宜 API 跑第一層 LLM 精準判斷。
+        // 故意寬（高召回）——精準的「是要產出還是只是描述」交給 OutputIntentResolver。
+        public static bool MentionsVideoOrImage(string? text)
+        {
+            string s = (text ?? "").ToLowerInvariant();
+            if (s.Length == 0) return false;
+
+            return ContainsAny(s,
+                "影片", "短片", "動畫", "影像", "video", "movie", "clip", "animation",
+                "圖片", "圖像", "插圖", "圖檔", "畫一", "畫個", "畫張", "image", "picture", "illustration", "draw");
         }
 
         // 有圖片附件時，使用者是否想「編輯這張圖」（改建 / 裝潢 / 改圖 / 套風格…）。

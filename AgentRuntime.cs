@@ -154,15 +154,47 @@ namespace test
                      || a.FileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
                      || a.FileName.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)));
 
+            // 第一層意圖閘門（§first-layer-intent-routing）：
+            // 在規劃之前先判斷這次是否會產生影片/圖片/檔案。
+            //  - 純手動模式：完全不自動轉換——選什麼模型就只做純文字回答，不偷偷加生影片/圖片/檔案。
+            //  - Auto 模式：產出前一律二次確認，避免關鍵字誤判（例如聊天裡提到「影片」就被當成要生影片）。
+            // 委派子代理（DelegationDepth > 0）不在此閘門範圍：產出步驟本來就只由根節點執行。
+            bool autoMode = _main.IsAutoModelSelectionEnabled();
+            bool allowGeneration = true;
+            if (request.DelegationDepth == 0)
+            {
+                var detectedTaskType = OrchestrationPlanner.ResolveTaskType(topText, decision.TaskMode);
+                if (hasImageAttachment && OrchestrationPlanner.IsImageEditIntent(topText))
+                    detectedTaskType = OrchestrationTaskType.ImageEdit;
+                // 與 OrchestrationPlanner.Build 同步：關鍵字沒抓到但第一層 LLM 判斷要影片/圖片時，
+                // 讓 detectedTaskType 反映出來，確認框才會顯示正確的「影片／圖片」而非籠統的「檔案／媒體」。
+                else if (request.OutputIntent?.WantsVideo == true && !OrchestrationPlanner.ProducesMediaOrFile(detectedTaskType))
+                    detectedTaskType = OrchestrationTaskType.VideoGeneration;
+                else if (request.OutputIntent?.WantsImage == true && !OrchestrationPlanner.ProducesMediaOrFile(detectedTaskType))
+                    detectedTaskType = OrchestrationTaskType.ImageGeneration;
+
+                bool producesOutput =
+                    OrchestrationPlanner.ProducesMediaOrFile(detectedTaskType) ||
+                    (request.OutputIntent?.WantsAny ?? false);
+
+                if (producesOutput)
+                {
+                    allowGeneration = autoMode
+                        ? await _main.ConfirmGenerationAsync(detectedTaskType, request.OutputIntent)
+                        : false;
+                }
+            }
+
             var orchestrationPlan = OrchestrationPlanner.Build(
                 topText,
                 decision,
                 runtimeAgent,
                 capabilityPlan,
-                _main.IsAutoModelSelectionEnabled(),
+                autoMode,
                 capabilityContext.Attachments != null && capabilityContext.Attachments.Count > 0,
                 hasImageAttachment,
-                request.OutputIntent);
+                request.OutputIntent,
+                allowGeneration);
 
             // Sub-agents (DelegationDepth > 0) write internal orchestration_plans only;
             // the root agent's plan is the authoritative visible one.
@@ -1045,9 +1077,10 @@ namespace test
                                     || OutputFormatDetector.WantsPresentation(capabilityAugmentedText)
             };
 
-            bool doReport = intent.WantsReport;
-            bool doTable = intent.WantsTable;
-            bool doDeck = intent.WantsPresentation;
+            // 意圖閘門：未獲准產出（純手動 / 確認框選「否」）時，一律不產報告/表格/簡報。
+            bool doReport = allowGeneration && intent.WantsReport;
+            bool doTable = allowGeneration && intent.WantsTable;
+            bool doDeck = allowGeneration && intent.WantsPresentation;
 
             // 報告 / 表格：GenerateReportFile 內部依 intent 決定 .docx（報告）/ .xlsx（表格），且一律配一份 .pdf。
             if (execution.IsSuccess &&
@@ -1089,6 +1122,7 @@ namespace test
             // Image Gen v1：ImageGeneration 任務在最終答案後呼叫 DALL-E 3 生成圖片，
             // 存檔、加入 workspace artifact，並在輸出區直接顯示。
             if (execution.IsSuccess &&
+                allowGeneration &&
                 orchestrationPlan.TaskType == OrchestrationTaskType.ImageGeneration &&
                 request.DelegationDepth == 0)
             {
@@ -1105,6 +1139,7 @@ namespace test
 
             // Image Edit：上傳圖 + 編輯指令 → 用 OpenAI images/edits 改圖，輸出改建後的照片。
             if (execution.IsSuccess &&
+                allowGeneration &&
                 orchestrationPlan.TaskType == OrchestrationTaskType.ImageEdit &&
                 request.DelegationDepth == 0)
             {
@@ -1122,6 +1157,7 @@ namespace test
             // Video Gen v1：VideoGeneration 任務在最終答案後呼叫影片 API（非同步、需輪詢），
             // 完成後存檔、加入 workspace artifact。未啟用時（休眠）標記未啟用，不影響主答案。
             if (execution.IsSuccess &&
+                allowGeneration &&
                 orchestrationPlan.TaskType == OrchestrationTaskType.VideoGeneration &&
                 request.DelegationDepth == 0)
             {

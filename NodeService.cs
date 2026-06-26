@@ -280,9 +280,14 @@ namespace test
             bool looksLikeOutput =
                 taskType == OrchestrationTaskType.Presentation ||
                 taskType == OrchestrationTaskType.GenerateFile ||
+                taskType == OrchestrationTaskType.ImageGeneration ||
+                taskType == OrchestrationTaskType.VideoGeneration ||
                 OutputFormatDetector.WantsPresentation(topText) ||
                 OutputFormatDetector.WantsWrittenReport(topText) ||
-                OutputFormatDetector.WantsSpreadsheet(topText);
+                OutputFormatDetector.WantsSpreadsheet(topText) ||
+                // 寬鬆放行：只要提到影片/圖片就花一次便宜 API 跑精準判斷，
+                // 避免「給我一個15秒的影片」這種不在關鍵字白名單的講法連 LLM 都沒機會判。
+                OrchestrationPlanner.MentionsVideoOrImage(topText);
 
             if (!looksLikeOutput)
                 return OutputIntent.None;
@@ -1194,8 +1199,15 @@ namespace test
         {
             var root = _main.GetAttachmentsRootDir();
 
-            // 有效附件＝本節點 + 沿上游鏈繼承的附件，讓工作流下游節點也讀得到源頭掛的檔案。
-            return _main.GetEffectiveAttachmentsForNode(node)
+            // 個人化開關（IsReadUpstreamAttachmentsEnabled）：
+            //  關（預設）→ 只帶本節點自己的附件，下游不繼承上游檔案（每次執行不重送母節點的圖/PDF/HTML，省成本）。
+            //  開 → 沿上游鏈繼承附件，下游也讀得到源頭掛的原始檔案，但較貴。
+            // 這是文字生成的實際路徑（NodeExecutionCoreService → BuildExecutionRequestAsync → 此處）。
+            var source = _main.IsReadUpstreamAttachmentsEnabled()
+                ? _main.GetEffectiveAttachmentsForNode(node)
+                : _main.GetAttachmentsForNode(node);
+
+            return source
                 .Select(a => new AiAttachment
                 {
                     FileName = a.FileName,
@@ -1218,13 +1230,31 @@ namespace test
             int maxOutputTokens,
             CancellationToken ct)
         {
+            // 附件文字化（成本優化）：PDF / HTML / Office / 純文字在本機抽成文字並快取，內嵌進 prompt，
+            // 不再把原檔重送模型——大型 PDF 尤其關鍵（OpenAI 會把每頁也當圖片計 token）。抽一次快取，
+            // 之後同一附件（含下游繼承、節點重跑）都用便宜文字。圖片維持以圖片形式傳送（需要視覺）。
+            var fileAttachments = new List<AiAttachment>();
+            var extracted = new List<string>();
+            foreach (var a in CollectAiAttachments(currentNode))
+            {
+                string? text = AttachmentTextCache.TryGetText(a.AbsolutePath, a.FileName, a.MimeType);
+                if (!string.IsNullOrWhiteSpace(text))
+                    extracted.Add($"【附件內容：{a.FileName}】\n{text}");
+                else
+                    fileAttachments.Add(a); // 圖片 / 抽取失敗 → 維持原樣傳檔
+            }
+
+            string finalUserPrompt = userPrompt ?? "";
+            if (extracted.Count > 0)
+                finalUserPrompt += "\n\n" + string.Join("\n\n", extracted);
+
             var request = new AiRequest
             {
                 ModelId = AiModelHelper.NormalizeNodeModel(model),
                 SystemPrompt = systemPrompt ?? "",
-                UserPrompt = userPrompt ?? "",
+                UserPrompt = finalUserPrompt,
                 TaskMode = taskMode,
-                Attachments = CollectAiAttachments(currentNode),
+                Attachments = fileAttachments,
                 UseStreaming = useStreaming,
                 MaxOutputTokens = maxOutputTokens,
                 Metadata = new Dictionary<string, string>

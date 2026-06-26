@@ -1394,6 +1394,39 @@ Margin="0,20,20,0">
                                       Unchecked="BlockDeepResearchSwitch_Changed"/>
                         </Grid>
 
+                        <!-- 上游附件繼承 -->
+                        <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
+
+                        <TextBlock Text="上游附件"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#444"
+                                   Margin="0,14,0,2"/>
+                        <TextBlock Text="開啟後，下游節點執行時會一併讀取上游（母）節點掛的附件（圖片／PDF／HTML…），不只是上游的文字輸出。下游能看到原始檔案內容，但每次執行都會多送這些檔案，token 與費用較高。預設關閉。"
+                                   FontSize="11.5"
+                                   Foreground="#9A9A9E"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+
+                        <Grid Margin="0,3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="下游節點讀取上游附件"
+                                           FontSize="12.5" Foreground="#333"/>
+                                <TextBlock Text="關閉時只讀上游的文字輸出（較省）"
+                                           FontSize="11" Foreground="#A8A8AC"/>
+                            </StackPanel>
+                            <CheckBox x:Name="ReadUpstreamAttachmentsSwitch"
+                                      Grid.Column="1"
+                                      Style="{StaticResource AppleSwitchStyle}"
+                                      VerticalAlignment="Center"
+                                      Checked="ReadUpstreamAttachmentsSwitch_Changed"
+                                      Unchecked="ReadUpstreamAttachmentsSwitch_Changed"/>
+                        </Grid>
+
                         <!-- §15 逾時上限 -->
                         <Border Height="1" Background="#ECECEC" Margin="0,16,0,0"/>
 
