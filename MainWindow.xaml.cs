@@ -1128,14 +1128,15 @@ namespace test
 
             string what = targets.Count > 0 ? string.Join("、", targets) : "檔案／媒體";
 
-            var result = MessageBox.Show(
+            bool ok = MenuConfirmDialog.ShowConfirm(
                 this,
-                $"偵測到這次輸入可能要產生：\n\n　{what}\n\n要執行嗎？\n（選「否」就只會給你純文字回答，不產生任何檔案／媒體）",
                 "要產生檔案／媒體嗎？",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
+                $"偵測到這次輸入可能要產生：\n\n　{what}\n\n要執行嗎？\n（選「否」就只會給你純文字回答，不產生任何檔案／媒體）",
+                this,
+                confirmText: "是",
+                cancelText: "否");
 
-            return Task.FromResult(result == MessageBoxResult.Yes);
+            return Task.FromResult(ok);
         }
 
         public void SetAutoModelSelectionEnabled(bool enabled, bool save = true)
@@ -2090,7 +2091,7 @@ namespace test
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"匯出產出物失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+                MenuConfirmDialog.ShowMessage(this, "錯誤", $"匯出產出物失敗：{ex.Message}", this);
             }
         }
 
@@ -3047,7 +3048,7 @@ namespace test
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"刪除失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+                MenuConfirmDialog.ShowMessage(this, "錯誤", $"刪除失敗：{ex.Message}", this);
             }
         }
 
@@ -3074,7 +3075,7 @@ namespace test
 
             if (File.Exists(newPath))
             {
-                MessageBox.Show("已存在同名檔案，請換一個名稱。", "重新命名失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MenuConfirmDialog.ShowMessage(this, "重新命名失敗", "已存在同名檔案，請換一個名稱。", this);
                 return;
             }
 
@@ -3098,11 +3099,8 @@ namespace test
                     }
                     catch { }
 
-                    MessageBox.Show(
-                        $"重新命名失敗：附件資料夾無法同步搬移。\n{folderMoveError}",
-                        "錯誤",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Error);
+                    MenuConfirmDialog.ShowMessage(this, "錯誤",
+                        $"重新命名失敗：附件資料夾無法同步搬移。\n{folderMoveError}", this);
                     return;
                 }
 
@@ -3128,7 +3126,7 @@ namespace test
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"重新命名失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+                MenuConfirmDialog.ShowMessage(this, "錯誤", $"重新命名失敗：{ex.Message}", this);
             }
         }
 
@@ -3573,7 +3571,7 @@ namespace test
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                MessageBox.Show("重生投影片失敗：" + ex.Message, "重生投影片", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MenuConfirmDialog.ShowMessage(this, "重生投影片", "重生投影片失敗：" + ex.Message, this);
             }
             finally
             {
@@ -4329,8 +4327,8 @@ namespace test
 
             if (string.IsNullOrWhiteSpace(bottomText))
             {
-                MessageBox.Show("這個節點還沒有產出內容，無法加入記憶。", "加入記憶",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                MenuConfirmDialog.ShowMessage(this, "加入記憶",
+                    "這個節點還沒有產出內容，無法加入記憶。", this);
                 return;
             }
 
@@ -4348,8 +4346,8 @@ namespace test
                 RefreshMemoryPanel();
             }
 
-            MessageBox.Show($"已加入記憶：\n⭐ {title}", "加入記憶",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            MenuConfirmDialog.ShowMessage(this, "加入記憶",
+                $"已加入記憶：\n⭐ {title}", this);
         }
 
         // ===== 右鍵：更換連接方向 =====
@@ -4581,7 +4579,7 @@ namespace test
             var folder = GetCurrentAttachmentFolder();
             if (folder == null)
             {
-                MessageBox.Show("目前尚未建立檔案，無法上傳附件。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MenuConfirmDialog.ShowMessage(this, "提示", "目前尚未建立檔案，無法上傳附件。", this);
                 return;
             }
 
@@ -4729,7 +4727,7 @@ namespace test
                 var abs = System.IO.Path.Combine(AttachmentsRootDir, relativePath);
                 if (!File.Exists(abs))
                 {
-                    MessageBox.Show("找不到附件檔案（可能已被移動或刪除）。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MenuConfirmDialog.ShowMessage(this, "開啟失敗", "找不到附件檔案（可能已被移動或刪除）。", this);
                     return;
                 }
 
@@ -4741,7 +4739,7 @@ namespace test
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"開啟附件失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+                MenuConfirmDialog.ShowMessage(this, "錯誤", $"開啟附件失敗：{ex.Message}", this);
             }
         }
 
@@ -4752,7 +4750,7 @@ namespace test
             {
                 if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
                 {
-                    MessageBox.Show("找不到生成的檔案（可能已被移動或刪除）。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MenuConfirmDialog.ShowMessage(this, "開啟失敗", "找不到生成的檔案（可能已被移動或刪除）。", this);
                     return;
                 }
 
@@ -4761,7 +4759,7 @@ namespace test
                 string targetFull = System.IO.Path.GetFullPath(fullPath);
                 if (!targetFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
                 {
-                    MessageBox.Show("檔案不在允許開啟的範圍內。", "開啟失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MenuConfirmDialog.ShowMessage(this, "開啟失敗", "檔案不在允許開啟的範圍內。", this);
                     return;
                 }
 
@@ -4773,7 +4771,7 @@ namespace test
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"開啟檔案失敗：{ex.Message}", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+                MenuConfirmDialog.ShowMessage(this, "錯誤", $"開啟檔案失敗：{ex.Message}", this);
             }
         }
 
@@ -4792,7 +4790,7 @@ namespace test
         {
             if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
             {
-                MessageBox.Show("找不到生成的檔案（可能已被移動或刪除）。", "預覽失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MenuConfirmDialog.ShowMessage(this, "預覽失敗", "找不到生成的檔案（可能已被移動或刪除）。", this);
                 return;
             }
 
@@ -4803,7 +4801,7 @@ namespace test
             string targetFull = System.IO.Path.GetFullPath(fullPath);
             if (!targetFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show("檔案不在允許預覽的範圍內。", "預覽失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MenuConfirmDialog.ShowMessage(this, "預覽失敗", "檔案不在允許預覽的範圍內。", this);
                 return;
             }
 
@@ -7280,13 +7278,16 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
             if (_nodeService == null)
                 return;
 
-            var result = MessageBox.Show(
-                "確定要清除全部記憶嗎？此動作無法復原。",
+            bool ok = MenuConfirmDialog.ShowConfirm(
+                this,
                 "清除記憶",
-                MessageBoxButton.OKCancel,
-                MessageBoxImage.Question);
+                "確定要清除全部記憶嗎？此動作無法復原。",
+                this,
+                confirmText: "清除",
+                cancelText: "取消",
+                danger: true);
 
-            if (result != MessageBoxResult.OK)
+            if (!ok)
                 return;
 
             _nodeService.ClearShownMemory();
@@ -7829,15 +7830,34 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
         }
         internal static class MenuConfirmDialog
         {
+            // 通用確認框（兩顆鈕）。回傳 true = 按下確認鈕。取代原生 MessageBox 的 Yes/No、OKCancel。
+            public static bool ShowConfirm(
+                Window owner, string title, string message, FrameworkElement resourceHost,
+                string confirmText = "確定", string cancelText = "取消", bool danger = false)
+            {
+                var dlg = new MenuConfirmWindow(owner, title, message, resourceHost, confirmText, cancelText, danger);
+                return dlg.ShowDialog() == true;
+            }
+
+            // 通用訊息框（單顆鈕，純告知）。取代原生 MessageBox 的 OK 訊息/錯誤/警告。
+            public static void ShowMessage(
+                Window owner, string title, string message, FrameworkElement resourceHost,
+                string okText = "確定")
+            {
+                var dlg = new MenuConfirmWindow(owner, title, message, resourceHost, okText, null, false);
+                dlg.ShowDialog();
+            }
+
+            // 刪除確認（紅色「刪除」鈕）。
             public static bool ShowDeleteConfirm(Window owner, string title, string message, FrameworkElement resourceHost)
             {
-                var dlg = new MenuConfirmWindow(owner, title, message, resourceHost);
-                return dlg.ShowDialog() == true;
+                return ShowConfirm(owner, title, message, resourceHost, confirmText: "刪除", cancelText: "取消", danger: true);
             }
 
             private sealed class MenuConfirmWindow : Window
             {
-                public MenuConfirmWindow(Window owner, string title, string message, FrameworkElement resourceHost)
+                public MenuConfirmWindow(Window owner, string title, string message, FrameworkElement resourceHost,
+                    string confirmText, string? cancelText, bool danger)
                 {
                     Owner = owner;
                     Title = title;
@@ -7851,7 +7871,8 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                     WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
                     Width = 360;
-                    Height = 170;
+                    SizeToContent = SizeToContent.Height;   // 依內容自動長高，避免長訊息被截斷
+                    MaxHeight = 600;
 
                     var bg = TryGetBrush(resourceHost, "FileMenuBg", "NodeMenuBg", Colors.White);
                     var border = TryGetBrush(resourceHost, "FileMenuBorder", "NodeMenuBorder", (Color)ColorConverter.ConvertFromString("#D6D6D6")!);
@@ -7877,7 +7898,7 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
 
                     var root = new Grid();
                     root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                    root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                     root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
                     var titleText = new TextBlock
@@ -7911,17 +7932,22 @@ $@"請將下面內容，取一個像 ChatGPT 自動命名筆記那樣的「短�
                         Margin = new Thickness(0, 12, 0, 0)
                     };
 
-                    var cancel = CreateMenuButton("取消", text);
-                    cancel.IsCancel = true;
-                    cancel.Margin = new Thickness(0, 0, 8, 0);
-                    cancel.Click += (_, __) => { DialogResult = false; Close(); };
+                    if (!string.IsNullOrEmpty(cancelText))
+                    {
+                        var cancel = CreateMenuButton(cancelText, text);
+                        cancel.IsCancel = true;
+                        cancel.Margin = new Thickness(0, 0, 8, 0);
+                        cancel.Click += (_, __) => { DialogResult = false; Close(); };
+                        btnPanel.Children.Add(cancel);
+                    }
 
-                    var del = CreateMenuButton("刪除", new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D32F2F")!));
-                    del.IsDefault = true;
-                    del.Click += (_, __) => { DialogResult = true; Close(); };
-
-                    btnPanel.Children.Add(cancel);
-                    btnPanel.Children.Add(del);
+                    var confirmBrush = danger
+                        ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D32F2F")!)
+                        : text;
+                    var confirm = CreateMenuButton(confirmText, confirmBrush);
+                    confirm.IsDefault = true;
+                    confirm.Click += (_, __) => { DialogResult = true; Close(); };
+                    btnPanel.Children.Add(confirm);
 
                     Grid.SetRow(btnPanel, 2);
                     root.Children.Add(btnPanel);

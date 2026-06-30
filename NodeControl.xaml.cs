@@ -1244,7 +1244,11 @@ namespace test
             EditMenuItem.IsEnabled = true;
             FontSizeMenuItem.IsEnabled = true;
             // 不可用時直接隱藏（與 ⚡展開 / ⏭略過 / ⏹停止 一致），避免「灰著佔位」。
-            bool canRunChain = !busy && !string.IsNullOrWhiteSpace(GetTopText());
+            // 一鍵執行下游:本節點要「已執行成功(有產出)」且「有自動狀態(流動模式)的下游連線」才顯示。
+            // 沿流動邊扇出、不重跑本節點;自動流僅限 FlowMode 連線(GetFlowDownstreamNodes 已過濾)。
+            bool canRunChain = !busy
+                && !string.IsNullOrWhiteSpace(GetBottomText())
+                && _parent.NodeHasFlowDownstream(this);
             RunWorkflowMenuItem.IsEnabled = canRunChain;
             RunWorkflowMenuItem.Visibility = canRunChain ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1338,8 +1342,8 @@ namespace test
             if (_parent == null || _isGenerating)
                 return;
 
-            // #4：沿「流動模式」邊扇出執行（先跑本節點，再等它跑完才跑各流動下游）。
-            await _parent.RunFlowWorkflowAsync(this, runStartNode: true);
+            // #4：一鍵執行下游——本節點已執行成功(有產出),不重跑,直接沿「流動模式」邊扇出跑各自動下游。
+            await _parent.RunFlowWorkflowAsync(this, runStartNode: false);
         }
 
         // §4 stop：停止整條正在跑的工作流鏈。
@@ -1439,7 +1443,7 @@ namespace test
 
             if (_parent == null)
             {
-                MessageBox.Show("（找不到 MainWindow，無法上傳）", "錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+                MainWindow.MenuConfirmDialog.ShowMessage(Application.Current.MainWindow, "錯誤", "（找不到 MainWindow，無法上傳）", Application.Current.MainWindow);
                 return;
             }
 
@@ -1768,6 +1772,15 @@ namespace test
 
             if (_parent?.NodeService == null)
                 return;
+
+            // 有可沿用的成功 workspace（同一 session 內剛跑過）→ 只重生答案、省去 research（快）。
+            // 沒有（例如重啟 app 後記憶體快取已失效、或此節點從沒在本 session 成功跑過）→ 直接完整重跑，
+            // 避免落到 replay 找不到輸入而回空字串、跳出「沒有回傳內容」。
+            if (!_parent.NodeService.CanRegenerateAnswer(this))
+            {
+                await RunCurrentTopTextAsync();
+                return;
+            }
 
             string prompt = string.IsNullOrWhiteSpace(_lastRunPrompt)
                 ? BuildPromptForCurrentRun(GetTopText())
